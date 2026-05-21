@@ -13,7 +13,11 @@ jobs:
     name: Build & Publish
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          # Need full history + tags so the release-notes step can diff
+          # against the previous tag.
+          fetch-depth: 0
 
       - name: Show Xcode version
         run: xcodebuild -version
@@ -158,12 +162,109 @@ jobs:
           echo "--- Generated appcast.xml ---"
           cat appcast.xml
 
+      # `--generate-notes` only surfaces PRs, and this repo merges feature
+      # branches directly to main — which leaves the release body empty save
+      # for a Full Changelog link. Build categorized notes from conventional
+      # commits between the previous tag and this one instead.
+      - name: Generate release notes
+        id: notes
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          PREV_TAG=$(git tag --sort=-v:refname --merged "${TAG}^" 2>/dev/null | head -n 1 || true)
+          NOTES_FILE="${RUNNER_TEMP}/release-notes.md"
+
+          python3 - "$TAG" "${PREV_TAG:-}" "${{ github.repository }}" "$NOTES_FILE" <<'PY'
+          import re
+          import subprocess
+          import sys
+
+          tag, prev_tag, repo, out_path = sys.argv[1:5]
+          repo_url = f"https://github.com/{repo}"
+
+          if prev_tag:
+              rng = f"{prev_tag}..{tag}"
+              compare_url = f"{repo_url}/compare/{prev_tag}...{tag}"
+          else:
+              rng = tag
+              compare_url = f"{repo_url}/commits/{tag}"
+
+          raw = subprocess.check_output(
+              ["git", "log", rng, "--no-merges",
+               "--pretty=format:%H%x1f%s%x1f%b%x1e"],
+              text=True,
+          )
+
+          categories = [
+              ("Features", r"feat"),
+              ("Bug Fixes", r"fix"),
+              ("Performance", r"perf"),
+              ("Refactoring", r"refactor"),
+              ("Documentation", r"docs"),
+              ("Build & CI", r"(build|ci)"),
+              ("Chores", r"chore"),
+          ]
+          prefix_re = re.compile(r"^[a-zA-Z]+(\([^)]*\))?!?:\s*")
+          bump_re = re.compile(r"^chore.*bump version", re.I)
+
+          grouped = {title: [] for title, _ in categories}
+          other = []
+
+          for record in raw.split("\x1e"):
+              record = record.strip()
+              if not record:
+                  continue
+              sha, subject, body = record.split("\x1f", 2)
+              if bump_re.match(subject):
+                  continue
+
+              # Drop trailer lines that aren't useful to end users.
+              body_lines = []
+              for line in body.splitlines():
+                  if line.startswith("Generated with "):
+                      break
+                  if line.startswith("Co-Authored-By:"):
+                      continue
+                  body_lines.append(line)
+              body_clean = "\n".join(body_lines).strip()
+
+              clean_subject = prefix_re.sub("", subject)
+              short = sha[:7]
+              entry = f"- {clean_subject} ([`{short}`]({repo_url}/commit/{sha}))"
+              if body_clean:
+                  indented = "\n".join(
+                      ("  " + ln) if ln else "" for ln in body_clean.splitlines()
+                  )
+                  entry += "\n" + indented
+
+              matched = None
+              for title, pat in categories:
+                  if re.match(rf"^{pat}(\([^)]*\))?!?:", subject, re.I):
+                      matched = title
+                      break
+              (grouped[matched] if matched else other).append(entry)
+
+          with open(out_path, "w") as f:
+              for title, _ in categories:
+                  if grouped[title]:
+                      f.write(f"### {title}\n\n")
+                      f.write("\n\n".join(grouped[title]) + "\n\n")
+              if other:
+                  f.write("### Other Changes\n\n")
+                  f.write("\n\n".join(other) + "\n\n")
+              f.write(f"\n**Full Changelog**: {compare_url}\n")
+          PY
+
+          echo "--- Generated release notes ---"
+          cat "$NOTES_FILE"
+          echo "notes_file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
             --title "$GITHUB_REF_NAME" \
-            --generate-notes \
+            --notes-file "${{ steps.notes.outputs.notes_file }}" \
             "${{ steps.package.outputs.dmg }}" \
             "appcast.xml"
