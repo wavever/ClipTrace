@@ -121,6 +121,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
+    /// Re-open the main window when the user clicks the Dock icon after
+    /// closing it with the red traffic light. Without this AppKit doesn't
+    /// know how to surface the SwiftUI `Window` scene again.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            AppDelegate.openMainWindow()
+        }
+        return true
+    }
+
     private func applyInitialActivationPolicy() {
         let defaults = UserDefaults.standard
         if defaults.object(forKey: "showInDock") == nil {
@@ -144,7 +154,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @MainActor
-    private static func openMainWindow() {
+    static func openMainWindow() {
         NSApp.activate(ignoringOtherApps: true)
         for window in NSApp.windows where window.title == "剪迹" {
             window.makeKeyAndOrderFront(nil)
