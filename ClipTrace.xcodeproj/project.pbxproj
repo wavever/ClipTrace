@@ -51,6 +51,7 @@
 		A10044 /* OCRResultView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10044; };
 		A10045 /* UpdaterService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10045; };
 		A10046 /* PreviewKeyCatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10046; };
+		A10047 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10047; };
 		A10100 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = V10001 /* InfoPlist.strings */; };
 		A20001 /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = P10001 /* KeyboardShortcuts */; };
 		A20002 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = P10002 /* Sparkle */; };
@@ -101,6 +102,7 @@
 		B10044 /* OCRResultView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRResultView.swift; sourceTree = "<group>"; };
 		B10045 /* UpdaterService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdaterService.swift; sourceTree = "<group>"; };
 		B10046 /* PreviewKeyCatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewKeyCatcher.swift; sourceTree = "<group>"; };
+		B10047 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		B10100 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		B10101 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
 		B10099 /* ClipTrace.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClipTrace.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -175,6 +177,7 @@
 				B10037 /* QuickPasteView.swift */,
 				B10039 /* DynamicIslandView.swift */,
 				B10046 /* PreviewKeyCatcher.swift */,
+				B10047 /* Theme.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -348,6 +351,7 @@
 				A10044 /* OCRResultView.swift in Sources */,
 				A10045 /* UpdaterService.swift in Sources */,
 				A10046 /* PreviewKeyCatcher.swift in Sources */,
+				A10047 /* Theme.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

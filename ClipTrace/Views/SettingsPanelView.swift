@@ -62,8 +62,8 @@ struct SettingsPanelView: View {
             VStack(spacing: 0) {
                 LinearGradient(
                     colors: [
-                        Color.appAccent.opacity(0.08),
-                        Color.clear
+                        Color.appFrameSoft.opacity(0.70),
+                        Color.appPaper.opacity(0.0)
                     ],
                     startPoint: .top,
                     endPoint: .bottom
@@ -74,26 +74,21 @@ struct SettingsPanelView: View {
             .allowsHitTesting(false)
             .ignoresSafeArea(edges: .top)
         )
+        .background(Color.appPaper.ignoresSafeArea())
     }
 
     private var header: some View {
         HStack(spacing: 14) {
             Button(action: { nav.showList() }) {
                 Image(systemName: "chevron.left")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .frame(width: 36, height: 36)
-                    .background(
-                        Circle().strokeBorder(.secondary.opacity(0.3), lineWidth: 1)
-                    )
-                    .contentShape(Circle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PaperIconButtonStyle(size: 34))
             .help(L("common.back"))
             .keyboardShortcut(.escape, modifiers: [])
 
             Text(L("settings.title"))
-                .font(.system(size: 28, weight: .bold))
+                .font(.system(size: 25, weight: .semibold))
+                .foregroundStyle(Color.appMetal)
 
             Spacer()
         }
@@ -107,15 +102,15 @@ struct SettingsPanelView: View {
                 } label: {
                     Text(sec.localizedTitle)
                         .font(.system(size: 12.5, weight: section == sec ? .semibold : .medium))
-                        .foregroundStyle(section == sec ? Color.primary : Color.secondary)
+                        .foregroundStyle(section == sec ? Color.white : Color.appMetal.opacity(0.78))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
                         .background(
                             ZStack {
                                 if section == sec {
                                     RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                        .fill(.background)
-                                        .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
+                                        .fill(Color.appAccent)
+                                        .shadow(color: Color.appCardShadow.opacity(0.55), radius: 5, y: 2)
                                 }
                             }
                         )
@@ -127,11 +122,11 @@ struct SettingsPanelView: View {
         .padding(3)
         .background(
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(.secondary.opacity(0.10))
+                .fill(Color.appChipFill)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .strokeBorder(.separator.opacity(0.3), lineWidth: 0.5)
+                .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
         )
     }
 
@@ -211,7 +206,7 @@ struct SettingsRow<Trailing: View>: View {
             if let icon {
                 ZStack {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(iconTint.opacity(0.16))
+                        .fill(iconTint.opacity(0.13))
                     Image(systemName: icon)
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(iconTint)
@@ -221,6 +216,7 @@ struct SettingsRow<Trailing: View>: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Color.appMetal)
                 if let subtitle {
                     Text(subtitle)
                         .font(.system(size: 11))
@@ -268,7 +264,7 @@ struct SettingsGroup<Content: View>: View {
                     }
                     Text(headerTitle)
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(Color.appMetal)
                 }
                 .padding(.leading, 4)
             }
@@ -278,14 +274,13 @@ struct SettingsGroup<Content: View>: View {
             }
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(.regularMaterial)
-                    .opacity(0.7)
+                    .fill(Color.appCard)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(.separator.opacity(0.4), lineWidth: 0.5)
+                    .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
             )
-            .shadow(color: .black.opacity(0.04), radius: 6, y: 2)
+            .shadow(color: Color.appCardShadow.opacity(0.55), radius: 7, y: 2)
         }
     }
 }
@@ -299,8 +294,8 @@ private struct SettingsGroupLayout: _VariadicView_MultiViewRoot {
                 items[idx]
                 if idx < items.count - 1 {
                     Divider()
-                        .padding(.leading, 16)
-                        .opacity(0.5)
+                        .padding(.leading, 62)
+                        .overlay(Color.appPaperDivider.opacity(0.7))
                 }
             }
         }
@@ -339,7 +334,7 @@ struct SettingsSegmented<Value: Hashable>: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
                     .frame(maxWidth: .infinity)
-                    .foregroundStyle(selection == opt.value ? Color.white : Color.primary)
+                    .foregroundStyle(selection == opt.value ? Color.white : Color.appMetal.opacity(0.82))
                     .background(
                         RoundedRectangle(cornerRadius: 7, style: .continuous)
                             .fill(selection == opt.value ? AnyShapeStyle(tint) : AnyShapeStyle(Color.clear))
@@ -352,11 +347,11 @@ struct SettingsSegmented<Value: Hashable>: View {
         .padding(3)
         .background(
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(.secondary.opacity(0.10))
+                .fill(Color.appChipFill)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .strokeBorder(.separator.opacity(0.3), lineWidth: 0.5)
+                .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
         )
     }
 }
@@ -399,7 +394,7 @@ struct ConfirmDestructiveButton: View {
             .foregroundStyle(armed ? Color.white : Color.red)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(armed ? Color.red : Color.clear)
+                    .fill(armed ? Color.red : Color.appChipFill)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -436,6 +431,7 @@ struct SettingInlineCard<Control: View>: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.appMetal)
                 if let subtitle {
                     Text(subtitle)
                         .font(.system(size: 12))
@@ -450,14 +446,13 @@ struct SettingInlineCard<Control: View>: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(.regularMaterial)
-                .opacity(0.7)
+                .fill(Color.appCard)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(.separator.opacity(0.4), lineWidth: 0.5)
+                .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
         )
-        .shadow(color: .black.opacity(0.04), radius: 6, y: 2)
+        .shadow(color: Color.appCardShadow.opacity(0.55), radius: 7, y: 2)
     }
 }
 
@@ -478,6 +473,7 @@ struct SettingCard<Control: View>: View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title)
                 .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Color.appMetal)
             if let subtitle {
                 Text(subtitle)
                     .font(.system(size: 12))
@@ -489,14 +485,13 @@ struct SettingCard<Control: View>: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(.regularMaterial)
-                .opacity(0.7)
+                .fill(Color.appCard)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(.separator.opacity(0.4), lineWidth: 0.5)
+                .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
         )
-        .shadow(color: .black.opacity(0.04), radius: 6, y: 2)
+        .shadow(color: Color.appCardShadow.opacity(0.55), radius: 7, y: 2)
     }
 }
 
@@ -741,12 +736,14 @@ private struct GeneralSection: View {
                     } label: {
                         Label(L("settings.fda.openPrefs"), systemImage: "arrow.up.right.square")
                     }
+                    .buttonStyle(PaperActionButtonStyle(role: .plain))
                     Button {
                         fdaOnboardingDismissed = false
                         nav.showList()
                     } label: {
                         Label(L("settings.fda.viewOnboarding"), systemImage: "questionmark.circle")
                     }
+                    .buttonStyle(PaperActionButtonStyle(role: .plain))
                 }
             }
         }
@@ -778,9 +775,8 @@ private struct ShortcutSection: View {
                                 KeyboardShortcuts.reset(shortcut.name)
                             } label: {
                                 Image(systemName: "arrow.counterclockwise")
-                                    .font(.system(size: 11, weight: .semibold))
                             }
-                            .buttonStyle(.borderless)
+                            .buttonStyle(PaperIconButtonStyle(size: 28))
                             .help(L("settings.shortcut.resetTooltip"))
                         }
                     }
@@ -829,8 +825,8 @@ private struct ShortcutSection: View {
                                     ? "arrow.clockwise"
                                     : "arrow.up.right.square"
                             )
-                            .font(.system(size: 12))
                         }
+                        .buttonStyle(PaperActionButtonStyle(role: accessibilityTrusted ? .plain : .primary))
                     }
                 }
 
@@ -885,8 +881,8 @@ private struct AccessibilityRecoveryHelp: View {
                     AutoPasteService.openAccessibilityPane()
                 } label: {
                     Label(L("settings.shortcut.permission.openPane"), systemImage: "arrow.up.right.square")
-                        .font(.system(size: 12))
                 }
+                .buttonStyle(PaperActionButtonStyle(role: .plain))
                 Button {
                     withAnimation(.easeInOut(duration: 0.18)) { showDiagnostics.toggle() }
                 } label: {
@@ -896,9 +892,8 @@ private struct AccessibilityRecoveryHelp: View {
                             : L("settings.shortcut.permission.showDiagnostics"),
                         systemImage: showDiagnostics ? "chevron.up" : "info.circle"
                     )
-                    .font(.system(size: 12))
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(PaperActionButtonStyle(role: .plain))
             }
 
             if showDiagnostics {
@@ -920,7 +915,11 @@ private struct AccessibilityRecoveryHelp: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(.secondary.opacity(0.08))
+                        .fill(Color.appChipFill)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.appCardBorder, lineWidth: 0.5)
                 )
             }
         }
@@ -1084,16 +1083,20 @@ private struct FilterSection: View {
                                 )
                             } label: {
                                 Image(systemName: "minus.circle.fill")
-                                    .foregroundStyle(.red)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(PaperIconButtonStyle(size: 28))
+                            .foregroundStyle(.red)
                             .help(L("common.remove"))
                         }
                         .padding(.vertical, 6)
                         .padding(.horizontal, 8)
                         .background(
                             RoundedRectangle(cornerRadius: 8)
-                                .fill(.background.opacity(0.5))
+                                .fill(Color.appChipFill)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(Color.appCardBorder, lineWidth: 0.5)
                         )
                     }
                 }
@@ -1104,6 +1107,7 @@ private struct FilterSection: View {
                     } label: {
                         Label(L("settings.filter.apps.addButton"), systemImage: "plus")
                     }
+                    .buttonStyle(PaperActionButtonStyle(role: .plain))
                 }
             }
         }
@@ -1153,15 +1157,15 @@ private struct FilterSection: View {
                             .frame(width: 130)
 
                             TextField(L("settings.filter.textRules.placeholder"), text: $rule.text)
-                                .textFieldStyle(.roundedBorder)
+                                .paperTextField()
 
                             Button {
                                 store.textFilters.removeAll { $0.id == rule.id }
                             } label: {
                                 Image(systemName: "minus.circle.fill")
-                                    .foregroundStyle(.red)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(PaperIconButtonStyle(size: 28))
+                            .foregroundStyle(.red)
                             .help(L("common.remove"))
                         }
                     }
@@ -1173,6 +1177,7 @@ private struct FilterSection: View {
                     } label: {
                         Label(L("settings.filter.textRules.add"), systemImage: "plus")
                     }
+                    .buttonStyle(PaperActionButtonStyle(role: .plain))
                 }
             }
         }
@@ -1254,6 +1259,7 @@ private struct MergeSection: View {
                     VStack(spacing: 12) {
                         HStack {
                             Text(L("settings.merge.imageParams.direction")).font(.system(size: 13))
+                                .foregroundStyle(Color.appMetal)
                             Spacer()
                             Picker("", selection: $store.imageDirection) {
                                 ForEach(ImageMergeDirection.allCases) { dir in
@@ -1266,6 +1272,7 @@ private struct MergeSection: View {
                         }
                         HStack {
                             Text(L("settings.merge.imageParams.background")).font(.system(size: 13))
+                                .foregroundStyle(Color.appMetal)
                             Spacer()
                             Picker("", selection: $store.imageBackground) {
                                 ForEach(ImageMergeBackground.allCases) { bg in
@@ -1279,6 +1286,7 @@ private struct MergeSection: View {
                         HStack {
                             Text(L("settings.merge.imageParams.spacing"))
                                 .font(.system(size: 13))
+                                .foregroundStyle(Color.appMetal)
                             Spacer()
                             Text("\(Int(store.imageSpacing)) px")
                                 .font(.system(size: 12, design: .monospaced))
@@ -1317,6 +1325,7 @@ private struct MergeSection: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title)
                         .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Color.appMetal)
                     Text(subtitle)
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
@@ -1334,21 +1343,20 @@ private struct MergeSection: View {
             }
             if selection.wrappedValue == .custom {
                 TextField(placeholder, text: custom)
-                    .textFieldStyle(.roundedBorder)
+                    .paperTextField()
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(.regularMaterial)
-                .opacity(0.7)
+                .fill(Color.appCard)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(.separator.opacity(0.4), lineWidth: 0.5)
+                .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
         )
-        .shadow(color: .black.opacity(0.04), radius: 6, y: 2)
+        .shadow(color: Color.appCardShadow.opacity(0.55), radius: 7, y: 2)
     }
 }
 
@@ -1396,18 +1404,18 @@ private struct MCPSettings: View {
             ) {
                 Text(configJSON)
                     .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(Color.appMetal)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(10)
                     .padding(.trailing, 32) // reserve space for the floating copy button
                     .background(
                         RoundedRectangle(cornerRadius: 8)
-                            .fill(.background.opacity(0.5))
+                            .fill(Color.appChipFill)
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
-                            .strokeBorder(.separator.opacity(0.4), lineWidth: 0.5)
+                            .strokeBorder(Color.appCardBorder, lineWidth: 0.5)
                     )
                     .overlay(alignment: .topTrailing) {
                         Button {
@@ -1421,19 +1429,8 @@ private struct MCPSettings: View {
                             )
                         } label: {
                             Image(systemName: "doc.on.clipboard")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(.secondary)
-                                .frame(width: 24, height: 24)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                        .fill(.background.opacity(0.8))
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                        .strokeBorder(.separator.opacity(0.4), lineWidth: 0.5)
-                                )
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(PaperIconButtonStyle(size: 26))
                         .help(L("settings.mcp.copyButton"))
                         .padding(6)
                     }
@@ -1580,6 +1577,7 @@ private struct DataSection: View {
                 } label: {
                     Label(L("settings.data.export.exportButton"), systemImage: "square.and.arrow.up")
                 }
+                .buttonStyle(PaperActionButtonStyle(role: .primary))
             }
 
             // Clear history — two-step confirm since it permanently wipes every clip.
@@ -1639,10 +1637,11 @@ private struct AboutSection: View {
                         .interpolation(.high)
                         .frame(width: 72, height: 72)
                         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        .shadow(color: .black.opacity(0.12), radius: 5, y: 2)
+                        .shadow(color: Color.appCardShadow.opacity(0.85), radius: 8, y: 3)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(appName)
                             .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(Color.appMetal)
                         Text(L("settings.about.versionFormat", version))
                             .font(.system(size: 12, design: .monospaced))
                             .foregroundStyle(.secondary)
@@ -1705,8 +1704,8 @@ private struct AboutSection: View {
                         NSWorkspace.shared.open(Self.repoURL)
                     } label: {
                         Label(L("settings.about.repo.open"), systemImage: "arrow.up.right.square")
-                            .font(.system(size: 12))
                     }
+                    .buttonStyle(PaperActionButtonStyle(role: .plain))
                 }
                 SettingsRow(
                     icon: "exclamationmark.bubble",
@@ -1718,8 +1717,8 @@ private struct AboutSection: View {
                         NSWorkspace.shared.open(Self.issuesURL)
                     } label: {
                         Label(L("settings.about.feedback.open"), systemImage: "arrow.up.right.square")
-                            .font(.system(size: 12))
                     }
+                    .buttonStyle(PaperActionButtonStyle(role: .plain))
                 }
                 SettingsRow(
                     icon: "doc.text",
@@ -1731,8 +1730,8 @@ private struct AboutSection: View {
                         NSWorkspace.shared.open(Self.licenseURL)
                     } label: {
                         Label("MIT", systemImage: "arrow.up.right.square")
-                            .font(.system(size: 12))
                     }
+                    .buttonStyle(PaperActionButtonStyle(role: .plain))
                 }
             }
 
@@ -1788,10 +1787,8 @@ private struct UpdateCheckCard: View {
                     updater.checkForUpdates()
                 } label: {
                     Label(L("settings.about.update.check"), systemImage: "arrow.clockwise")
-                        .font(.system(size: 12))
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.appAccent)
+                .buttonStyle(PaperActionButtonStyle(role: .primary))
                 .disabled(!updater.canCheck)
             }
         }
@@ -1813,11 +1810,11 @@ private struct MaxRecordsField: View {
     var body: some View {
         HStack(spacing: 6) {
             TextField("", text: $text)
-                .textFieldStyle(.roundedBorder)
                 .font(.system(size: 13, design: .monospaced))
                 .multilineTextAlignment(.trailing)
                 .frame(width: 100)
                 .focused($focused)
+                .paperTextField(focused: focused)
                 .onAppear { text = "\(value)" }
                 .onChange(of: value) { _, newValue in
                     if !focused { text = "\(newValue)" }
