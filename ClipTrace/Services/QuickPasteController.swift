@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import SwiftData
+import KeyboardShortcuts
 
 /// Shared SwiftData container used by the SwiftUI scenes and by the floating
 /// QuickPaste panel. Centralising the container guarantees the popup reads
@@ -14,6 +15,52 @@ enum AppContainer {
             fatalError("Failed to open ModelContainer: \(error)")
         }
     }()
+}
+
+/// The keystrokes that drive the QuickPaste panel's keyboard flow: `↑`/`↓`
+/// move the highlight, `toggleSelectShortcut` adds/removes the highlighted
+/// clip from the multi-selection, and `commitShortcut` pastes.
+///
+/// Deliberately *not* `KeyboardShortcuts.Name`s: that library installs a
+/// system-wide Carbon hotkey for every recorded shortcut, which would hijack
+/// the key everywhere (e.g. making Return unusable). We only ever match these
+/// against `NSEvent`s while the panel itself is key, so they stay panel-local.
+@MainActor
+final class QuickPasteKeyStore: ObservableObject {
+    static let shared = QuickPasteKeyStore()
+
+    static let defaultCommit = KeyboardShortcuts.Shortcut(.return)
+    static let defaultToggleSelect = KeyboardShortcuts.Shortcut(.space)
+
+    private static let commitStorageKey = "quickPasteCommitShortcut"
+    private static let toggleSelectStorageKey = "quickPasteToggleSelectShortcut"
+
+    @Published var commitShortcut: KeyboardShortcuts.Shortcut {
+        didSet { Self.persist(commitShortcut, forKey: Self.commitStorageKey) }
+    }
+    @Published var toggleSelectShortcut: KeyboardShortcuts.Shortcut {
+        didSet { Self.persist(toggleSelectShortcut, forKey: Self.toggleSelectStorageKey) }
+    }
+
+    private init() {
+        commitShortcut = Self.load(Self.commitStorageKey) ?? Self.defaultCommit
+        toggleSelectShortcut = Self.load(Self.toggleSelectStorageKey) ?? Self.defaultToggleSelect
+    }
+
+    func resetCommit() { commitShortcut = Self.defaultCommit }
+    func resetToggleSelect() { toggleSelectShortcut = Self.defaultToggleSelect }
+
+    private static func load(_ key: String) -> KeyboardShortcuts.Shortcut? {
+        guard let raw = UserDefaults.standard.string(forKey: key),
+              let data = raw.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(KeyboardShortcuts.Shortcut.self, from: data)
+    }
+
+    private static func persist(_ shortcut: KeyboardShortcuts.Shortcut, forKey key: String) {
+        guard let encoded = try? JSONEncoder().encode(shortcut),
+              let string = String(data: encoded, encoding: .utf8) else { return }
+        UserDefaults.standard.set(string, forKey: key)
+    }
 }
 
 @MainActor

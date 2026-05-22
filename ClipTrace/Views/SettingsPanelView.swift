@@ -755,6 +755,7 @@ private struct GeneralSection: View {
 private struct ShortcutSection: View {
     @State private var accessibilityTrusted: Bool = AutoPasteService.isTrusted
     @State private var showDiagnostics = false
+    @ObservedObject private var quickPasteKeys = QuickPasteKeyStore.shared
 
     private var bundlePath: String { Bundle.main.bundlePath }
     private var bundleIdentifier: String { Bundle.main.bundleIdentifier ?? "—" }
@@ -779,6 +780,40 @@ private struct ShortcutSection: View {
                             .buttonStyle(PaperIconButtonStyle(size: 28))
                             .help(L("settings.shortcut.resetTooltip"))
                         }
+                    }
+                }
+                SettingsRow(
+                    icon: "return",
+                    iconTint: .appAccent,
+                    title: L("settings.shortcut.quickPasteCommit"),
+                    subtitle: L("settings.shortcut.quickPasteCommit.subtitle")
+                ) {
+                    HStack(spacing: 8) {
+                        QuickPasteKeyRecorder(shortcut: $quickPasteKeys.commitShortcut)
+                        Button {
+                            quickPasteKeys.resetCommit()
+                        } label: {
+                            Image(systemName: "arrow.counterclockwise")
+                        }
+                        .buttonStyle(PaperIconButtonStyle(size: 28))
+                        .help(L("settings.shortcut.resetTooltip"))
+                    }
+                }
+                SettingsRow(
+                    icon: "checklist",
+                    iconTint: .appAccent,
+                    title: L("settings.shortcut.quickPasteToggleSelect"),
+                    subtitle: L("settings.shortcut.quickPasteToggleSelect.subtitle")
+                ) {
+                    HStack(spacing: 8) {
+                        QuickPasteKeyRecorder(shortcut: $quickPasteKeys.toggleSelectShortcut)
+                        Button {
+                            quickPasteKeys.resetToggleSelect()
+                        } label: {
+                            Image(systemName: "arrow.counterclockwise")
+                        }
+                        .buttonStyle(PaperIconButtonStyle(size: 28))
+                        .help(L("settings.shortcut.resetTooltip"))
                     }
                 }
             }
@@ -947,6 +982,108 @@ private extension AppShortcut {
         switch self {
         case .openMainWindow: return "rectangle.inset.filled.on.rectangle"
         case .openQuickPaste: return "bolt.fill"
+        }
+    }
+}
+
+/// Records one of the QuickPaste panel's keyboard-flow keys. Click to arm,
+/// then press any key (with or without modifiers); Esc cancels without
+/// changing the binding.
+///
+/// Capture goes through an embedded AppKit probe rather than
+/// `KeyboardShortcuts.Recorder`: that component installs a *global* hotkey for
+/// whatever it records, which would hijack the key system-wide. These
+/// shortcuts must stay panel-local.
+private struct QuickPasteKeyRecorder: View {
+    @Binding var shortcut: KeyboardShortcuts.Shortcut
+    @State private var isRecording = false
+
+    var body: some View {
+        Button {
+            isRecording.toggle()
+        } label: {
+            Text(isRecording
+                 ? L("settings.shortcut.quickPasteCommit.recording")
+                 : shortcut.description)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(isRecording ? Color.appAccent : Color.appMetal)
+                .frame(minWidth: 64)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(isRecording ? Color.appAccent.opacity(0.14) : Color.appChipFill)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(
+                            isRecording ? Color.appAccent : Color.appCardBorder,
+                            lineWidth: isRecording ? 1.2 : 0.75
+                        )
+                )
+        }
+        .buttonStyle(.plain)
+        .overlay {
+            if isRecording {
+                QuickPasteKeyProbe(isRecording: $isRecording, shortcut: $shortcut)
+            }
+        }
+    }
+}
+
+/// Invisible AppKit probe inserted while `QuickPasteKeyRecorder` is armed.
+/// Grabs the next keystroke, writes it to `shortcut`, and disarms. `hitTest`
+/// returns `nil` so a click still falls through to the button beneath it.
+private struct QuickPasteKeyProbe: NSViewRepresentable {
+    @Binding var isRecording: Bool
+    @Binding var shortcut: KeyboardShortcuts.Shortcut
+
+    func makeNSView(context: Context) -> ProbeView {
+        let view = ProbeView()
+        view.isRecording = $isRecording
+        view.shortcut = $shortcut
+        return view
+    }
+
+    func updateNSView(_ nsView: ProbeView, context: Context) {
+        nsView.isRecording = $isRecording
+        nsView.shortcut = $shortcut
+    }
+
+    final class ProbeView: NSView {
+        var isRecording: Binding<Bool>?
+        var shortcut: Binding<KeyboardShortcuts.Shortcut>?
+
+        override var acceptsFirstResponder: Bool { true }
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let window = self.window else { return }
+                window.makeFirstResponder(self)
+            }
+        }
+
+        /// Records `event` (unless it is Esc) and disarms. Always returns
+        /// `true` so the keystroke is swallowed instead of triggering app
+        /// shortcuts while recording.
+        @discardableResult
+        private func capture(_ event: NSEvent) -> Bool {
+            if event.keyCode != 53,  // 53 = Esc → cancel, leave binding intact
+               let recorded = KeyboardShortcuts.Shortcut(event: event) {
+                shortcut?.wrappedValue = recorded
+            }
+            isRecording?.wrappedValue = false
+            return true
+        }
+
+        override func keyDown(with event: NSEvent) {
+            capture(event)
+        }
+
+        override func performKeyEquivalent(with event: NSEvent) -> Bool {
+            capture(event)
         }
     }
 }
