@@ -158,6 +158,11 @@ extension L10n {
         // list scope
         "scope.all": "全部",
         "scope.favorites": "收藏",
+        "favorites.sort.help": "收藏列表排序方式",
+        "favorites.sort.dateNewest": "最新优先",
+        "favorites.sort.dateOldest": "最早优先",
+        "favorites.sort.name": "按名称",
+        "favorites.sort.type": "按类型",
 
         // main window
         "main.title": "剪迹",
@@ -635,6 +640,11 @@ extension L10n {
         // list scope
         "scope.all": "All",
         "scope.favorites": "Favorites",
+        "favorites.sort.help": "Sort the favorites list",
+        "favorites.sort.dateNewest": "Newest first",
+        "favorites.sort.dateOldest": "Oldest first",
+        "favorites.sort.name": "By name",
+        "favorites.sort.type": "By type",
 
         // main window
         "main.title": "ClipTrace",

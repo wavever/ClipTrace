@@ -347,6 +347,20 @@ struct MainWindowView: View {
             .pickerStyle(.menu)
             .frame(width: 128)
 
+            // Sort control — only meaningful inside 收藏, where the list no
+            // longer has to stay strictly reverse-chronological.
+            if vm.selectedScope == .favorites {
+                Picker("", selection: $vm.favoritesSortOrder) {
+                    ForEach(FavoritesSortOrder.allCases) { order in
+                        Label(order.displayName, systemImage: order.icon).tag(order)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .frame(width: 120)
+                .help(L("favorites.sort.help"))
+            }
+
             ToolbarSearchField(
                 text: $vm.searchText,
                 mode: $vm.searchMode,

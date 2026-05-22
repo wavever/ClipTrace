@@ -26,6 +26,13 @@ struct ClipboardItemRow: View {
         return FileManager.default.fileExists(atPath: url.path)
     }
 
+    /// Non-nil when the clip's text is a single color literal — the row then
+    /// shows a swatch of that color in place of the generic text thumbnail.
+    private var detectedColor: Color? {
+        guard item.itemType == .text else { return nil }
+        return ColorValueParser.color(from: item.content)
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             if isSelectionMode {
@@ -36,8 +43,12 @@ struct ClipboardItemRow: View {
                     .transition(.scale(scale: 0.6).combined(with: .opacity))
             }
 
-            ThumbnailView(item: item, size: 44, cornerRadius: 9)
-                .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
+            if let detectedColor {
+                ColorSwatchThumbnail(color: detectedColor, size: 44)
+            } else {
+                ThumbnailView(item: item, size: 44, cornerRadius: 9)
+                    .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
+            }
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
@@ -314,5 +325,189 @@ struct HoverIconButton: View {
         if !isHovered { return .clear }
         if let tint { return tint.opacity(0.18) }
         return Color.secondary.opacity(0.2)
+    }
+}
+
+// MARK: - Color value detection
+
+/// Detects whether a clip's text is a single CSS-style color literal and
+/// resolves it to a `Color` for the row swatch. Recognizes hex
+/// (`#RGB` / `#RGBA` / `#RRGGBB` / `#RRGGBBAA`) and the functional
+/// notations `rgb()/rgba()`, `hsl()/hsla()` and `hsb()/hsv()`.
+enum ColorValueParser {
+    static func color(from raw: String) -> Color? {
+        let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Color literals are short — bail fast on anything that obviously isn't.
+        guard !s.isEmpty, s.count <= 48 else { return nil }
+        return hexColor(s) ?? functionalColor(s)
+    }
+
+    private static func hexColor(_ s: String) -> Color? {
+        guard s.hasPrefix("#") else { return nil }
+        let hex = s.dropFirst()
+        guard [3, 4, 6, 8].contains(hex.count),
+              hex.allSatisfy(\.isHexDigit) else { return nil }
+
+        // #RGB / #RGBA use one nibble per channel — duplicate to full bytes.
+        let full = hex.count <= 4 ? hex.map { "\($0)\($0)" }.joined() : String(hex)
+        guard let value = UInt64(full, radix: 16) else { return nil }
+
+        if full.count == 8 {
+            return Color(
+                .sRGB,
+                red: Double((value >> 24) & 0xFF) / 255,
+                green: Double((value >> 16) & 0xFF) / 255,
+                blue: Double((value >> 8) & 0xFF) / 255,
+                opacity: Double(value & 0xFF) / 255
+            )
+        }
+        return Color(
+            .sRGB,
+            red: Double((value >> 16) & 0xFF) / 255,
+            green: Double((value >> 8) & 0xFF) / 255,
+            blue: Double(value & 0xFF) / 255,
+            opacity: 1
+        )
+    }
+
+    /// Functional notation: `rgb()/rgba()`, `hsl()/hsla()`, `hsb()/hsv()`.
+    /// Components accept comma, slash (modern alpha) or whitespace separators.
+    private static func functionalColor(_ s: String) -> Color? {
+        let lower = s.lowercased()
+        guard let open = lower.firstIndex(of: "("),
+              let close = lower.lastIndex(of: ")"),
+              open < close else { return nil }
+        let name = lower[..<open].trimmingCharacters(in: .whitespaces)
+        let parts = lower[lower.index(after: open)..<close]
+            .split(whereSeparator: { $0 == "," || $0 == "/" || $0 == " " })
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard parts.count == 3 || parts.count == 4 else { return nil }
+        let opacity = parts.count == 4 ? (alpha(parts[3]) ?? 1) : 1
+
+        switch name {
+        case "rgb", "rgba":
+            guard let r = channel(parts[0]),
+                  let g = channel(parts[1]),
+                  let b = channel(parts[2]) else { return nil }
+            return Color(.sRGB, red: r, green: g, blue: b, opacity: opacity)
+        case "hsl", "hsla":
+            guard let h = hue(parts[0]),
+                  let s = unit(parts[1]),
+                  let l = unit(parts[2]) else { return nil }
+            let (r, g, b) = hslToRGB(h: h, s: s, l: l)
+            return Color(.sRGB, red: r, green: g, blue: b, opacity: opacity)
+        case "hsb", "hsv":
+            guard let h = hue(parts[0]),
+                  let s = unit(parts[1]),
+                  let brightness = unit(parts[2]) else { return nil }
+            return Color(hue: h / 360, saturation: s, brightness: brightness, opacity: opacity)
+        default:
+            return nil
+        }
+    }
+
+    /// Hue in degrees, normalized to `0..<360`. Accepts an optional `deg` suffix.
+    private static func hue(_ str: String) -> Double? {
+        let t = str.hasSuffix("deg") ? String(str.dropLast(3)) : str
+        guard let v = Double(t) else { return nil }
+        let mod = v.truncatingRemainder(dividingBy: 360)
+        return mod < 0 ? mod + 360 : mod
+    }
+
+    /// Saturation / lightness / brightness as `0...1`. Accepts `50%`, `0.5`,
+    /// or a bare `0...100` value (design tools often drop the percent sign).
+    private static func unit(_ str: String) -> Double? {
+        if str.hasSuffix("%") {
+            guard let pct = Double(str.dropLast()) else { return nil }
+            return clamp(pct / 100)
+        }
+        guard let v = Double(str) else { return nil }
+        return clamp(v > 1 ? v / 100 : v)
+    }
+
+    private static func hslToRGB(h: Double, s: Double, l: Double) -> (Double, Double, Double) {
+        let c = (1 - abs(2 * l - 1)) * s
+        let hp = h / 60
+        let x = c * (1 - abs(hp.truncatingRemainder(dividingBy: 2) - 1))
+        let (r, g, b): (Double, Double, Double)
+        switch hp {
+        case 0..<1: (r, g, b) = (c, x, 0)
+        case 1..<2: (r, g, b) = (x, c, 0)
+        case 2..<3: (r, g, b) = (0, c, x)
+        case 3..<4: (r, g, b) = (0, x, c)
+        case 4..<5: (r, g, b) = (x, 0, c)
+        default:    (r, g, b) = (c, 0, x)
+        }
+        let m = l - c / 2
+        return (clamp(r + m), clamp(g + m), clamp(b + m))
+    }
+
+    /// One RGB channel — `0...255` or a `0%...100%` percentage — as `0...1`.
+    private static func channel(_ str: String) -> Double? {
+        if str.hasSuffix("%") {
+            guard let pct = Double(str.dropLast()) else { return nil }
+            return clamp(pct / 100)
+        }
+        guard let v = Double(str) else { return nil }
+        return clamp(v / 255)
+    }
+
+    /// Alpha — already `0...1`, or a percentage.
+    private static func alpha(_ str: String) -> Double? {
+        if str.hasSuffix("%") {
+            guard let pct = Double(str.dropLast()) else { return nil }
+            return clamp(pct / 100)
+        }
+        guard let v = Double(str) else { return nil }
+        return clamp(v)
+    }
+
+    private static func clamp(_ v: Double) -> Double { min(max(v, 0), 1) }
+}
+
+/// Swatch shown in place of the text thumbnail for color-literal clips. A
+/// checkerboard sits behind the fill so semi-transparent colors read correctly.
+private struct ColorSwatchThumbnail: View {
+    let color: Color
+    let size: CGFloat
+    private let corner: CGFloat = 9
+
+    var body: some View {
+        ZStack {
+            Color.white
+            Checkerboard(squareSize: 6)
+                .fill(Color.secondary.opacity(0.30))
+            color
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: corner, style: .continuous)
+                .strokeBorder(.separator.opacity(0.5), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
+    }
+}
+
+/// Classic transparency checkerboard — fills every other cell.
+private struct Checkerboard: Shape {
+    var squareSize: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let cols = Int(ceil(rect.width / squareSize))
+        let rows = Int(ceil(rect.height / squareSize))
+        for row in 0..<rows {
+            for col in 0..<cols where (row + col).isMultiple(of: 2) {
+                path.addRect(CGRect(
+                    x: CGFloat(col) * squareSize,
+                    y: CGFloat(row) * squareSize,
+                    width: squareSize,
+                    height: squareSize
+                ))
+            }
+        }
+        return path
     }
 }

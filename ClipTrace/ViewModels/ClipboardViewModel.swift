@@ -55,6 +55,35 @@ enum ListScope: String, CaseIterable, Identifiable {
     }
 }
 
+/// Sort order for the favorites scope. The "all" scope keeps its natural
+/// reverse-chronological order, so this only applies inside 收藏.
+enum FavoritesSortOrder: String, CaseIterable, Identifiable {
+    case dateNewest
+    case dateOldest
+    case name
+    case type
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .dateNewest: return L("favorites.sort.dateNewest")
+        case .dateOldest: return L("favorites.sort.dateOldest")
+        case .name:       return L("favorites.sort.name")
+        case .type:       return L("favorites.sort.type")
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .dateNewest: return "arrow.down"
+        case .dateOldest: return "arrow.up"
+        case .name:       return "textformat"
+        case .type:       return "square.grid.2x2"
+        }
+    }
+}
+
 @MainActor
 class ClipboardViewModel: ObservableObject {
     /// UserDefaults key for the master semantic-search feature toggle. When
@@ -83,6 +112,17 @@ class ClipboardViewModel: ObservableObject {
     }
     @Published var selectedType: ClipboardItemType? = nil
     @Published var selectedScope: ListScope = .all
+    /// Sort order for the favorites scope. Persisted so the choice survives
+    /// relaunches.
+    @Published var favoritesSortOrder: FavoritesSortOrder = {
+        let raw = UserDefaults.standard.string(forKey: "favoritesSortOrder")
+            ?? FavoritesSortOrder.dateNewest.rawValue
+        return FavoritesSortOrder(rawValue: raw) ?? .dateNewest
+    }() {
+        didSet {
+            UserDefaults.standard.set(favoritesSortOrder.rawValue, forKey: "favoritesSortOrder")
+        }
+    }
     @Published var isMonitoring = true
     @Published var showExportPanel = false
     /// Active search engine for the toolbar. Persisted only in-memory — defaults
@@ -732,10 +772,42 @@ class ClipboardViewModel: ObservableObject {
             }
         }
 
+        // Favorites is user-sortable; the "all" scope keeps its natural
+        // reverse-chronological order from the @Query. Pinned items still
+        // float to the top — splitItems() partitions the (already sorted)
+        // result, so each group keeps the chosen order.
+        if selectedScope == .favorites {
+            result = sortFavorites(result)
+        }
+
         // Pin-ordering is the caller's job — MainWindowView splits pinned vs
         // others for the section header, and a duplicate sort here would be a
         // wasted pass over the list on every scope/filter change.
         return result
+    }
+
+    private func sortFavorites(_ items: [ClipboardItem]) -> [ClipboardItem] {
+        switch favoritesSortOrder {
+        case .dateNewest:
+            return items.sorted { $0.createdAt > $1.createdAt }
+        case .dateOldest:
+            return items.sorted { $0.createdAt < $1.createdAt }
+        case .name:
+            return items.sorted {
+                favoriteSortKey($0).localizedCaseInsensitiveCompare(favoriteSortKey($1)) == .orderedAscending
+            }
+        case .type:
+            return items.sorted {
+                if $0.itemType != $1.itemType {
+                    return $0.itemType.rawValue < $1.itemType.rawValue
+                }
+                return $0.createdAt > $1.createdAt
+            }
+        }
+    }
+
+    private func favoriteSortKey(_ item: ClipboardItem) -> String {
+        (item.preview ?? item.content).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Rank items by keyword and cosine similarity. Each language (`zh` /
