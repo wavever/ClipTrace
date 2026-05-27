@@ -488,9 +488,14 @@ enum MCPServer {
 
     private static func writeResponse(_ object: [String: Any]) {
         do {
-            let data = try JSONSerialization.data(withJSONObject: object, options: [])
-            FileHandle.standardOutput.write(data)
-            FileHandle.standardOutput.write(Data([0x0A]))
+            var data = try JSONSerialization.data(withJSONObject: object, options: [])
+            data.append(0x0A)
+            // The non-throwing `write(_:)` raises an ObjC
+            // `NSFileHandleOperationException` on broken pipe / EPIPE, which
+            // Swift can't catch and crashes the process. The throwing
+            // `write(contentsOf:)` surfaces the same condition as a Swift
+            // error we can silently swallow when the MCP client disconnects.
+            try? FileHandle.standardOutput.write(contentsOf: data)
         } catch {
             log("Failed to encode response: \(error)")
         }
@@ -501,7 +506,7 @@ enum MCPServer {
     private static func log(_ message: String) {
         let line = "[MCP] \(message)\n"
         if let data = line.data(using: .utf8) {
-            FileHandle.standardError.write(data)
+            try? FileHandle.standardError.write(contentsOf: data)
         }
     }
 }
