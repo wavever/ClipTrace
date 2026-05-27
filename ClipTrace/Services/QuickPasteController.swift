@@ -63,6 +63,15 @@ final class QuickPasteKeyStore: ObservableObject {
     }
 }
 
+/// A borderless `NSPanel` reports `canBecomeKey == false` by default, which
+/// makes `makeKey()` a silent no-op — the panel never becomes the key window
+/// and never receives `keyDown`, so the QuickPaste arrow-key flow is dead.
+/// Overriding restores keyboard handling.
+final class KeyablePanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+}
+
 @MainActor
 final class QuickPasteController: NSObject, NSWindowDelegate {
     static let shared = QuickPasteController()
@@ -108,14 +117,14 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
         let view = QuickPasteView(
             items: items,
             onCommit: { [weak self] selected in self?.commit(selected) },
-            onCancel: { [weak self] in self?.close() }
+            onCancel: { [weak self] in self?.cancel() }
         )
 
         let hosting = NSHostingController(rootView: view)
         hosting.view.wantsLayer = true
 
         let size = NSSize(width: 360, height: 440)
-        let panel = NSPanel(
+        let panel = KeyablePanel(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.nonactivatingPanel, .borderless],
             backing: .buffered,
@@ -137,6 +146,11 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
             positionPanelAtCursor(panel, size: size)
         }
         panel.orderFrontRegardless()
+        // A `.nonactivatingPanel` orders front without making our app active,
+        // which leaves keyboard focus with the previously-frontmost app — so
+        // arrow keys never reach the panel. Activate explicitly so the panel
+        // becomes the key window; `commit`/`cancel` hand focus back after.
+        NSApp.activate(ignoringOtherApps: true)
         panel.makeKey()
 
         self.panel = panel
@@ -196,6 +210,15 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
         panel?.orderOut(nil)
         panel?.delegate = nil
         panel = nil
+    }
+
+    /// Dismiss without pasting and hand keyboard focus back to the app the
+    /// user came from. Separate from `close()`, which also handles click-
+    /// outside dismissal — re-activating there would fight the user's click.
+    private func cancel() {
+        let target = previousApp
+        close()
+        target?.activate()
     }
 
     // MARK: - Commit
