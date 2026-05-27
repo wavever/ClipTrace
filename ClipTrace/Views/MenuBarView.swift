@@ -36,12 +36,7 @@ struct MenuBarView: View {
 
     private var header: some View {
         HStack(spacing: 9) {
-            Image("AppLogo")
-                .resizable()
-                .interpolation(.high)
-                .frame(width: 26, height: 26)
-                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                .shadow(color: .black.opacity(0.10), radius: 2, y: 1)
+            AppLogoMark(size: 26, shadowRadius: 2, shadowOpacity: 0.35)
             Text(L("main.title"))
                 .font(.system(size: 14, weight: .semibold))
             Spacer()

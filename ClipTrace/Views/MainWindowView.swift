@@ -304,12 +304,7 @@ struct MainWindowView: View {
 
     private var header: some View {
         HStack(spacing: 14) {
-            Image("AppLogo")
-                .resizable()
-                .interpolation(.high)
-                .frame(width: 36, height: 36)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
+            AppLogoMark(size: 36, shadowRadius: 3, shadowOpacity: 0.45)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(L("main.title"))

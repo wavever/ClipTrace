@@ -1769,12 +1769,7 @@ private struct AboutSection: View {
         VStack(spacing: 18) {
             SettingCard(title: appName, subtitle: nil) {
                 HStack(spacing: 16) {
-                    Image("AppLogo")
-                        .resizable()
-                        .interpolation(.high)
-                        .frame(width: 72, height: 72)
-                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        .shadow(color: Color.appCardShadow.opacity(0.85), radius: 8, y: 3)
+                    AppLogoMark(size: 72, shadowRadius: 8, shadowOpacity: 0.85)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(appName)
                             .font(.system(size: 18, weight: .semibold))

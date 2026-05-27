@@ -150,6 +150,23 @@ extension View {
     }
 }
 
+struct AppLogoMark: View {
+    var size: CGFloat
+    var shadowRadius: CGFloat = 0
+    var shadowOpacity: CGFloat = 0
+
+    var body: some View {
+        Image("AppLogo")
+            .resizable()
+            .interpolation(.high)
+            .antialiased(true)
+            .aspectRatio(contentMode: .fit)
+            .frame(width: size, height: size)
+            .compositingGroup()
+            .shadow(color: Color.appCardShadow.opacity(shadowOpacity), radius: shadowRadius, y: shadowRadius > 0 ? shadowRadius * 0.35 : 0)
+    }
+}
+
 struct PaperActionButtonStyle: ButtonStyle {
     enum Role {
         case plain
