@@ -20,18 +20,14 @@ struct ClipboardItemRow: View {
     @State private var isHovered = false
     @State private var showTagEditor = false
     @State private var showOCR = false
-
-    private var hasFile: Bool {
-        guard let url = item.resolvedFileURL else { return false }
-        return FileManager.default.fileExists(atPath: url.path)
-    }
-
-    /// Non-nil when the clip's text is a single color literal — the row then
-    /// shows a swatch of that color in place of the generic text thumbnail.
-    private var detectedColor: Color? {
-        guard item.itemType == .text else { return nil }
-        return ColorValueParser.color(from: item.content)
-    }
+    /// Result of the `FileManager.fileExists` probe for this item's URL,
+    /// populated once asynchronously after the row appears. Keeping this out
+    /// of the synchronous body avoids a disk hit on every scroll/hover frame.
+    @State private var fileExistsCache: Bool = false
+    /// Cached color-literal detection. SwiftUI calls `body` on every hover /
+    /// scroll tick; parsing the color string every time is wasted work.
+    @State private var detectedColorCache: Color? = nil
+    @State private var detectedColorComputed = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -43,7 +39,7 @@ struct ClipboardItemRow: View {
                     .transition(.scale(scale: 0.6).combined(with: .opacity))
             }
 
-            if let detectedColor {
+            if let detectedColor = detectedColorCache {
                 ColorSwatchThumbnail(color: detectedColor, size: 44)
             } else {
                 ThumbnailView(item: item, size: 44, cornerRadius: 9)
@@ -131,32 +127,56 @@ struct ClipboardItemRow: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
         .frame(maxWidth: .infinity, alignment: .leading)
+        // Single solid fill + conditional accent tint instead of the previous
+        // ZStack-with-material + always-on shadow. Each row was paying for a
+        // backdrop blur and a soft shadow on every paint — at ~10 visible rows
+        // that's 10 GPU passes per frame for visuals that read identically
+        // against the warm paper background.
         .background(
-            ZStack {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(.regularMaterial)
-                    .opacity(isHovered ? 0.95 : 0.55)
-                if isSelected {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color.appAccent.opacity(0.10))
-                } else if isHovered {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color.appAccent.opacity(0.045))
-                }
-            }
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(isHovered || isSelected ? Color.appCardHover : Color.appCard)
         )
+        .overlay {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.appAccent.opacity(0.10))
+            } else if isHovered {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.appAccent.opacity(0.04))
+            }
+        }
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(borderColor, lineWidth: (isHovered || isSelected) ? 1 : 0.5)
         )
+        // Only paint a shadow on the row the user is actively interacting
+        // with — idle rows used to each get their own blur pass, which adds
+        // up fast in a long list.
         .shadow(
-            color: isHovered ? Color.appAccent.opacity(0.12) : .black.opacity(0.03),
-            radius: isHovered ? 6 : 2,
-            y: isHovered ? 2 : 1
+            color: isHovered ? Color.appAccent.opacity(0.12) : .clear,
+            radius: isHovered ? 6 : 0,
+            y: isHovered ? 2 : 0
         )
         .contentShape(RoundedRectangle(cornerRadius: 12))
         .onHover { hovering in
             isHovered = hovering
+        }
+        .task(id: item.id) {
+            // Color-literal detection: cheap but does string trim + parse on
+            // every body otherwise. Compute once per row identity.
+            if !detectedColorComputed {
+                detectedColorComputed = true
+                if item.itemType == .text {
+                    detectedColorCache = ColorValueParser.color(from: item.content)
+                }
+            }
+            // File existence probe: do the disk hit off the render path. Only
+            // run for items that actually have a path to check; the cache
+            // stays `false` for text/URL/RTF clips.
+            await refreshFileExistsCache()
+        }
+        .onChange(of: item.fileURL) { _, _ in
+            Task { await refreshFileExistsCache() }
         }
         .sheet(isPresented: $showTagEditor) {
             TagEditorPopover(
@@ -257,7 +277,7 @@ struct ClipboardItemRow: View {
                     action: onSaveImage
                 )
             }
-            if hasFile {
+            if fileExistsCache {
                 HoverIconButton(
                     systemName: "folder",
                     help: L("action.revealInFinder"),
@@ -276,6 +296,21 @@ struct ClipboardItemRow: View {
                 action: onDelete
             )
         }
+    }
+
+    /// Probe the resolved file URL off the main render path. Falls back to
+    /// `false` for clips that aren't backed by a file (text / URL / RTF) so
+    /// the action bar's file-only buttons stay hidden.
+    private func refreshFileExistsCache() async {
+        guard let url = item.resolvedFileURL else {
+            if fileExistsCache { fileExistsCache = false }
+            return
+        }
+        let path = url.path
+        let exists = await Task.detached(priority: .utility) {
+            FileManager.default.fileExists(atPath: path)
+        }.value
+        if fileExistsCache != exists { fileExistsCache = exists }
     }
 }
 

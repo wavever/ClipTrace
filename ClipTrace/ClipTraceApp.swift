@@ -108,11 +108,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DynamicIslandController.shared.setEnabled(
             DynamicIslandController.shared.isEnabled
         )
-        // Touch the singleton so the Sparkle updater starts immediately and
-        // background checks fire on schedule (per SUEnableAutomaticChecks /
-        // SUScheduledCheckInterval in Info.plist) — otherwise it wouldn't be
-        // instantiated until the user opens the About page.
-        _ = UpdaterService.shared
+        // Touch the singleton so the Sparkle updater starts and background
+        // checks fire on schedule (per SUEnableAutomaticChecks /
+        // SUScheduledCheckInterval in Info.plist). Deferred a few seconds
+        // past launch so its initialisation (network probe, signature setup)
+        // doesn't contend with the first window paint.
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            _ = UpdaterService.shared
+        }
     }
 
     /// Keep the app alive in the menu bar after the main window is closed.

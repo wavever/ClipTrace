@@ -1,7 +1,11 @@
 import SwiftUI
+import SwiftData
 
 struct ExportPanelView: View {
-    let allItems: [ClipboardItem]
+    /// Pulls the *full* history (not the paged slice the main window holds)
+    /// so an export always covers everything the user could expect.
+    @Query(sort: \ClipboardItem.createdAt, order: .reverse)
+    private var allItems: [ClipboardItem]
     let onClose: () -> Void
 
     @State private var filter = ExportFilter()

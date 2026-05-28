@@ -91,8 +91,27 @@ final class ClipboardItem {
 
     var tags: [String] {
         guard let raw = tagsRaw, !raw.isEmpty else { return [] }
-        return raw.split(separator: "\n").map(String.init)
+        // Cache the split result keyed on (id, raw). `tags` gets hit on every
+        // row body re-eval (the chip ForEach), inside `allKnownTags`, and on
+        // every filter pass — re-splitting the string each call is a real
+        // tax on long histories.
+        let key = "\(id.uuidString)|\(raw)" as NSString
+        if let cached = Self.tagsCache.object(forKey: key) as? [String] {
+            return cached
+        }
+        let parsed = raw.split(separator: "\n").map(String.init)
+        Self.tagsCache.setObject(parsed as NSArray, forKey: key)
+        return parsed
     }
+
+    /// Shared LRU for parsed tag arrays. NSCache is documented thread-safe and
+    /// will evict under memory pressure, so we don't have to worry about
+    /// stale entries piling up after many edits.
+    private static let tagsCache: NSCache<NSString, NSArray> = {
+        let c = NSCache<NSString, NSArray>()
+        c.countLimit = 2_000
+        return c
+    }()
 
     func setTags(_ newTags: [String]) {
         // Normalize: trim, drop empties, dedupe (case-insensitive), cap length.
@@ -161,11 +180,19 @@ final class ClipboardItem {
         default: break
         }
 
-        // Detect directory before falling back to extension lookup
-        var isDir: ObjCBool = false
-        let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
-        if exists, isDir.boolValue {
-            return L("tag.folder")
+        // Only probe the filesystem when no extension is present — that's the
+        // single case where UTType lookup can't classify the entry and we
+        // really do need to tell folder vs. file apart. With an extension the
+        // UTType path below handles everything, and this method is called
+        // from row bodies that fire on every hover/scroll tick — synchronous
+        // FS hits there were a measurable CPU spike.
+        if ext.isEmpty {
+            var isDir: ObjCBool = false
+            let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+            if exists, isDir.boolValue {
+                return L("tag.folder")
+            }
+            return L("type.file")
         }
 
         guard let type = UTType(filenameExtension: ext) else { return L("type.file") }

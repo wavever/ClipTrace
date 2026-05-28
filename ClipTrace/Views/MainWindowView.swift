@@ -2,10 +2,68 @@ import SwiftUI
 import SwiftData
 import AppKit
 
+/// Thin wrapper that owns the pagination state and hands the current page
+/// size to `MainWindowContent`. Splitting the view here lets the inner view
+/// rebuild its `@Query` with a fresh `fetchLimit` whenever `pageSize` bumps,
+/// without resetting any of the row-level `@State` (hover, focused item).
 struct MainWindowView: View {
     @EnvironmentObject var vm: ClipboardViewModel
-    @Query(sort: \ClipboardItem.createdAt, order: .reverse) private var allItems: [ClipboardItem]
+
+    /// First-page fetch cap. Cold start renders at most this many rows from
+    /// SwiftData — the rest are pulled in by the load-more sentinel as the
+    /// user scrolls. Chosen so the initial viewport (~10–15 rows) is well-
+    /// covered without ever materialising the whole history up front.
+    @State private var pageSize: Int = 80
+    /// Debounce so a chain of sentinel `.onAppear` calls (which can fire
+    /// rapidly while the bottom rebalances) only triggers one bump.
+    @State private var isBumpingPage: Bool = false
+
+    private static let pageStep: Int = 60
+    private static let pageCap: Int = 600
+
+    var body: some View {
+        // When the user is searching or filtering by tag, results may live
+        // beyond the current page; bypass pagination so they're never hidden.
+        let searching = !vm.searchText.isEmpty || !vm.activeTags.isEmpty
+        let effective = searching ? Self.pageCap : pageSize
+
+        MainWindowContent(
+            pageSize: effective,
+            canLoadMore: !searching && pageSize < Self.pageCap,
+            onRequestMore: requestMore
+        )
+    }
+
+    private func requestMore() {
+        guard !isBumpingPage, pageSize < Self.pageCap else { return }
+        isBumpingPage = true
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 80_000_000)
+            pageSize = min(pageSize + Self.pageStep, Self.pageCap)
+            isBumpingPage = false
+        }
+    }
+}
+
+struct MainWindowContent: View {
+    @EnvironmentObject var vm: ClipboardViewModel
+    @Query private var allItems: [ClipboardItem]
     @Environment(\.modelContext) private var modelContext
+
+    let pageSize: Int
+    let canLoadMore: Bool
+    let onRequestMore: () -> Void
+
+    init(pageSize: Int, canLoadMore: Bool, onRequestMore: @escaping () -> Void) {
+        self.pageSize = pageSize
+        self.canLoadMore = canLoadMore
+        self.onRequestMore = onRequestMore
+        var descriptor = FetchDescriptor<ClipboardItem>(
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = pageSize
+        _allItems = Query(descriptor)
+    }
 
     @ObservedObject private var nav = AppNavigation.shared
     @ObservedObject private var toasts = ToastCenter.shared
@@ -17,6 +75,14 @@ struct MainWindowView: View {
     /// Non-nil when the user picked "Rename" from a row's context menu —
     /// drives the rename sheet at the root level so it survives row-view churn.
     @State private var renameTarget: ClipboardItem?
+
+    /// Header-stat caches. With pagination, `allItems` only contains the
+    /// current page so these come from dedicated `fetchCount` / tag queries
+    /// against the model context — that way the header always shows the true
+    /// total even when the visible list is just the first few rows.
+    @State private var totalRecordsCache: Int = 0
+    @State private var favoritesCountCache: Int = 0
+    @State private var allKnownTagsCache: [String] = []
 
     private var filteredItems: [ClipboardItem] {
         vm.filteredItems(allItems)
@@ -78,15 +144,35 @@ struct MainWindowView: View {
         }
         .animation(.easeOut(duration: 0.22), value: fdaOnboardingDismissed)
         .onAppear {
+            // Foreground work: the pasteboard poller must be running before
+            // the user can copy anything.
             vm.startMonitoring(context: modelContext)
-            vm.backfillOCR(context: modelContext)
-            vm.backfillEmbeddings(context: modelContext)
+            // Background work: OCR + embedding backfills walk the entire
+            // history and were spiking CPU during the first paint. Defer them
+            // until the window has had a chance to render so cold start
+            // stays responsive.
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 1_500_000_000) // ~1.5s
+                vm.backfillOCR(context: modelContext)
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                vm.backfillEmbeddings(context: modelContext)
+            }
+            refreshDerivedCaches()
+        }
+        .onChange(of: allItems.count) { _, _ in
+            refreshDerivedCaches()
+        }
+        .onChange(of: vm.tagCatalogVersion) { _, _ in
+            refreshTagCatalog()
+        }
+        .onChange(of: vm.favoritesVersion) { _, _ in
+            refreshFavoritesCount()
         }
         .onDisappear {
             vm.stopMonitoring()
         }
         .sheet(isPresented: $vm.showExportPanel) {
-            ExportPanelView(allItems: allItems) {
+            ExportPanelView {
                 vm.showExportPanel = false
             }
         }
@@ -122,16 +208,52 @@ struct MainWindowView: View {
         }
     }
 
+    /// Single, restrained accent halo in the upper-left — avoids the
+    /// overlapping multi-gradient look that reads as generic.
+    ///
+    /// `equatable` lets SwiftUI bail out of re-laying-out this layer when the
+    /// parent body re-runs (which it does on every keystroke / scope toggle).
     private var backgroundDecoration: some View {
-        // Single, restrained accent halo in the upper-left — avoids the
-        // overlapping multi-gradient look that reads as generic.
-        RadialGradient(
-            colors: [Color.appAccent.opacity(0.10), Color.clear],
-            center: UnitPoint(x: 0.08, y: -0.05),
-            startRadius: 20,
-            endRadius: 520
+        BackgroundHaloView()
+    }
+
+    /// Refresh the cached aggregates by querying the model context directly.
+    /// Required since `allItems` is now a *paged* slice — counting/iterating
+    /// it would underreport once the user scrolls past the first batch. We
+    /// hand off to lighter SwiftData APIs (`fetchCount` for headcounts, a
+    /// predicate-filtered fetch for the tag catalog) so this stays fast even
+    /// when the live history is at its 500-item cap.
+    private func refreshDerivedCaches() {
+        refreshTotalRecords()
+        refreshFavoritesCount()
+        refreshTagCatalog()
+    }
+
+    private func refreshTotalRecords() {
+        let descriptor = FetchDescriptor<ClipboardItem>(
+            predicate: #Predicate { $0.deletedAt == nil }
         )
-        .ignoresSafeArea()
+        totalRecordsCache = (try? modelContext.fetchCount(descriptor)) ?? 0
+    }
+
+    private func refreshFavoritesCount() {
+        let descriptor = FetchDescriptor<ClipboardItem>(
+            predicate: #Predicate { $0.deletedAt == nil && $0.isFavorite }
+        )
+        favoritesCountCache = (try? modelContext.fetchCount(descriptor)) ?? 0
+    }
+
+    private func refreshTagCatalog() {
+        // Only items that actually carry tags participate, keeping this much
+        // cheaper than a full history walk.
+        let descriptor = FetchDescriptor<ClipboardItem>(
+            predicate: #Predicate { $0.deletedAt == nil && $0.tagsRaw != nil }
+        )
+        if let tagged = try? modelContext.fetch(descriptor) {
+            allKnownTagsCache = vm.allKnownTags(in: tagged)
+        } else {
+            allKnownTagsCache = []
+        }
     }
 
     private var listScreen: some View {
@@ -326,9 +448,9 @@ struct MainWindowView: View {
                     .font(.system(size: 17, weight: .semibold))
                     .tracking(0.2)
                 HStack(spacing: 8) {
-                    HeaderStat(value: "\(allItems.count)", label: L("main.stat.records"))
+                    HeaderStat(value: "\(totalRecordsCache)", label: L("main.stat.records"))
                     HeaderStatDivider()
-                    HeaderStat(value: "\(allItems.filter { $0.isFavorite }.count)", label: L("main.stat.favorites"))
+                    HeaderStat(value: "\(favoritesCountCache)", label: L("main.stat.favorites"))
                     if stats.enabled {
                         HeaderStatDivider()
                         HeaderStat(value: "\(stats.todayCount())", label: L("main.stat.today"), tint: .appAccent)
@@ -375,7 +497,7 @@ struct MainWindowView: View {
                 text: $vm.searchText,
                 mode: $vm.searchMode,
                 activeTags: $vm.activeTags,
-                availableTags: vm.allKnownTags(in: allItems),
+                availableTags: allKnownTagsCache,
                 featureEnabled: vm.semanticFeatureEnabled,
                 indexing: vm.isBackfillingEmbeddings
             )
@@ -472,8 +594,15 @@ struct MainWindowView: View {
     /// list. Pin-ordering lives here (not in the VM) so we only walk the list
     /// once per render.
     private func splitItems(for items: [ClipboardItem]) -> (pinned: [ClipboardItem], others: [ClipboardItem]) {
-        let pinned = items.filter { $0.isPinned }
-        let others = items.filter { !$0.isPinned }
+        // Single partition pass; previous implementation walked the list
+        // twice (filter pinned + filter not-pinned).
+        var pinned: [ClipboardItem] = []
+        var others: [ClipboardItem] = []
+        pinned.reserveCapacity(items.count / 4)
+        others.reserveCapacity(items.count)
+        for item in items {
+            if item.isPinned { pinned.append(item) } else { others.append(item) }
+        }
         if vm.selectedScope == .all {
             return (pinned, others)
         }
@@ -493,6 +622,15 @@ struct MainWindowView: View {
                 }
                 ForEach(split.others) { item in
                     cardRow(for: item)
+                }
+                // Load-more sentinel: a near-invisible footer that, when it
+                // scrolls into view inside the LazyVStack, asks the parent to
+                // grow the page size. `.id(pageSize)` makes each new page
+                // produce a fresh sentinel so its one-shot `.onAppear` re-arms
+                // after every successful expansion.
+                if canLoadMore && allItems.count >= pageSize {
+                    LoadMoreSentinel(onAppear: onRequestMore)
+                        .id(pageSize)
                 }
             }
             .padding(.horizontal, 16)
@@ -1306,6 +1444,54 @@ private struct SearchModeSegment: View {
         if disabled { return .secondary }
         if isOn { return .white }
         return hovering ? .primary : .secondary
+    }
+}
+
+// MARK: - Load-more sentinel
+
+/// Invisible footer that fires its callback the first time it scrolls into
+/// view. Used by the paginated list to ask the outer wrapper for another
+/// page. A tiny spinner is drawn to hint at "loading more" — it's all the
+/// user sees before the new rows pop in.
+private struct LoadMoreSentinel: View {
+    let onAppear: () -> Void
+
+    @State private var fired = false
+
+    var body: some View {
+        HStack {
+            Spacer()
+            ProgressView()
+                .progressViewStyle(.circular)
+                .controlSize(.small)
+                .opacity(0.5)
+            Spacer()
+        }
+        .frame(height: 28)
+        .onAppear {
+            guard !fired else { return }
+            fired = true
+            onAppear()
+        }
+    }
+}
+
+// MARK: - Static background halo
+
+/// Wraps the accent radial gradient in an `Equatable` view so SwiftUI bails
+/// out of re-evaluating it whenever the parent re-renders (every keystroke,
+/// every scope flip). The decoration is constant — there's nothing to diff.
+private struct BackgroundHaloView: View, Equatable {
+    static func == (_: BackgroundHaloView, _: BackgroundHaloView) -> Bool { true }
+
+    var body: some View {
+        RadialGradient(
+            colors: [Color.appAccent.opacity(0.10), Color.clear],
+            center: UnitPoint(x: 0.08, y: -0.05),
+            startRadius: 20,
+            endRadius: 520
+        )
+        .ignoresSafeArea()
     }
 }
 

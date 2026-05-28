@@ -156,6 +156,13 @@ class ClipboardViewModel: ObservableObject {
         forKey: ClipboardViewModel.semanticFeatureEnabledKey
     ) as? Bool ?? true
 
+    /// Monotonic bump counters published so views can rebuild O(n) derived
+    /// state (allKnownTags, favorites count) lazily — only when the relevant
+    /// mutation actually happens, instead of scanning every row on every body
+    /// re-run. Bumped from `addTag/removeTag/toggleFavorite/...`.
+    @Published var tagCatalogVersion: Int = 0
+    @Published var favoritesVersion: Int = 0
+
     func setSemanticFeatureEnabled(_ enabled: Bool) {
         UserDefaults.standard.set(enabled, forKey: Self.semanticFeatureEnabledKey)
         semanticFeatureEnabled = enabled
@@ -252,7 +259,15 @@ class ClipboardViewModel: ObservableObject {
     }
 
     func startMonitoring(context: ModelContext) {
-        applyRetentionCleanup(context: context)
+        // Retention sweep used to run synchronously on the very first frame,
+        // which fetched every clipboard item (including embedded image data)
+        // before the window could draw. Push it past the first paint so the
+        // app feels snappy on launch — clips that are seconds-over the
+        // retention boundary surviving for ~2s is harmless.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            self?.applyRetentionCleanup(context: context)
+        }
         scheduleRetentionTimer(context: context)
 
         monitor.startMonitoring { [weak self] type, rawContent, imageData, fileURL, sourceApp, bundleId in
@@ -284,10 +299,14 @@ class ClipboardViewModel: ObservableObject {
             // ("[图片 12KB]") so equality would collapse unrelated clips.
             let isTextLike = (type == .text || type == .url || type == .rtf)
             if isTextLike {
-                let recentDescriptor = FetchDescriptor<ClipboardItem>(
+                var recentDescriptor = FetchDescriptor<ClipboardItem>(
                     predicate: #Predicate { $0.content == content },
                     sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
                 )
+                // We only ever read `existing.first`; capping the fetch keeps
+                // the dedup probe O(1) instead of materialising every prior
+                // copy of a hot string (URLs, tokens, repeated snippets).
+                recentDescriptor.fetchLimit = 1
                 if let existing = try? context.fetch(recentDescriptor),
                    let mostRecent = existing.first {
                     mostRecent.createdAt = Date()
@@ -352,16 +371,25 @@ class ClipboardViewModel: ObservableObject {
                 }
             }
 
-            // Trim old items (keep max 500)
-            let countDescriptor = FetchDescriptor<ClipboardItem>(
-                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
-            )
-            if let allItems = try? context.fetch(countDescriptor), allItems.count > 500 {
-                for oldItem in allItems.suffix(from: 500) {
-                    context.delete(oldItem)
+            // Trim old items (keep max 500).
+            //
+            // The previous implementation fetched every row (including the
+            // embedded image blobs) just to count and slice, which spiked CPU
+            // and memory on every paste. Use `fetchCount` for the cheap
+            // headcount and only materialise the tail when trimming is
+            // actually needed.
+            let countAll = FetchDescriptor<ClipboardItem>()
+            if let total = try? context.fetchCount(countAll), total > 500 {
+                var tailDescriptor = FetchDescriptor<ClipboardItem>(
+                    sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+                )
+                tailDescriptor.fetchOffset = 500
+                tailDescriptor.fetchLimit = total - 500
+                if let tail = try? context.fetch(tailDescriptor) {
+                    for oldItem in tail { context.delete(oldItem) }
                 }
             }
-            
+
             try? context.save()
         }
     }
@@ -528,6 +556,7 @@ class ClipboardViewModel: ObservableObject {
 
     func toggleFavorite(_ item: ClipboardItem) {
         item.isFavorite.toggle()
+        favoritesVersion &+= 1
     }
 
     func togglePin(_ item: ClipboardItem) {
@@ -589,11 +618,13 @@ class ClipboardViewModel: ObservableObject {
 
     func addTag(_ tag: String, to item: ClipboardItem) {
         item.setTags(item.tags + [tag])
+        tagCatalogVersion &+= 1
     }
 
     func removeTag(_ tag: String, from item: ClipboardItem) {
         let key = tag.lowercased()
         item.setTags(item.tags.filter { $0.lowercased() != key })
+        tagCatalogVersion &+= 1
     }
 
     // MARK: - Selection / Merge

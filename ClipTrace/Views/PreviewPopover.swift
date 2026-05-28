@@ -355,8 +355,9 @@ private struct VideoPosterPreview: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task(id: item.id) {
             loading = true
+            let request = ThumbnailRequest(item: item)
             image = await ThumbnailLoader.shared.thumbnail(
-                for: item,
+                request,
                 size: CGSize(width: 720, height: 420)
             )
             loading = false
