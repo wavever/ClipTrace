@@ -469,6 +469,14 @@ class ClipboardViewModel: ObservableObject {
         item.isPinned.toggle()
     }
 
+    /// Apply a user-typed title to `item`. Empty / whitespace input clears
+    /// the custom title and reverts the row to its default heuristic title.
+    func rename(_ item: ClipboardItem, to newTitle: String, context: ModelContext) {
+        let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        item.customTitle = trimmed.isEmpty ? nil : String(trimmed.prefix(120))
+        try? context.save()
+    }
+
     func addTag(_ tag: String, to item: ClipboardItem) {
         item.setTags(item.tags + [tag])
     }
@@ -807,7 +815,8 @@ class ClipboardViewModel: ObservableObject {
     }
 
     private func favoriteSortKey(_ item: ClipboardItem) -> String {
-        (item.preview ?? item.content).trimmingCharacters(in: .whitespacesAndNewlines)
+        if let title = item.effectiveCustomTitle { return title }
+        return (item.preview ?? item.content).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Rank items by keyword and cosine similarity. Each language (`zh` /
@@ -884,6 +893,10 @@ class ClipboardViewModel: ObservableObject {
     private func keywordMatchScore(for item: ClipboardItem, query: String) -> Float {
         var score: Float = 0
         if item.content.localizedCaseInsensitiveContains(query) {
+            score += semanticKeywordBoost
+        }
+        if let title = item.effectiveCustomTitle,
+           title.localizedCaseInsensitiveContains(query) {
             score += semanticKeywordBoost
         }
         if item.sourceApp.localizedCaseInsensitiveContains(query) {

@@ -188,6 +188,9 @@ struct ClipboardItemRow: View {
     }
 
     private var displayTitle: String {
+        // User-assigned label wins outright — that's the whole point of
+        // letting people rename rows.
+        if let custom = item.effectiveCustomTitle { return custom }
         // Merged entries set a preview prefixed with a localized "[Merged ..."
         // (or "[合并 ...") tag — keep that as the title so the row visually
         // reads as a merge result instead of mirroring the first source item.

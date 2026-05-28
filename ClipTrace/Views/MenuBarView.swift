@@ -168,7 +168,7 @@ struct MenuBarRow: View {
                             .font(.system(size: 8))
                             .foregroundStyle(.yellow)
                     }
-                    Text(item.preview ?? item.content)
+                    Text(item.effectiveCustomTitle ?? item.preview ?? item.content)
                         .font(.system(size: 12))
                         .lineLimit(1)
                 }

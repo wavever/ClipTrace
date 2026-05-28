@@ -185,6 +185,10 @@ extension L10n {
         "toolbar.stats": "活跃统计",
         "toolbar.settings": "设置",
 
+        // rename
+        "rename.title": "重命名条目",
+        "rename.subtitle": "为这条剪贴板内容设置自定义标题；留空可恢复默认。",
+
         // selection / merge
         "selection.selectedFormat": "已选 %d/%d",
         "selection.selectAll": "全选",
@@ -221,6 +225,7 @@ extension L10n {
 
         // action bar
         "action.copy": "复制",
+        "action.rename": "重命名…",
         "action.preview": "预览",
         "action.pin": "置顶",
         "action.unpin": "取消置顶",
@@ -667,6 +672,10 @@ extension L10n {
         "toolbar.stats": "Activity",
         "toolbar.settings": "Settings",
 
+        // rename
+        "rename.title": "Rename clip",
+        "rename.subtitle": "Set a custom title for this clip. Leave empty to restore the default.",
+
         // selection / merge
         "selection.selectedFormat": "Selected %d/%d",
         "selection.selectAll": "Select all",
@@ -703,6 +712,7 @@ extension L10n {
 
         // actions
         "action.copy": "Copy",
+        "action.rename": "Rename…",
         "action.preview": "Preview",
         "action.pin": "Pin",
         "action.unpin": "Unpin",

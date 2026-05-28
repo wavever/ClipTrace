@@ -338,6 +338,10 @@ enum MCPServer {
         if item.content.localizedCaseInsensitiveContains(query) {
             score += semanticKeywordBoost
         }
+        if let title = item.effectiveCustomTitle,
+           title.localizedCaseInsensitiveContains(query) {
+            score += semanticKeywordBoost
+        }
         if item.sourceApp.localizedCaseInsensitiveContains(query) {
             score += semanticSourceBoost
         }
@@ -413,14 +417,18 @@ enum MCPServer {
             body = item.content
         }
 
-        let header = """
-        Type: \(item.type)
-        Source: \(item.sourceApp)
-        Created: \(iso8601(item.createdAt))
-        Pinned: \(item.isPinned)
-        Favorite: \(item.isFavorite)
-        Length: \(item.content.count) chars
-        """
+        var headerLines: [String] = [
+            "Type: \(item.type)",
+            "Source: \(item.sourceApp)",
+            "Created: \(iso8601(item.createdAt))",
+            "Pinned: \(item.isPinned)",
+            "Favorite: \(item.isFavorite)",
+            "Length: \(item.content.count) chars",
+        ]
+        if let title = item.effectiveCustomTitle {
+            headerLines.insert("Title: \(title)", at: 1)
+        }
+        let header = headerLines.joined(separator: "\n")
 
         return "\(header)\n\n---\n\(body)"
     }

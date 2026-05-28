@@ -14,6 +14,9 @@ struct MainWindowView: View {
     @AppStorage("fdaOnboardingDismissed") private var fdaOnboardingDismissed = false
     @AppStorage("pinnedCollapsed") private var pinnedCollapsed = false
     @State private var isMergingSelection = false
+    /// Non-nil when the user picked "Rename" from a row's context menu —
+    /// drives the rename sheet at the root level so it survives row-view churn.
+    @State private var renameTarget: ClipboardItem?
 
     private var filteredItems: [ClipboardItem] {
         vm.filteredItems(allItems)
@@ -85,6 +88,17 @@ struct MainWindowView: View {
             ExportPanelView(allItems: allItems) {
                 vm.showExportPanel = false
             }
+        }
+        .sheet(item: $renameTarget) { item in
+            RenameClipSheet(
+                initialTitle: item.effectiveCustomTitle ?? "",
+                fallback: defaultDisplayTitle(for: item),
+                onCommit: { newTitle in
+                    vm.rename(item, to: newTitle, context: modelContext)
+                    renameTarget = nil
+                },
+                onCancel: { renameTarget = nil }
+            )
         }
         .sheet(isPresented: $vm.showSnippetEditor) {
             SnippetEditorView(
@@ -613,6 +627,10 @@ struct MainWindowView: View {
             vm.copyToClipboard(item)
             ToastCenter.shared.show(L("common.copied"))
         }
+        Divider()
+        Button(L("action.rename"), systemImage: "pencil") {
+            renameTarget = item
+        }
         if item.itemType == .url {
             Divider()
             Button(L("action.openInBrowser"), systemImage: "safari") {
@@ -687,6 +705,68 @@ struct MainWindowView: View {
         }()
         if let url = URL(string: candidate) {
             NSWorkspace.shared.open(url)
+        }
+    }
+
+    /// Heuristic title used as the rename sheet's placeholder/fallback so
+    /// users see what the row currently shows before they type anything.
+    private func defaultDisplayTitle(for item: ClipboardItem) -> String {
+        if let url = item.resolvedFileURL { return url.lastPathComponent }
+        let firstLine = (item.preview ?? item.content)
+            .components(separatedBy: .newlines)
+            .first ?? ""
+        return firstLine.isEmpty ? item.itemType.displayName : firstLine
+    }
+
+}
+
+// MARK: - Rename sheet
+
+/// Modal for assigning a custom title to a clipboard row. Empty / whitespace
+/// input clears the custom title back to the default heuristic.
+private struct RenameClipSheet: View {
+    let initialTitle: String
+    let fallback: String
+    let onCommit: (String) -> Void
+    let onCancel: () -> Void
+
+    @State private var draft: String = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Image(systemName: "pencil")
+                    .foregroundStyle(Color.appAccent)
+                Text(L("rename.title"))
+                    .font(.system(size: 14, weight: .semibold))
+                Spacer()
+            }
+
+            Text(L("rename.subtitle"))
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+
+            TextField(fallback, text: $draft)
+                .textFieldStyle(.roundedBorder)
+                .focused($focused)
+                .onSubmit { onCommit(draft) }
+
+            HStack {
+                Spacer()
+                Button(L("common.cancel"), action: onCancel)
+                    .keyboardShortcut(.cancelAction)
+                Button(L("common.save")) { onCommit(draft) }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color.appAccent)
+            }
+        }
+        .padding(18)
+        .frame(width: 360)
+        .onAppear {
+            draft = initialTitle
+            focused = true
         }
     }
 }

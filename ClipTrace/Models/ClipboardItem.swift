@@ -53,6 +53,10 @@ final class ClipboardItem {
     /// User-defined labels. Stored as a newline-joined string for SwiftData
     /// portability — accessed via `tags` / `setTags(_:)` below.
     var tagsRaw: String?
+    /// User-assigned label that overrides the auto-derived row title. Lets
+    /// long URLs / tokens be made recognisable at a glance. Nil means
+    /// "use the default heuristic" (see `effectiveTitle`).
+    var customTitle: String?
 
     init(type: ClipboardItemType, content: String, imageData: Data? = nil, fileURL: String? = nil, sourceApp: String = "", preview: String? = nil) {
         self.id = UUID()
@@ -69,6 +73,15 @@ final class ClipboardItem {
         self.embeddingLang = nil
         self.deletedAt = nil
         self.tagsRaw = nil
+        self.customTitle = nil
+    }
+
+    /// Trimmed custom title, or nil if the user hasn't set one. Used by row
+    /// views as the highest-priority title source.
+    var effectiveCustomTitle: String? {
+        guard let raw = customTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else { return nil }
+        return raw
     }
 
     var tags: [String] {
