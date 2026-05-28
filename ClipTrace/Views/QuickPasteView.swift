@@ -4,7 +4,9 @@ import KeyboardShortcuts
 
 struct QuickPasteView: View {
     let items: [ClipboardItem]
-    var onCommit: ([ClipboardItem]) -> Void
+    /// `plainText` is true when the user invoked commit with ⌥ held — pastes
+    /// should strip RTF/file metadata and write only `.string`.
+    var onCommit: (_ items: [ClipboardItem], _ plainText: Bool) -> Void
     var onCancel: () -> Void
 
     /// Selection in click order. Used to drive numeric badges and to preserve
@@ -38,7 +40,7 @@ struct QuickPasteView: View {
                 onUp: { moveFocus(by: -1) },
                 onDown: { moveFocus(by: 1) },
                 onToggleSelect: { toggleFocusedSelection() },
-                onCommit: { commitFromKeyboard() }
+                onCommit: { plainText in commitFromKeyboard(plainText: plainText) }
             )
         )
         .overlay(
@@ -176,7 +178,7 @@ struct QuickPasteView: View {
         .onTapGesture(count: 2) {
             // Double-click on a single item: paste it directly without needing
             // the button (mirrors the typical clipboard-popup interaction).
-            onCommit([item])
+            onCommit([item], false)
         }
         .onTapGesture {
             focusedID = item.id
@@ -198,7 +200,7 @@ struct QuickPasteView: View {
             Spacer()
 
             Button {
-                commitFromKeyboard()
+                commitFromKeyboard(plainText: false)
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "return")
@@ -227,14 +229,15 @@ struct QuickPasteView: View {
 
     /// Commit triggered by the commit key or the Paste button. Honors an
     /// explicit click multi-selection when present, otherwise pastes the
-    /// keyboard-focused row.
-    private func commitFromKeyboard() {
+    /// keyboard-focused row. `plainText` is forwarded so callers (e.g. ⌥⏎)
+    /// can request a string-only pasteboard write.
+    private func commitFromKeyboard(plainText: Bool) {
         if !selectedIDs.isEmpty {
-            onCommit(selectedItems)
+            onCommit(selectedItems, plainText)
         } else if let id = focusedID, let item = items.first(where: { $0.id == id }) {
-            onCommit([item])
+            onCommit([item], plainText)
         } else if let first = items.first {
-            onCommit([first])
+            onCommit([first], plainText)
         }
     }
 
@@ -271,7 +274,8 @@ struct QuickPasteKeyCatcher: NSViewRepresentable {
     var onUp: () -> Void
     var onDown: () -> Void
     var onToggleSelect: () -> Void
-    var onCommit: () -> Void
+    /// `plainText` is `true` when the commit was issued with `⌥` held.
+    var onCommit: (_ plainText: Bool) -> Void
 
     func makeNSView(context: Context) -> KeyView {
         let view = KeyView()
@@ -293,7 +297,7 @@ struct QuickPasteKeyCatcher: NSViewRepresentable {
         var onUp: (() -> Void)?
         var onDown: (() -> Void)?
         var onToggleSelect: (() -> Void)?
-        var onCommit: (() -> Void)?
+        var onCommit: ((Bool) -> Void)?
 
         override var acceptsFirstResponder: Bool { true }
 
@@ -313,12 +317,45 @@ struct QuickPasteKeyCatcher: NSViewRepresentable {
             return typed == shortcut
         }
 
+        /// Same matcher with `⌥` masked out, so commit detection survives the
+        /// user holding the option modifier for a plain-text paste.
+        private func matchesIgnoringOption(
+            _ event: NSEvent, _ shortcut: KeyboardShortcuts.Shortcut
+        ) -> Bool {
+            let stripped = event.modifierFlags.subtracting(.option)
+            // Synthesize an event with the option flag stripped so the library's
+            // initializer doesn't see ⌥+Return as a different shortcut than ⏎.
+            let cleaned = NSEvent.keyEvent(
+                with: event.type,
+                location: event.locationInWindow,
+                modifierFlags: stripped,
+                timestamp: event.timestamp,
+                windowNumber: event.windowNumber,
+                context: nil,
+                characters: event.charactersIgnoringModifiers ?? "",
+                charactersIgnoringModifiers: event.charactersIgnoringModifiers ?? "",
+                isARepeat: event.isARepeat,
+                keyCode: event.keyCode
+            )
+            guard let cleaned,
+                  let typed = KeyboardShortcuts.Shortcut(event: cleaned) else { return false }
+            return typed == shortcut
+        }
+
         /// Runs the action bound to `event`, if any. Commit is checked before
         /// toggle so a user who maps both to the same key still gets a paste.
         private func handle(_ event: NSEvent) -> Bool {
             let store = QuickPasteKeyStore.shared
+            let optionHeld = event.modifierFlags.contains(.option)
             if matches(event, store.commitShortcut) {
-                onCommit?()
+                onCommit?(optionHeld)
+                return true
+            }
+            // ⌥ + commit key reaches us as a different shortcut (e.g. ⌥⏎
+            // instead of ⏎). Detect that combo explicitly so plain-text paste
+            // works with the default Return commit key.
+            if optionHeld, matchesIgnoringOption(event, store.commitShortcut) {
+                onCommit?(true)
                 return true
             }
             if matches(event, store.toggleSelectShortcut) {

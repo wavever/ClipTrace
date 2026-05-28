@@ -628,6 +628,11 @@ struct MainWindowView: View {
             vm.copyToClipboard(item)
             ToastCenter.shared.show(L("common.copied"))
         }
+        Button(L("action.copyAsPlainText"), systemImage: "textformat") {
+            vm.copyAsPlainText(item)
+            ToastCenter.shared.show(L("common.copiedPlainText"))
+        }
+        .keyboardShortcut("c", modifiers: [.command, .option])
         Divider()
         Button(L("action.rename"), systemImage: "pencil") {
             renameTarget = item

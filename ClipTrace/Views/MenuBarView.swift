@@ -114,9 +114,11 @@ struct MenuBarView: View {
         ScrollView {
             LazyVStack(spacing: 2) {
                 ForEach(recentItems) { item in
-                    MenuBarRow(item: item) {
-                        vm.copyToClipboard(item)
-                    }
+                    MenuBarRow(
+                        item: item,
+                        onCopy: { vm.copyToClipboard(item) },
+                        onCopyPlainText: { vm.copyAsPlainText(item) }
+                    )
                 }
             }
             .padding(6)
@@ -152,6 +154,7 @@ struct MenuBarView: View {
 struct MenuBarRow: View {
     let item: ClipboardItem
     let onCopy: () -> Void
+    var onCopyPlainText: (() -> Void)? = nil
 
     @State private var isHovered = false
     @State private var copySucceeded = false
@@ -215,6 +218,33 @@ struct MenuBarRow: View {
         .onTapGesture(count: 2) { triggerCopy() }
         .onHover { isHovered = $0 }
         .onDisappear { resetTask?.cancel() }
+        .contextMenu {
+            Button(L("action.copy"), systemImage: "doc.on.doc") { triggerCopy() }
+            if let onCopyPlainText {
+                Button(L("action.copyAsPlainText"), systemImage: "textformat") {
+                    onCopyPlainText()
+                    triggerCopySuccessFlash()
+                }
+                .keyboardShortcut("c", modifiers: [.command, .option])
+            }
+        }
+    }
+
+    /// Flash the "copied" check without re-issuing the underlying copy — the
+    /// caller already wrote to the pasteboard via a different code path
+    /// (e.g. copy-as-plain-text).
+    private func triggerCopySuccessFlash() {
+        resetTask?.cancel()
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.75)) {
+            copySucceeded = true
+        }
+        resetTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.25)) {
+                copySucceeded = false
+            }
+        }
     }
 
     private func triggerCopy() {

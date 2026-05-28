@@ -404,7 +404,51 @@ class ClipboardViewModel: ObservableObject {
 
         ClipboardMonitor.markInternalWrite()
     }
-    
+
+    /// Force-write `item` to the pasteboard as `.string` only — stripping rich
+    /// formatting (RTF, file URLs) so the next paste lands as plain text.
+    /// Image clips fall back to their localized preview tag because they have
+    /// no meaningful plain-text representation.
+    func copyAsPlainText(_ item: ClipboardItem) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+
+        let output: String
+        switch item.itemType {
+        case .text, .url:
+            output = item.content
+        case .rtf:
+            output = Self.rtfPlainText(from: item.content) ?? item.content
+        case .file, .video:
+            output = item.resolvedFileURL?.path ?? item.content
+        case .image:
+            // No useful text rendition — fall back to OCR text when present,
+            // otherwise the preview tag (e.g. "[Image 12KB]").
+            if let ocr = item.ocrText, !ocr.isEmpty {
+                output = ocr
+            } else {
+                output = item.preview ?? item.content
+            }
+        }
+        pasteboard.setString(output, forType: .string)
+        ClipboardMonitor.markInternalWrite()
+    }
+
+    /// Decode the stored RTF blob back to plain text. Returns nil if the
+    /// content isn't valid RTF, in which case callers should fall back to
+    /// the raw content.
+    private static func rtfPlainText(from content: String) -> String? {
+        guard let data = content.data(using: .utf8) ?? content.data(using: .ascii) else {
+            return nil
+        }
+        let attributed = try? NSAttributedString(
+            data: data,
+            options: [.documentType: NSAttributedString.DocumentType.rtf],
+            documentAttributes: nil
+        )
+        return attributed?.string
+    }
+
     /// Hand-authored entry created via the snippet editor. Lives alongside
     /// captured clips but tagged with the localized snippet source label so
     /// it's distinguishable from real copies.

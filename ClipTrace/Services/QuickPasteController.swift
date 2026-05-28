@@ -116,7 +116,9 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
 
         let view = QuickPasteView(
             items: items,
-            onCommit: { [weak self] selected in self?.commit(selected) },
+            onCommit: { [weak self] selected, plainText in
+                self?.commit(selected, plainText: plainText)
+            },
             onCancel: { [weak self] in self?.cancel() }
         )
 
@@ -223,13 +225,13 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
 
     // MARK: - Commit
 
-    private func commit(_ items: [ClipboardItem]) {
+    private func commit(_ items: [ClipboardItem], plainText: Bool = false) {
         guard !items.isEmpty else {
             close()
             return
         }
 
-        writePasteboard(for: items)
+        writePasteboard(for: items, plainText: plainText)
         close()
 
         let target = previousApp
@@ -266,7 +268,7 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
         }
     }
 
-    private func writePasteboard(for items: [ClipboardItem]) {
+    private func writePasteboard(for items: [ClipboardItem], plainText: Bool = false) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         // Tell the monitor to ignore the upcoming change tick so re-pasted
@@ -275,6 +277,10 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
         defer { ClipboardMonitor.markInternalWrite() }
 
         if items.count == 1, let item = items.first {
+            if plainText {
+                pasteboard.setString(plainTextRendition(of: item), forType: .string)
+                return
+            }
             // Single-select: preserve the item's native type (image, file URL,
             // text, etc.) so paste behaves like a normal re-copy.
             switch item.itemType {
@@ -298,7 +304,10 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
 
         // Multi-select: text-join in user's selection order. Images degrade
         // to their preview tag since they can't be concatenated as plain text.
+        // `plainText` shares the same code path here since multi-paste was
+        // already string-only.
         let joined = items.map { item -> String in
+            if plainText { return plainTextRendition(of: item) }
             switch item.itemType {
             case .text, .url, .rtf:
                 return item.content
@@ -309,6 +318,30 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
             }
         }.joined(separator: "\n")
         pasteboard.setString(joined, forType: .string)
+    }
+
+    /// Best-effort plain-text rendition of `item`. Mirrors `ClipboardViewModel`'s
+    /// own logic so single- and multi-select plain-text pastes share semantics.
+    private func plainTextRendition(of item: ClipboardItem) -> String {
+        switch item.itemType {
+        case .text, .url:
+            return item.content
+        case .rtf:
+            if let data = item.content.data(using: .utf8) ?? item.content.data(using: .ascii),
+               let attributed = try? NSAttributedString(
+                   data: data,
+                   options: [.documentType: NSAttributedString.DocumentType.rtf],
+                   documentAttributes: nil
+               ) {
+                return attributed.string
+            }
+            return item.content
+        case .file, .video:
+            return item.resolvedFileURL?.path ?? item.content
+        case .image:
+            if let ocr = item.ocrText, !ocr.isEmpty { return ocr }
+            return item.preview ?? item.content
+        }
     }
 
     // MARK: - NSWindowDelegate

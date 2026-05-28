@@ -84,6 +84,7 @@ extension L10n {
         // common
         "common.copy": "复制",
         "common.copied": "已复制",
+        "common.copiedPlainText": "已复制为纯文本",
         "common.confirmDestructive": "确定？再次点击执行",
         "common.confirmTooltip": "再次点击确认执行（此操作不可撤销）",
         "common.delete": "删除",
@@ -225,6 +226,7 @@ extension L10n {
 
         // action bar
         "action.copy": "复制",
+        "action.copyAsPlainText": "粘贴为纯文本",
         "action.rename": "重命名…",
         "action.preview": "预览",
         "action.pin": "置顶",
@@ -571,6 +573,7 @@ extension L10n {
         // common
         "common.copy": "Copy",
         "common.copied": "Copied",
+        "common.copiedPlainText": "Copied as plain text",
         "common.confirmDestructive": "Sure? Click again to confirm",
         "common.confirmTooltip": "Click again to confirm (this can't be undone)",
         "common.delete": "Delete",
@@ -712,6 +715,7 @@ extension L10n {
 
         // actions
         "action.copy": "Copy",
+        "action.copyAsPlainText": "Copy as Plain Text",
         "action.rename": "Rename…",
         "action.preview": "Preview",
         "action.pin": "Pin",
