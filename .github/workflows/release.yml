@@ -130,7 +130,26 @@ jobs:
           if curl -fsSL -o /tmp/prev-appcast.xml \
               "https://github.com/${{ github.repository }}/releases/latest/download/appcast.xml"; then
             echo "Existing appcast found — preserving history."
-            awk '/<item>/,/<\/item>/' /tmp/prev-appcast.xml > "$PREV_ITEMS_FILE"
+            # Keep history but drop any item for the version currently being
+            # rebuilt, otherwise rerunning the same tag duplicates appcast items.
+            python3 - /tmp/prev-appcast.xml "$PREV_ITEMS_FILE" "$VERSION" <<'PY'
+          import re
+          import sys
+          
+          src, dst, version = sys.argv[1:4]
+          xml = open(src).read()
+          items = re.findall(r"<item>.*?</item>", xml, flags=re.S)
+          seen = {version}
+          with open(dst, "w") as out:
+              for item in items:
+                  m = re.search(r"<sparkle:version>(.*?)</sparkle:version>", item)
+                  item_version = m.group(1).strip() if m else ""
+                  if item_version in seen:
+                      continue
+                  if item_version:
+                      seen.add(item_version)
+                  out.write(item.rstrip() + "\n")
+          PY
           else
             echo "No prior appcast — starting fresh."
             : > "$PREV_ITEMS_FILE"
@@ -164,8 +183,8 @@ jobs:
 
       # `--generate-notes` only surfaces PRs, and this repo merges feature
       # branches directly to main — which leaves the release body empty save
-      # for a Full Changelog link. Build categorized notes from conventional
-      # commits between the previous tag and this one instead.
+      # for a Full Changelog link. Build concise categorized notes from
+      # conventional commit subjects between the previous tag and this one.
       - name: Generate release notes
         id: notes
         run: |
@@ -225,24 +244,11 @@ jobs:
               if bump_re.match(subject):
                   continue
 
-              # Drop trailer lines that aren't useful to end users.
-              body_lines = []
-              for line in body.splitlines():
-                  if line.startswith("Generated with "):
-                      break
-                  if line.startswith("Co-Authored-By:"):
-                      continue
-                  body_lines.append(line)
-              body_clean = "\n".join(body_lines).strip()
-
-              clean_subject = prefix_re.sub("", subject)
+              clean_subject = prefix_re.sub("", subject).strip()
               short = sha[:7]
+              # Keep each changelog entry to a single line. Detailed commit
+              # bodies/trailers are intentionally omitted from release notes.
               entry = f"- {clean_subject} ([`{short}`]({repo_url}/commit/{sha}))"
-              if body_clean:
-                  indented = "\n".join(
-                      ("  " + ln) if ln else "" for ln in body_clean.splitlines()
-                  )
-                  entry += "\n" + indented
 
               matched = None
               for title, pat in categories:
@@ -266,12 +272,24 @@ jobs:
           cat "$NOTES_FILE"
           echo "notes_file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
 
-      - name: Create GitHub Release
+      - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --title "$GITHUB_REF_NAME" \
-            --notes-file "${{ steps.notes.outputs.notes_file }}" \
-            "${{ steps.package.outputs.dmg }}" \
-            "appcast.xml"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" \
+              "${{ steps.package.outputs.dmg }}" \
+              "appcast.xml" \
+              --clobber
+            gh release edit "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --notes-file "${{ steps.notes.outputs.notes_file }}" \
+              --latest
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --notes-file "${{ steps.notes.outputs.notes_file }}" \
+              --latest \
+              "${{ steps.package.outputs.dmg }}" \
+              "appcast.xml"
+          fi
