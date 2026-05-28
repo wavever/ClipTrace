@@ -79,6 +79,7 @@ struct MainWindowView: View {
         .animation(.easeOut(duration: 0.22), value: fdaOnboardingDismissed)
         .onAppear {
             vm.startMonitoring(context: modelContext)
+            vm.backfillOCR(context: modelContext)
             vm.backfillEmbeddings(context: modelContext)
         }
         .onDisappear {

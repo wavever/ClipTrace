@@ -57,6 +57,10 @@ final class ClipboardItem {
     /// long URLs / tokens be made recognisable at a glance. Nil means
     /// "use the default heuristic" (see `effectiveTitle`).
     var customTitle: String?
+    /// Recognised text for image items, populated by an async OCR pass after
+    /// the clip is inserted. Nil for non-image clips or while recognition is
+    /// still pending; an empty string means OCR ran but found nothing.
+    var ocrText: String?
 
     init(type: ClipboardItemType, content: String, imageData: Data? = nil, fileURL: String? = nil, sourceApp: String = "", preview: String? = nil) {
         self.id = UUID()
@@ -74,6 +78,7 @@ final class ClipboardItem {
         self.deletedAt = nil
         self.tagsRaw = nil
         self.customTitle = nil
+        self.ocrText = nil
     }
 
     /// Trimmed custom title, or nil if the user hasn't set one. Used by row

@@ -143,6 +143,11 @@ class ClipboardViewModel: ObservableObject {
     @Published var isBackfillingEmbeddings: Bool = false
     @Published var backfillTotal: Int = 0
     @Published var backfillCompleted: Int = 0
+    /// True while `backfillOCR` is walking image clips and running Vision on
+    /// any that don't yet have recognized text. Independent from the embedding
+    /// backfill so users can search by image text even while embeddings are
+    /// still re-indexing.
+    @Published var isBackfillingOCR: Bool = false
 
     /// Reflects the persisted master toggle. Published so SwiftUI views that
     /// observe the VM update when it flips. Updated by the settings panel via
@@ -321,16 +326,32 @@ class ClipboardViewModel: ObservableObject {
                 preview: String(content.prefix(60))
             )
 
-            // Compute embedding off the main thread, then write back.
-            let embedContent = content
-            Task { @MainActor in
-                let emb = await EmbeddingService.shared.embedAsync(embedContent)
-                guard let emb else { return }
-                item.embedding = emb.data
-                item.embeddingLang = emb.language
-                try? context.save()
+            // Compute embedding off the main thread, then write back. For
+            // image clips we also kick off an OCR pass so the recognized
+            // text feeds both keyword search and the embedding vector.
+            if type == .image {
+                Task { @MainActor [item] in
+                    let recognized = await OCRService.shared.recognize(item: item)
+                    item.ocrText = recognized
+                    try? context.save()
+                    guard !recognized.isEmpty else { return }
+                    let emb = await EmbeddingService.shared.embedAsync(recognized)
+                    guard let emb else { return }
+                    item.embedding = emb.data
+                    item.embeddingLang = emb.language
+                    try? context.save()
+                }
+            } else {
+                let embedContent = content
+                Task { @MainActor in
+                    let emb = await EmbeddingService.shared.embedAsync(embedContent)
+                    guard let emb else { return }
+                    item.embedding = emb.data
+                    item.embeddingLang = emb.language
+                    try? context.save()
+                }
             }
-            
+
             // Trim old items (keep max 500)
             let countDescriptor = FetchDescriptor<ClipboardItem>(
                 sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
@@ -659,7 +680,13 @@ class ClipboardViewModel: ObservableObject {
             // re-detected + re-embedded, so steady-state launches do zero
             // language work and zero embedding work.
             let pending = orphans.filter { item in
-                guard item.itemType != .image else { return false }
+                // Image clips are embedded off their recognized OCR text. Skip
+                // any image that doesn't have OCR yet (the OCR backfill will
+                // schedule the embed once recognition completes); fall through
+                // for everything else.
+                if item.itemType == .image {
+                    guard let ocr = item.ocrText, !ocr.isEmpty else { return false }
+                }
                 if let existing = item.embedding,
                    let lang = item.embeddingLang,
                    let dim = service.dimension(for: lang),
@@ -682,7 +709,8 @@ class ClipboardViewModel: ObservableObject {
 
             for item in pending {
                 guard !Task.isCancelled else { break }
-                let vec = await service.embedAsync(item.content)
+                let source = item.itemType == .image ? (item.ocrText ?? "") : item.content
+                let vec = await service.embedAsync(source)
                 if let vec {
                     item.embedding = vec.data
                     item.embeddingLang = vec.language
@@ -899,9 +927,44 @@ class ClipboardViewModel: ObservableObject {
            title.localizedCaseInsensitiveContains(query) {
             score += semanticKeywordBoost
         }
+        if let ocr = item.ocrText, !ocr.isEmpty,
+           ocr.localizedCaseInsensitiveContains(query) {
+            score += semanticKeywordBoost
+        }
         if item.sourceApp.localizedCaseInsensitiveContains(query) {
             score += semanticSourceBoost
         }
         return score
+    }
+
+    // MARK: - OCR backfill
+
+    /// One-shot pass over historical image clips that don't yet have OCR
+    /// text. Vision is run on a detached task per item; recognized text is
+    /// stored on `ClipboardItem.ocrText` and the embedding is recomputed so
+    /// the same image is searchable in both keyword and semantic modes.
+    func backfillOCR(context: ModelContext) {
+        Task { @MainActor in
+            let descriptor = FetchDescriptor<ClipboardItem>(
+                predicate: #Predicate { $0.deletedAt == nil && $0.type == "image" && $0.ocrText == nil },
+                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+            )
+            guard let images = try? context.fetch(descriptor), !images.isEmpty else { return }
+
+            isBackfillingOCR = true
+            defer { isBackfillingOCR = false }
+
+            for item in images {
+                guard !Task.isCancelled else { break }
+                let recognized = await OCRService.shared.recognize(item: item)
+                item.ocrText = recognized
+                if !recognized.isEmpty,
+                   let emb = await EmbeddingService.shared.embedAsync(recognized) {
+                    item.embedding = emb.data
+                    item.embeddingLang = emb.language
+                }
+                try? context.save()
+            }
+        }
     }
 }

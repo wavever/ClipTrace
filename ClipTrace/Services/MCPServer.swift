@@ -342,6 +342,10 @@ enum MCPServer {
            title.localizedCaseInsensitiveContains(query) {
             score += semanticKeywordBoost
         }
+        if let ocr = item.ocrText, !ocr.isEmpty,
+           ocr.localizedCaseInsensitiveContains(query) {
+            score += semanticKeywordBoost
+        }
         if item.sourceApp.localizedCaseInsensitiveContains(query) {
             score += semanticSourceBoost
         }
@@ -412,7 +416,11 @@ enum MCPServer {
 
         let body: String
         if item.itemType == .image {
-            body = "[Image, \(item.imageData?.count ?? 0) bytes, not text-extractable]"
+            if let ocr = item.ocrText, !ocr.isEmpty {
+                body = "[Image, \(item.imageData?.count ?? 0) bytes]\n\nOCR:\n\(ocr)"
+            } else {
+                body = "[Image, \(item.imageData?.count ?? 0) bytes, not text-extractable]"
+            }
         } else {
             body = item.content
         }
