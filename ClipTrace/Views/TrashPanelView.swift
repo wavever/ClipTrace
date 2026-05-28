@@ -24,6 +24,10 @@ struct TrashPanelView: View {
                 .padding(.top, 18)
                 .padding(.bottom, 14)
 
+            bulkClearBar
+                .padding(.horizontal, 24)
+                .padding(.bottom, 14)
+
             if trashed.isEmpty {
                 emptyState
             } else {
@@ -218,6 +222,95 @@ struct TrashPanelView: View {
         return f.localizedString(for: deletedAt, relativeTo: Date())
     }
 
+    /// Row of chips that lets the user bulk-purge recently captured clips
+    /// (5/15/60 min, today). Acts on **active history**, not on the trash
+    /// itself — the items are soft-deleted into trash when the user has the
+    /// trash enabled, hard-deleted otherwise. Pinned/favorited rows are
+    /// preserved by the underlying VM call.
+    private var bulkClearBar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text(L("trash.clearLast.sectionTitle"))
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text(filters.trashEnabled
+                     ? L("trash.clearLast.sectionHintSoft")
+                     : L("trash.clearLast.sectionHintHard"))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+
+            HStack(spacing: 8) {
+                BulkClearChip(label: L("trash.clearLast.fiveMin"),
+                              systemImage: "5.circle") {
+                    performClearLast(minutes: 5)
+                }
+                BulkClearChip(label: L("trash.clearLast.fifteenMin"),
+                              systemImage: "15.circle") {
+                    performClearLast(minutes: 15)
+                }
+                BulkClearChip(label: L("trash.clearLast.oneHour"),
+                              systemImage: "1.circle") {
+                    performClearLast(minutes: 60)
+                }
+                BulkClearChip(label: L("trash.clearLast.today"),
+                              systemImage: "sun.max") {
+                    performClearToday()
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(.regularMaterial)
+                .opacity(0.55)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .strokeBorder(.separator.opacity(0.25), lineWidth: 0.5)
+        )
+    }
+
+    private func performClearLast(minutes: Int) {
+        let count = vm.clearLastMinutes(minutes, context: modelContext)
+        guard count > 0 else {
+            ToastCenter.shared.show(
+                L("trash.clearLast.empty"),
+                systemImage: "tray",
+                tint: .secondary
+            )
+            return
+        }
+        ToastCenter.shared.show(
+            L("trash.clearLast.doneFormat", count),
+            systemImage: "trash.fill",
+            tint: .appAccent
+        )
+    }
+
+    private func performClearToday() {
+        let count = vm.clearToday(context: modelContext)
+        guard count > 0 else {
+            ToastCenter.shared.show(
+                L("trash.clearLast.empty"),
+                systemImage: "tray",
+                tint: .secondary
+            )
+            return
+        }
+        ToastCenter.shared.show(
+            L("trash.clearLast.doneFormat", count),
+            systemImage: "trash.fill",
+            tint: .appAccent
+        )
+    }
+
     private func expiryHint(for item: ClipboardItem) -> String {
         let days = filters.trashRetentionDays
         guard days > 0, let deletedAt = item.deletedAt else { return "" }
@@ -227,5 +320,38 @@ struct TrashPanelView: View {
         let hours = Int(remaining / 3600)
         if hours < 24 { return L("trash.expiry.hoursFormat", hours) }
         return L("trash.expiry.daysFormat", hours / 24)
+    }
+}
+
+/// Pill button used by the bulk-clear bar at the top of the trash panel.
+private struct BulkClearChip: View {
+    let label: String
+    let systemImage: String
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(label)
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .foregroundStyle(hovering ? Color.white : Color.appAccent)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(hovering ? Color.appAccent : Color.appAccent.opacity(0.14))
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .strokeBorder(Color.appAccent.opacity(hovering ? 0 : 0.35), lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }

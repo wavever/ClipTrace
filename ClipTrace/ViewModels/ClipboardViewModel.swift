@@ -542,6 +542,51 @@ class ClipboardViewModel: ObservableObject {
         try? context.save()
     }
 
+    /// Soft- (or hard-) delete every active clip created in the last
+    /// `minutes` minutes. Pinned and favorited entries are preserved on the
+    /// theory that the user marked them on purpose; returns the affected count.
+    @discardableResult
+    func clearLastMinutes(_ minutes: Int, context: ModelContext) -> Int {
+        let cutoff = Date().addingTimeInterval(-Double(minutes) * 60)
+        let descriptor = FetchDescriptor<ClipboardItem>(
+            predicate: #Predicate { $0.deletedAt == nil && $0.createdAt >= cutoff }
+        )
+        guard let items = try? context.fetch(descriptor) else { return 0 }
+        let candidates = items.filter { !$0.isPinned && !$0.isFavorite }
+        guard !candidates.isEmpty else { return 0 }
+
+        let now = Date()
+        if FilterSettingsStore.shared.trashEnabled {
+            for item in candidates { item.deletedAt = now }
+        } else {
+            for item in candidates { context.delete(item) }
+        }
+        try? context.save()
+        return candidates.count
+    }
+
+    /// Soft- (or hard-) delete every active clip created today (since the
+    /// local-time start of day). Same favorite/pin exemption as `clearLastMinutes`.
+    @discardableResult
+    func clearToday(context: ModelContext) -> Int {
+        let startOfDay = Calendar.current.startOfDay(for: Date())
+        let descriptor = FetchDescriptor<ClipboardItem>(
+            predicate: #Predicate { $0.deletedAt == nil && $0.createdAt >= startOfDay }
+        )
+        guard let items = try? context.fetch(descriptor) else { return 0 }
+        let candidates = items.filter { !$0.isPinned && !$0.isFavorite }
+        guard !candidates.isEmpty else { return 0 }
+
+        let now = Date()
+        if FilterSettingsStore.shared.trashEnabled {
+            for item in candidates { item.deletedAt = now }
+        } else {
+            for item in candidates { context.delete(item) }
+        }
+        try? context.save()
+        return candidates.count
+    }
+
     func addTag(_ tag: String, to item: ClipboardItem) {
         item.setTags(item.tags + [tag])
     }

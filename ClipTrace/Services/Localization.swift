@@ -186,6 +186,17 @@ extension L10n {
         "toolbar.stats": "活跃统计",
         "toolbar.settings": "设置",
 
+        // bulk trash shortcuts
+        "trash.clearLast.sectionTitle": "快速清除",
+        "trash.clearLast.sectionHintSoft": "把最近的条目软删进垃圾桶,置顶 / 收藏不动",
+        "trash.clearLast.sectionHintHard": "彻底删除最近的条目,置顶 / 收藏不动",
+        "trash.clearLast.fiveMin": "最近 5 分钟",
+        "trash.clearLast.fifteenMin": "最近 15 分钟",
+        "trash.clearLast.oneHour": "最近 1 小时",
+        "trash.clearLast.today": "今天全部",
+        "trash.clearLast.empty": "近期没有可清除的记录",
+        "trash.clearLast.doneFormat": "已移除 %d 条",
+
         // rename
         "rename.title": "重命名条目",
         "rename.subtitle": "为这条剪贴板内容设置自定义标题；留空可恢复默认。",
@@ -674,6 +685,17 @@ extension L10n {
         "toolbar.trash": "Trash",
         "toolbar.stats": "Activity",
         "toolbar.settings": "Settings",
+
+        // bulk trash shortcuts
+        "trash.clearLast.sectionTitle": "Quick clear",
+        "trash.clearLast.sectionHintSoft": "Soft-deletes recent clips into the trash; pinned / favorited rows are kept",
+        "trash.clearLast.sectionHintHard": "Permanently deletes recent clips; pinned / favorited rows are kept",
+        "trash.clearLast.fiveMin": "Last 5 min",
+        "trash.clearLast.fifteenMin": "Last 15 min",
+        "trash.clearLast.oneHour": "Last 1 h",
+        "trash.clearLast.today": "Today",
+        "trash.clearLast.empty": "Nothing recent to clear",
+        "trash.clearLast.doneFormat": "Removed %d items",
 
         // rename
         "rename.title": "Rename clip",
