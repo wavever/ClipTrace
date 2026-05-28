@@ -839,15 +839,33 @@ class ClipboardViewModel: ObservableObject {
         // In tag mode the text input is a typing buffer for the next chip,
         // never a keyword query — only `activeTags` matters for filtering.
         if searchMode != .tag {
-            let query = strippedSearchQuery
-            if !query.isEmpty {
-                let useSemantic = searchMode == .semantic
-                    && semanticFeatureEnabled
-                    && !isBackfillingEmbeddings
-                if useSemantic {
-                    result = semanticFilter(result, query: query)
-                } else {
-                    result = keywordFilter(result, query: query)
+            let raw = strippedSearchQuery
+            if !raw.isEmpty {
+                // Strip out app:/since:/before: token modifiers before they
+                // ever reach the keyword/semantic engines.
+                let tokens = ClipboardSearchTokens.parse(raw)
+                if let appQuery = tokens.appQuery, !appQuery.isEmpty {
+                    result = result.filter { item in
+                        item.sourceApp.localizedCaseInsensitiveContains(appQuery)
+                    }
+                }
+                if let since = tokens.since {
+                    result = result.filter { $0.createdAt >= since }
+                }
+                if let before = tokens.before {
+                    result = result.filter { $0.createdAt < before }
+                }
+
+                let query = tokens.keywords
+                if !query.isEmpty {
+                    let useSemantic = searchMode == .semantic
+                        && semanticFeatureEnabled
+                        && !isBackfillingEmbeddings
+                    if useSemantic {
+                        result = semanticFilter(result, query: query)
+                    } else {
+                        result = keywordFilter(result, query: query)
+                    }
                 }
             }
         }
@@ -1009,6 +1027,97 @@ class ClipboardViewModel: ObservableObject {
                 }
                 try? context.save()
             }
+        }
+    }
+}
+
+// MARK: - Search query tokens
+
+/// Lightweight parser for the search bar's `app:`, `since:`, and `before:`
+/// modifiers. Tokens are consumed up-front by `filteredItems`, leaving the
+/// remaining text to drive the keyword / semantic engine.
+///
+/// Recognised forms:
+///   - `app:VSCode`       — sourceApp / sourceBundleId contains "VSCode" (case-insensitive)
+///   - `since:2d`         — relative window; suffixes m / h / d / w supported
+///   - `before:2026-05-01` — ISO date upper bound (exclusive of next day)
+///   - `before:2d`        — relative; "before two days ago", i.e. older than 2d
+struct ClipboardSearchTokens {
+    var keywords: String
+    var appQuery: String?
+    var since: Date?
+    var before: Date?
+
+    static func parse(_ raw: String) -> ClipboardSearchTokens {
+        var keywords: [String] = []
+        var appQuery: String?
+        var since: Date?
+        var before: Date?
+
+        let words = raw.split(whereSeparator: \.isWhitespace).map(String.init)
+        for word in words {
+            if let value = tokenValue("app:", in: word) {
+                if appQuery == nil { appQuery = value }
+                continue
+            }
+            if let value = tokenValue("since:", in: word) {
+                if let date = resolveDate(value, isUpperBound: false) {
+                    since = date
+                    continue
+                }
+            }
+            if let value = tokenValue("before:", in: word) {
+                if let date = resolveDate(value, isUpperBound: true) {
+                    before = date
+                    continue
+                }
+            }
+            keywords.append(word)
+        }
+
+        return ClipboardSearchTokens(
+            keywords: keywords.joined(separator: " "),
+            appQuery: appQuery,
+            since: since,
+            before: before
+        )
+    }
+
+    private static func tokenValue(_ prefix: String, in word: String) -> String? {
+        guard word.count > prefix.count,
+              word.lowercased().hasPrefix(prefix) else { return nil }
+        let value = word.dropFirst(prefix.count)
+        return value.isEmpty ? nil : String(value)
+    }
+
+    /// Accept either a relative duration (`2d`, `90m`, `1w`) or an ISO-8601
+    /// calendar date. For relative tokens the result is "now minus duration";
+    /// for absolute dates `isUpperBound` treats the date as 00:00 of the *next*
+    /// day so `before:2026-05-01` excludes May 1st itself.
+    private static func resolveDate(_ raw: String, isUpperBound: Bool) -> Date? {
+        if let interval = relativeInterval(raw) {
+            return Date().addingTimeInterval(-interval)
+        }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = .current
+        guard let date = formatter.date(from: raw) else { return nil }
+        if isUpperBound {
+            return Calendar.current.date(byAdding: .day, value: 1, to: date) ?? date
+        }
+        return date
+    }
+
+    private static func relativeInterval(_ raw: String) -> TimeInterval? {
+        guard let suffix = raw.last, "mhdw".contains(suffix) else { return nil }
+        let numberPart = raw.dropLast()
+        guard let value = Double(numberPart), value > 0 else { return nil }
+        switch suffix {
+        case "m": return value * 60
+        case "h": return value * 3600
+        case "d": return value * 86_400
+        case "w": return value * 86_400 * 7
+        default:  return nil
         }
     }
 }
