@@ -127,9 +127,12 @@ jobs:
           PUBDATE=$(date -u +"%a, %d %b %Y %H:%M:%S +0000")
 
           PREV_ITEMS_FILE=$(mktemp)
-          if curl -fsSL -o /tmp/prev-appcast.xml \
-              "https://github.com/${{ github.repository }}/releases/latest/download/appcast.xml"; then
-            echo "Existing appcast found — preserving history."
+          PREV_TAG=$(git tag --sort=-v:refname --merged "${TAG}^" 2>/dev/null | head -n 1 || true)
+          if [ -n "$PREV_TAG" ] && gh release download "$PREV_TAG" \
+              --repo "${{ github.repository }}" \
+              --pattern "appcast.xml" \
+              --output /tmp/prev-appcast.xml; then
+            echo "Existing appcast from $PREV_TAG found — preserving history."
             # Keep history but drop any item for the version currently being
             # rebuilt, otherwise rerunning the same tag duplicates appcast items.
             python3 - /tmp/prev-appcast.xml "$PREV_ITEMS_FILE" "$VERSION" <<'PY'
