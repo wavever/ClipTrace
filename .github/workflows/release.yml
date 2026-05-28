@@ -211,10 +211,17 @@ jobs:
           other = []
 
           for record in raw.split("\x1e"):
-              record = record.strip()
+              # Do not use strip() here: Python treats ASCII unit separator
+              # (\x1f) as whitespace, so commits with an empty body would lose
+              # the trailing field separator and fail to unpack.
+              record = record.strip("\r\n")
               if not record:
                   continue
-              sha, subject, body = record.split("\x1f", 2)
+              parts = record.split("\x1f", 2)
+              if len(parts) < 2:
+                  continue
+              sha, subject = parts[:2]
+              body = parts[2] if len(parts) > 2 else ""
               if bump_re.match(subject):
                   continue
 
