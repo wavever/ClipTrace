@@ -39,9 +39,12 @@ struct DynamicIslandView: View {
                 .foregroundStyle(.white)
         case let .toast(icon, preview):
             HStack(spacing: 8) {
+                // Tint the leading glyph with the app accent so the pill, even
+                // sitting on the hardware-black notch, still nods to the
+                // current theme color; the label stays white for legibility.
                 Image(systemName: icon)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Color.appAccent)
                 Text(preview)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.white)
