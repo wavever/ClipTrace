@@ -16,12 +16,14 @@ struct PreviewKeyCatcher: NSViewRepresentable {
     var items: () -> [ClipboardItem]
     var focusedID: () -> UUID?
     var setFocused: (UUID?) -> Void
+    var copyAction: ((ClipboardItem) -> Void)?
 
     func makeNSView(context: Context) -> KeyCatcherView {
         let view = KeyCatcherView()
         view.itemsProvider = items
         view.focusedIDProvider = focusedID
         view.setFocused = setFocused
+        view.copyAction = copyAction
         return view
     }
 
@@ -29,12 +31,14 @@ struct PreviewKeyCatcher: NSViewRepresentable {
         nsView.itemsProvider = items
         nsView.focusedIDProvider = focusedID
         nsView.setFocused = setFocused
+        nsView.copyAction = copyAction
     }
 
     final class KeyCatcherView: NSView {
         var itemsProvider: (() -> [ClipboardItem])?
         var focusedIDProvider: (() -> UUID?)?
         var setFocused: ((UUID?) -> Void)?
+        var copyAction: ((ClipboardItem) -> Void)?
 
         override var acceptsFirstResponder: Bool { true }
 
