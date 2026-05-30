@@ -7,31 +7,51 @@ struct MenuBarView: View {
     @Query(sort: \ClipboardItem.createdAt, order: .reverse) private var allItems: [ClipboardItem]
     @Environment(\.openWindow) private var openWindow
     @State private var searchText = ""
+    @State private var visibleLimit = Self.pageSize
+    @State private var isLoadingMore = false
+    @State private var paginationGeneration = 0
 
-    private var recentItems: [ClipboardItem] {
-        let items = Array(allItems.prefix(20))
-        if searchText.isEmpty { return items }
-        return items.filter {
-            $0.content.lowercased().contains(searchText.lowercased())
+    private static let pageSize = 20
+
+    private var matchingItems: [ClipboardItem] {
+        let items = allItems.filter { $0.deletedAt == nil }
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return items }
+
+        return items.filter { item in
+            item.content.localizedCaseInsensitiveContains(query) ||
+            item.sourceApp.localizedCaseInsensitiveContains(query) ||
+            item.effectiveCustomTitle?.localizedCaseInsensitiveContains(query) == true ||
+            item.ocrText?.localizedCaseInsensitiveContains(query) == true
         }
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        let items = matchingItems
+        let visibleItems = Array(items.prefix(visibleLimit))
+        let canLoadMore = visibleItems.count < items.count
+
+        return VStack(spacing: 0) {
             header
             searchField
             Divider().opacity(0.4)
 
-            if recentItems.isEmpty {
+            if items.isEmpty {
                 emptyState
             } else {
-                itemList
+                itemList(items: visibleItems, canLoadMore: canLoadMore)
             }
 
             Divider().opacity(0.4)
             footer
         }
         .frame(width: 340)
+        .onChange(of: searchText) { _, _ in
+            resetPagination()
+        }
+        .onChange(of: allItems.count) { _, _ in
+            clampVisibleLimit()
+        }
     }
 
     private var header: some View {
@@ -110,20 +130,50 @@ struct MenuBarView: View {
         .padding(20)
     }
 
-    private var itemList: some View {
+    private func itemList(items: [ClipboardItem], canLoadMore: Bool) -> some View {
         ScrollView {
             LazyVStack(spacing: 2) {
-                ForEach(recentItems) { item in
+                ForEach(items) { item in
                     MenuBarRow(
                         item: item,
                         onCopy: { vm.copyToClipboard(item) },
                         onCopyPlainText: { vm.copyAsPlainText(item) }
                     )
                 }
+
+                if canLoadMore {
+                    loadMoreTrigger
+                }
             }
             .padding(6)
         }
         .frame(maxHeight: 420)
+    }
+
+    private var loadMoreTrigger: some View {
+        Button {
+            loadMore()
+        } label: {
+            HStack(spacing: 6) {
+                if isLoadingMore {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                Text(isLoadingMore ? L("menubar.loadingMore") : L("menubar.loadMore"))
+                    .font(.caption2)
+            }
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+        }
+        .buttonStyle(.plain)
+        .disabled(isLoadingMore)
+        .onAppear {
+            loadMore()
+        }
     }
 
     private var footer: some View {
@@ -148,6 +198,33 @@ struct MenuBarView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    private func resetPagination() {
+        isLoadingMore = false
+        visibleLimit = Self.pageSize
+        paginationGeneration &+= 1
+    }
+
+    private func clampVisibleLimit() {
+        visibleLimit = max(Self.pageSize, min(visibleLimit, max(matchingItems.count, Self.pageSize)))
+    }
+
+    private func loadMore() {
+        guard !isLoadingMore, visibleLimit < matchingItems.count else { return }
+        isLoadingMore = true
+        let generation = paginationGeneration
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 80_000_000)
+            guard generation == paginationGeneration else { return }
+            let total = matchingItems.count
+            guard visibleLimit < total else {
+                isLoadingMore = false
+                return
+            }
+            visibleLimit = min(visibleLimit + Self.pageSize, total)
+            isLoadingMore = false
+        }
     }
 }
 

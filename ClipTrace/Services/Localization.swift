@@ -505,6 +505,8 @@ extension L10n {
         "menubar.empty.noMatch": "未找到匹配的内容",
         "menubar.shortcutHint": "⌘⇧V 打开主窗口",
         "menubar.recordCountFormat": "%d 条记录",
+        "menubar.loadMore": "加载更多",
+        "menubar.loadingMore": "正在加载…",
         "menubar.quit": "退出",
 
         // preview popover
@@ -1009,6 +1011,8 @@ extension L10n {
         "menubar.empty.noMatch": "No matches",
         "menubar.shortcutHint": "⌘⇧V opens main window",
         "menubar.recordCountFormat": "%d records",
+        "menubar.loadMore": "Load more",
+        "menubar.loadingMore": "Loading…",
         "menubar.quit": "Quit",
 
         // preview popover
