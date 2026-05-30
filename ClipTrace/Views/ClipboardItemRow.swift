@@ -265,7 +265,7 @@ struct ClipboardItemRow: View {
             if item.itemType == .image,
                item.imageData != nil || item.resolvedFileURL != nil {
                 HoverIconButton(
-                    systemName: "text.below.photo",
+                    systemName: "text.viewfinder",
                     help: L("action.ocr"),
                     action: { showOCR = true }
                 )
