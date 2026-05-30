@@ -132,17 +132,21 @@ struct ClipboardItemRow: View {
         // backdrop blur and a soft shadow on every paint — at ~10 visible rows
         // that's 10 GPU passes per frame for visuals that read identically
         // against the warm paper background.
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(isHovered || isSelected ? Color.appCardHover : Color.appCard)
-        )
-        .overlay {
-            if isSelected {
+        //
+        // Both the base fill *and* the accent tint live inside `.background`
+        // so neither layer intercepts hit-testing for the action-bar buttons
+        // sitting on top of the row.
+        .background {
+            ZStack {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.appAccent.opacity(0.10))
-            } else if isHovered {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.appAccent.opacity(0.04))
+                    .fill(isHovered || isSelected ? Color.appCardHover : Color.appCard)
+                if isSelected {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.appAccent.opacity(0.10))
+                } else if isHovered {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.appAccent.opacity(0.04))
+                }
             }
         }
         .overlay(
