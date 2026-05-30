@@ -17,6 +17,7 @@ struct PreviewKeyCatcher: NSViewRepresentable {
     var focusedID: () -> UUID?
     var setFocused: (UUID?) -> Void
     var copyAction: ((ClipboardItem) -> Void)?
+    var deleteAction: ((ClipboardItem) -> Void)? = nil
 
     func makeNSView(context: Context) -> KeyCatcherView {
         let view = KeyCatcherView()
@@ -24,6 +25,7 @@ struct PreviewKeyCatcher: NSViewRepresentable {
         view.focusedIDProvider = focusedID
         view.setFocused = setFocused
         view.copyAction = copyAction
+        view.deleteAction = deleteAction
         return view
     }
 
@@ -32,6 +34,7 @@ struct PreviewKeyCatcher: NSViewRepresentable {
         nsView.focusedIDProvider = focusedID
         nsView.setFocused = setFocused
         nsView.copyAction = copyAction
+        nsView.deleteAction = deleteAction
     }
 
     final class KeyCatcherView: NSView {
@@ -39,6 +42,7 @@ struct PreviewKeyCatcher: NSViewRepresentable {
         var focusedIDProvider: (() -> UUID?)?
         var setFocused: ((UUID?) -> Void)?
         var copyAction: ((ClipboardItem) -> Void)?
+        var deleteAction: ((ClipboardItem) -> Void)?
 
         override var acceptsFirstResponder: Bool { true }
 
@@ -78,8 +82,13 @@ struct PreviewKeyCatcher: NSViewRepresentable {
 
             let currentIndex = items.firstIndex(where: { $0.id == focusedIDProvider() }) ?? -1
 
+            // Only arrow navigation should fire on OS key-repeat (held key →
+            // continuous scroll). The one-shot actions — preview, copy, and
+            // especially delete — must ignore repeats: a held ⌫ would otherwise
+            // walk the whole list deleting row after row.
             switch event.keyCode {
             case 49:  // Space
+                if event.isARepeat { return }
                 let targetIndex = currentIndex >= 0 ? currentIndex : 0
                 setFocused(items[targetIndex].id)
                 QuickLookCoordinator.shared.preview(items: items, startingAt: targetIndex)
@@ -91,6 +100,18 @@ struct PreviewKeyCatcher: NSViewRepresentable {
             case 126: // ↑
                 let prev = max(0, (currentIndex < 0 ? 0 : currentIndex) - 1)
                 setFocused(items[prev].id)
+                return
+            case 36, 76: // Return / numpad Enter → copy the focused row
+                if event.isARepeat { return }
+                let targetIndex = currentIndex >= 0 ? currentIndex : 0
+                setFocused(items[targetIndex].id)
+                copyAction?(items[targetIndex])
+                return
+            case 51, 117: // Delete (⌫) / forward-delete (⌦) → remove the focused row
+                if event.isARepeat { return }
+                if currentIndex >= 0 {
+                    deleteAction?(items[currentIndex])
+                }
                 return
             default:
                 break

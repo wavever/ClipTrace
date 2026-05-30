@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-struct ClipboardItemRow: View {
+struct ClipboardItemRow: View, Equatable {
     let item: ClipboardItem
     var isSelectionMode: Bool = false
     var isSelected: Bool = false
@@ -28,6 +28,19 @@ struct ClipboardItemRow: View {
     /// scroll tick; parsing the color string every time is wasted work.
     @State private var detectedColorCache: Color? = nil
     @State private var detectedColorComputed = false
+
+    // Lets the parent `LazyVStack` skip re-evaluating this row's (heavy)
+    // body when only some *other* row's selection changed — the common case
+    // while arrow-keying through the list. We compare just the value inputs
+    // the parent feeds in; everything drawn from `item` (pin/favorite/tags/…)
+    // is observed through SwiftData's `@Model`, so those edits still re-render
+    // the row live, independent of this gate. Without it, every keystroke
+    // rebuilt all ~12 visible rows and stole frames from the scroll animation.
+    static func == (lhs: ClipboardItemRow, rhs: ClipboardItemRow) -> Bool {
+        lhs.item.id == rhs.item.id
+            && lhs.isSelected == rhs.isSelected
+            && lhs.isSelectionMode == rhs.isSelectionMode
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -139,19 +152,26 @@ struct ClipboardItemRow: View {
         .background {
             ZStack {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(isHovered || isSelected ? Color.appCardHover : Color.appCard)
-                if isSelected {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color.appAccent.opacity(0.10))
-                } else if isHovered {
+                    .fill(isHovered || staticSelected ? Color.appCardHover : Color.appCard)
+                // Hover wash, skipped under the static selected tint to avoid
+                // doubling. The browse-mode keyboard-focus highlight is *not*
+                // drawn here — the list parks a single sliding overlay on the
+                // focused row (see `focusHighlight`) so it can glide with scroll.
+                if isHovered && !staticSelected {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(Color.appAccent.opacity(0.04))
+                }
+                // Selection/merge mode keeps a static per-row tint, since
+                // several rows can be checked at once.
+                if staticSelected {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.appAccent.opacity(0.10))
                 }
             }
         }
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(borderColor, lineWidth: (isHovered || isSelected) ? 1 : 0.5)
+                .strokeBorder(borderColor, lineWidth: (isHovered || staticSelected) ? 1 : 0.5)
         )
         // Only paint a shadow on the row the user is actively interacting
         // with — idle rows used to each get their own blur pass, which adds
@@ -198,8 +218,17 @@ struct ClipboardItemRow: View {
         }
     }
 
+    /// Selected *and* painted in place. Only selection/merge mode does this —
+    /// in browse mode the keyboard-focus highlight is the list's sliding overlay
+    /// (`focusHighlight`), so the row itself draws no selected styling.
+    private var staticSelected: Bool {
+        isSelected && isSelectionMode
+    }
+
     private var borderColor: Color {
-        if isSelected { return Color.appAccent }
+        // The browse-mode focus border rides along with the sliding overlay, so
+        // the row's own border only reflects selection mode / hover / idle.
+        if staticSelected { return Color.appAccent }
         if isHovered  { return Color.appAccent.opacity(0.55) }
         return Color.secondary.opacity(0.15)
     }

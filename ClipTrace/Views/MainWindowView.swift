@@ -84,6 +84,14 @@ struct MainWindowContent: View {
     @State private var favoritesCountCache: Int = 0
     @State private var allKnownTagsCache: [String] = []
 
+    /// One spring drives both the highlight glide and the scroll follow, in a
+    /// single transaction, so they move as one. `interpolatingSpring` is the key
+    /// to continuity: unlike `.spring` (which *retargets* and restarts its curve
+    /// on every key-repeat event — the stutter), it's additive, so overlapping
+    /// presses accumulate velocity into one unbroken glide. A small `bounce`
+    /// leaves the soft "带点阻尼" settle without wobbling during fast repeats.
+    private static let focusSpring: Animation = .interpolatingSpring(duration: 0.3, bounce: 0.16)
+
     private var filteredItems: [ClipboardItem] {
         vm.filteredItems(allItems)
     }
@@ -291,14 +299,34 @@ struct MainWindowContent: View {
                 .animation(.spring(response: 0.32, dampingFraction: 0.82), value: vm.isSelectionMode)
             }
         }
-        // Sits behind everything else — captures Space/↑/↓ when no editable
-        // control owns focus, so QL preview + row navigation work from the
-        // keyboard even though the actual list rows are SwiftUI views.
+        // Sits behind everything else — captures Space/↑/↓/Return/⌫ when no
+        // editable control owns focus, so QL preview, row navigation, copy,
+        // and delete all work from the keyboard even though the actual list
+        // rows are SwiftUI views. `navigableItems` (not the raw filtered list)
+        // is the navigation order so "next row" always means the next *visible*
+        // row — pinned-first, skipping a collapsed pinned section.
         .background(
             PreviewKeyCatcher(
-                items: { filteredItems },
+                items: { navigableItems },
                 focusedID: { vm.focusedItemID },
-                setFocused: { vm.focusedItemID = $0 }
+                setFocused: { id in
+                    // Animate just the focus move so the sliding highlight
+                    // springs from the old row to the new one. The scroll-follow
+                    // is a separate, layout-settled step (see `cardList`'s
+                    // onChange): doing it here, synchronously inside the key
+                    // event, raced the layout and stranded the list during fast
+                    // key-repeat. Coherence is automatic anyway — the highlight
+                    // tracks the row's real frame, so it glides with the scroll
+                    // however the scroll is triggered.
+                    withAnimation(Self.focusSpring) { vm.focusedItemID = id }
+                },
+                copyAction: { item in
+                    vm.copyToClipboard(item)
+                    ToastCenter.shared.show(L("common.copied"))
+                },
+                deleteAction: { item in
+                    deleteFocusedAndAdvance(item)
+                }
             )
             .frame(width: 0, height: 0)
             .allowsHitTesting(false)
@@ -609,35 +637,117 @@ struct MainWindowContent: View {
         return ([], pinned + others)
     }
 
+    /// The list flattened in the exact order it's drawn on screen, for
+    /// keyboard navigation: pinned rows first (when that section is expanded),
+    /// then the rest. Arrow keys, Return, and ⌫ all walk this so the focused
+    /// row matches what the user sees and never lands on a hidden/collapsed one.
+    private var navigableItems: [ClipboardItem] {
+        let split = splitItems(for: filteredItems)
+        guard !split.pinned.isEmpty else { return split.others }
+        return pinnedCollapsed ? split.others : split.pinned + split.others
+    }
+
+    /// Delete the focused row from the keyboard, then move focus to whichever
+    /// neighbor slides into its slot — the following row, or the previous one
+    /// if it was the last — so repeated ⌫ presses keep clearing without
+    /// leaving focus stranded on a now-deleted item.
+    private func deleteFocusedAndAdvance(_ item: ClipboardItem) {
+        let list = navigableItems
+        let idx = list.firstIndex(where: { $0.id == item.id })
+        vm.deleteItem(item, context: modelContext)
+        if let idx {
+            if idx + 1 < list.count {
+                vm.focusedItemID = list[idx + 1].id
+            } else if idx - 1 >= 0 {
+                vm.focusedItemID = list[idx - 1].id
+            } else {
+                vm.focusedItemID = nil
+            }
+        }
+        ToastCenter.shared.show(L("common.deleted"), systemImage: "trash.fill", tint: .red)
+    }
+
     private func cardList(split: (pinned: [ClipboardItem], others: [ClipboardItem])) -> some View {
-        ScrollView {
-            LazyVStack(spacing: 8) {
-                if !split.pinned.isEmpty {
-                    pinnedHeader(count: split.pinned.count)
-                    if !pinnedCollapsed {
-                        ForEach(split.pinned) { item in
-                            cardRow(for: item)
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    if !split.pinned.isEmpty {
+                        pinnedHeader(count: split.pinned.count)
+                        if !pinnedCollapsed {
+                            ForEach(split.pinned) { item in
+                                cardRow(for: item)
+                            }
                         }
                     }
+                    ForEach(split.others) { item in
+                        cardRow(for: item)
+                    }
+                    // Load-more sentinel: a near-invisible footer that, when it
+                    // scrolls into view inside the LazyVStack, asks the parent to
+                    // grow the page size. `.id(pageSize)` makes each new page
+                    // produce a fresh sentinel so its one-shot `.onAppear` re-arms
+                    // after every successful expansion.
+                    if canLoadMore && allItems.count >= pageSize {
+                        LoadMoreSentinel(onAppear: onRequestMore)
+                            .id(pageSize)
+                    }
                 }
-                ForEach(split.others) { item in
-                    cardRow(for: item)
-                }
-                // Load-more sentinel: a near-invisible footer that, when it
-                // scrolls into view inside the LazyVStack, asks the parent to
-                // grow the page size. `.id(pageSize)` makes each new page
-                // produce a fresh sentinel so its one-shot `.onAppear` re-arms
-                // after every successful expansion.
-                if canLoadMore && allItems.count >= pageSize {
-                    LoadMoreSentinel(onAppear: onRequestMore)
-                        .id(pageSize)
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+                .padding(.bottom, vm.isSelectionMode ? 80 : 14)
+            }
+            .scrollContentBackground(.hidden)
+            // Single sliding focus highlight, positioned from the focused row's
+            // live frame. Because it tracks the real frame every layout pass, it
+            // stays glued to the row through a scroll (matching the content's
+            // speed exactly) and only the focus *change* is animated — see
+            // `focusHighlight`.
+            .overlayPreferenceValue(RowBoundsKey.self) { anchors in
+                focusHighlight(anchors: anchors)
+            }
+            // Follow keyboard focus. Done here (after the state settles and the
+            // row is laid out) rather than inside the key handler, so it keeps up
+            // reliably during fast key-repeat — synchronous scrolling there got
+            // dropped and left the list stranded. `anchor: nil` scrolls only the
+            // minimum: nothing moves until the focused row would slide off the
+            // top or bottom edge. The anchor-driven highlight tracks the row's
+            // real frame, so it stays glued through the scroll at matching speed.
+            .onChange(of: vm.focusedItemID) { _, id in
+                guard let id else { return }
+                withAnimation(Self.focusSpring) {
+                    proxy.scrollTo(id, anchor: nil)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 14)
-            .padding(.bottom, vm.isSelectionMode ? 80 : 14)
         }
-        .scrollContentBackground(.hidden)
+    }
+
+    /// The one keyboard-focus highlight, parked over the focused row via its
+    /// published frame. Drawn only in browse mode — selection/merge mode keeps
+    /// its static per-row checkmarks/tint since several rows can be active.
+    @ViewBuilder
+    private func focusHighlight(anchors: [UUID: Anchor<CGRect>]) -> some View {
+        GeometryReader { geo in
+            if !vm.isSelectionMode,
+               let id = vm.focusedItemID,
+               let anchor = anchors[id] {
+                let rect = geo[anchor]
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.appAccent.opacity(0.10))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(Color.appAccent, lineWidth: 1)
+                    )
+                    .frame(width: rect.width, height: rect.height)
+                    .position(x: rect.midX, y: rect.midY)
+            }
+        }
+        // Clip to the scroll viewport so the highlight gets cut at the top/bottom
+        // edge exactly like the row content does. Without this it's an unclipped
+        // overlay, so a focused row sitting at (or mid-scroll past) an edge drew
+        // its highlight outside the list, over the toolbar.
+        .clipped()
+        // Purely decorative — never let it intercept scroll or row clicks.
+        .allowsHitTesting(false)
     }
 
     @ViewBuilder
@@ -702,6 +812,11 @@ struct MainWindowContent: View {
                 try? modelContext.save()
             }
         )
+        // Gate the heavy row body on its value inputs (id + selection) so a
+        // focus move only re-renders the two rows that actually change, not
+        // every visible row. Keeps arrow-key scrolling smooth — see the
+        // `==` on ClipboardItemRow.
+        .equatable()
         .contextMenu { contextMenu(for: item) }
         // Mount only one tap gesture at a time. Having both a single- and a
         // double-tap on the same view makes SwiftUI delay the single tap
@@ -726,6 +841,12 @@ struct MainWindowContent: View {
                     ToastCenter.shared.show(L("common.copied"))
                 }
         )
+        // Publish this row's live frame so the list can park a single sliding
+        // highlight on whichever row is focused (see `focusHighlight`). Driving
+        // the highlight from the real frame is what keeps it glued to the row
+        // during a scroll — it moves at exactly the content's speed because it
+        // *is* the content's position, not a second animation racing it.
+        .anchorPreference(key: RowBoundsKey.self, value: .bounds) { [item.id: $0] }
     }
 
     private func pinnedHeader(count: Int) -> some View {
@@ -1444,6 +1565,19 @@ private struct SearchModeSegment: View {
         if disabled { return .secondary }
         if isOn { return .white }
         return hovering ? .primary : .secondary
+    }
+}
+
+// MARK: - Row bounds preference
+
+/// Each visible row publishes its frame here, keyed by item id, so the list can
+/// park a single sliding focus highlight on whichever row is focused. Only the
+/// rows the `LazyVStack` actually renders contribute, so this stays to ~a dozen
+/// entries regardless of history size.
+private struct RowBoundsKey: PreferenceKey {
+    static let defaultValue: [UUID: Anchor<CGRect>] = [:]
+    static func reduce(value: inout [UUID: Anchor<CGRect>], nextValue: () -> [UUID: Anchor<CGRect>]) {
+        value.merge(nextValue(), uniquingKeysWith: { $1 })
     }
 }
 
