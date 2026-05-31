@@ -68,6 +68,7 @@ struct MainWindowContent: View {
     @ObservedObject private var nav = AppNavigation.shared
     @ObservedObject private var toasts = ToastCenter.shared
     @ObservedObject private var stats = CopyStatsStore.shared
+    @ObservedObject private var confirm = ConfirmationCenter.shared
 
     @AppStorage("fdaOnboardingDismissed") private var fdaOnboardingDismissed = false
     @AppStorage("pinnedCollapsed") private var pinnedCollapsed = false
@@ -149,7 +150,26 @@ struct MainWindowContent: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.96)))
                 .zIndex(3)
             }
+
+            // Single host for every confirm-before-delete dialog in the app.
+            if let request = confirm.request {
+                Color.black.opacity(0.45)
+                    .ignoresSafeArea()
+                    .onTapGesture { confirm.dismiss() }
+                    .transition(.opacity)
+                    .zIndex(4)
+
+                ConfirmationDialogView(
+                    request: request,
+                    onConfirm: { confirm.runAndDismiss() },
+                    onCancel: { confirm.dismiss() }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                .zIndex(5)
+            }
         }
+        .animation(.spring(response: 0.34, dampingFraction: 0.84), value: confirm.request?.id)
         .animation(.easeOut(duration: 0.22), value: fdaOnboardingDismissed)
         .onAppear {
             // Foreground work: the pasteboard poller must be running before
@@ -283,6 +303,10 @@ struct MainWindowContent: View {
                                 .frame(height: 0.5)
                         }
                 )
+                // Lift the toolbar (and the search field's suggestion panel,
+                // which overlays downward into the list area) above the card
+                // list so the dropdown isn't drawn behind the rows.
+                .zIndex(1)
 
             if items.isEmpty {
                 emptyState
@@ -330,6 +354,25 @@ struct MainWindowContent: View {
             )
             .frame(width: 0, height: 0)
             .allowsHitTesting(false)
+        )
+        // Same thin top tint as Settings/Stats/Trash, layered over the shared
+        // VisualEffect + accent halo so the list screen carries the identical
+        // theme-colored gradient as every other screen.
+        .background(
+            VStack(spacing: 0) {
+                LinearGradient(
+                    colors: [
+                        Color.appAccent.opacity(0.10),
+                        Color.clear
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 220)
+                Spacer(minLength: 0)
+            }
+            .allowsHitTesting(false)
+            .ignoresSafeArea(edges: .top)
         )
     }
 
@@ -592,8 +635,14 @@ struct MainWindowContent: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// Any active filter — a keyword query or a tag chip — means an empty list
+    /// is a "no match" result, not just an empty scope.
+    private var isFiltering: Bool {
+        !vm.searchText.isEmpty || !vm.activeTags.isEmpty
+    }
+
     private var emptyStateIcon: String {
-        if !vm.searchText.isEmpty { return "magnifyingglass" }
+        if isFiltering { return "magnifyingglass" }
         switch vm.selectedScope {
         case .all: return "tray"
         case .favorites: return "star"
@@ -601,7 +650,7 @@ struct MainWindowContent: View {
     }
 
     private var emptyStateTitle: String {
-        if !vm.searchText.isEmpty { return L("main.empty.title.noMatch") }
+        if isFiltering { return L("main.empty.title.noMatch") }
         switch vm.selectedScope {
         case .all: return L("main.empty.title.all")
         case .favorites: return L("main.empty.title.favorites")
@@ -609,7 +658,7 @@ struct MainWindowContent: View {
     }
 
     private var emptyStateSubtitle: String {
-        if !vm.searchText.isEmpty { return L("main.empty.subtitle.noMatch") }
+        if isFiltering { return L("main.empty.subtitle.noMatch") }
         switch vm.selectedScope {
         case .all: return L("main.empty.subtitle.all")
         case .favorites: return L("main.empty.subtitle.favorites")
@@ -647,24 +696,52 @@ struct MainWindowContent: View {
         return pinnedCollapsed ? split.others : split.pinned + split.others
     }
 
+    /// Copy used by both the row trash button and the context-menu delete:
+    /// pops the shared confirm dialog, then soft-deletes (to trash) or
+    /// hard-deletes depending on the trash setting.
+    private func requestDeleteItem(_ item: ClipboardItem) {
+        ConfirmationCenter.shared.confirm(
+            title: L("confirm.deleteItem.title"),
+            message: FilterSettingsStore.shared.trashEnabled
+                ? L("confirm.deleteItem.message")
+                : L("confirm.permanent.message"),
+            confirmLabel: L("common.delete"),
+            icon: "trash"
+        ) {
+            vm.deleteItem(item, context: modelContext)
+            ToastCenter.shared.show(L("common.deleted"), systemImage: "trash.fill", tint: .red)
+        }
+    }
+
     /// Delete the focused row from the keyboard, then move focus to whichever
     /// neighbor slides into its slot — the following row, or the previous one
     /// if it was the last — so repeated ⌫ presses keep clearing without
-    /// leaving focus stranded on a now-deleted item.
+    /// leaving focus stranded on a now-deleted item. Gated behind the same
+    /// confirm dialog as every other delete; the neighbor is resolved at
+    /// confirm time so the focus lands correctly even if the list shifted.
     private func deleteFocusedAndAdvance(_ item: ClipboardItem) {
-        let list = navigableItems
-        let idx = list.firstIndex(where: { $0.id == item.id })
-        vm.deleteItem(item, context: modelContext)
-        if let idx {
-            if idx + 1 < list.count {
-                vm.focusedItemID = list[idx + 1].id
-            } else if idx - 1 >= 0 {
-                vm.focusedItemID = list[idx - 1].id
-            } else {
-                vm.focusedItemID = nil
+        ConfirmationCenter.shared.confirm(
+            title: L("confirm.deleteItem.title"),
+            message: FilterSettingsStore.shared.trashEnabled
+                ? L("confirm.deleteItem.message")
+                : L("confirm.permanent.message"),
+            confirmLabel: L("common.delete"),
+            icon: "trash"
+        ) {
+            let list = navigableItems
+            let idx = list.firstIndex(where: { $0.id == item.id })
+            vm.deleteItem(item, context: modelContext)
+            if let idx {
+                if idx + 1 < list.count {
+                    vm.focusedItemID = list[idx + 1].id
+                } else if idx - 1 >= 0 {
+                    vm.focusedItemID = list[idx - 1].id
+                } else {
+                    vm.focusedItemID = nil
+                }
             }
+            ToastCenter.shared.show(L("common.deleted"), systemImage: "trash.fill", tint: .red)
         }
-        ToastCenter.shared.show(L("common.deleted"), systemImage: "trash.fill", tint: .red)
     }
 
     private func cardList(split: (pinned: [ClipboardItem], others: [ClipboardItem])) -> some View {
@@ -762,10 +839,7 @@ struct MainWindowContent: View {
                 vm.copyToClipboard(item)
                 ToastCenter.shared.show(L("common.copied"))
             },
-            onDelete: {
-                vm.deleteItem(item, context: modelContext)
-                ToastCenter.shared.show(L("common.deleted"), systemImage: "trash.fill", tint: .red)
-            },
+            onDelete: { requestDeleteItem(item) },
             onToggleFavorite: {
                 let willFavorite = !item.isFavorite
                 vm.toggleFavorite(item)
@@ -947,8 +1021,7 @@ struct MainWindowContent: View {
         }
         Divider()
         Button(L("action.delete"), systemImage: "trash", role: .destructive) {
-            vm.deleteItem(item, context: modelContext)
-            ToastCenter.shared.show(L("common.deleted"), systemImage: "trash.fill", tint: .red)
+            requestDeleteItem(item)
         }
     }
 
@@ -1100,22 +1173,52 @@ private struct ToolbarSearchField: View {
     var indexing: Bool
 
     @FocusState private var focused: Bool
-    @State private var showingTagPicker = false
+    /// Tag mode's text field is a *local* typing buffer — it filters the
+    /// dropdown but is never written to `vm.searchText`. Keeping it off the
+    /// published binding is the whole performance fix: typing a tag query no
+    /// longer re-renders the list or bumps the @Query's fetch limit. Only
+    /// committing a chip (which mutates `activeTags`) refilters the history.
+    @State private var tagDraft = ""
+    /// Natural width of the active-tag chip rail. Measured so the rail can hug
+    /// its content (capped) instead of a horizontal ScrollView greedily
+    /// reserving its full max width — that reserved-but-empty space was leaving
+    /// a gap between the chips and the text cursor.
+    @State private var chipsWidth: CGFloat = 0
+    /// Measured height of the search bar, used to park the suggestion panel
+    /// exactly below it (the earlier alignment-guide trick let the panel drift
+    /// up over the field on some layouts; a measured offset can't).
+    @State private var barHeight: CGFloat = 0
+    /// Measured width of the scrollable chips+field rail. Combined with
+    /// `chipsWidth` it decides how much room is left for the text field before
+    /// the rail starts scrolling.
+    @State private var railWidth: CGFloat = 0
+    /// Index (into `sortedActiveTags`) of the chip the keyboard caret currently
+    /// sits on. `nil` means the caret is back in the text field — the normal
+    /// state. ←/→ walk this through the chips so the user can review tags that
+    /// have scrolled off-screen, and Backspace deletes the one it lands on.
+    @State private var caretIndex: Int? = nil
 
-    /// Active mode color — distinct per mode so users can tell at a glance
-    /// which engine is driving the results.
-    private var tint: Color {
-        switch mode {
-        case .fullText: return .appAccent
-        case .semantic: return .appAccent
-        case .tag:      return .appAccent
-        }
+    /// Smallest comfortable typing area kept visible at the trailing edge once
+    /// the chips fill the rail and it begins scrolling.
+    private let minTypingWidth: CGFloat = 90
+    /// Scroll anchor for the text field, so the rail can keep the cursor in
+    /// view as chips accumulate.
+    private let inputFieldID = "tagSearchInput"
+
+    /// Width the text field should take inside the rail: it fills the leftover
+    /// space while chips are few, then clamps to `minTypingWidth` so the rail
+    /// overflows and scrolls (pushing older chips off to the left) instead of
+    /// squeezing the cursor.
+    private var typingWidth: CGFloat {
+        let gap: CGFloat = sortedActiveTags.isEmpty ? 0 : 4
+        return max(minTypingWidth, railWidth - chipsWidth - gap)
     }
 
+    private let tint: Color = .appAccent
+
     private var placeholder: String {
-        // Hide the hint as soon as the user has any active filter (chips or
-        // typed text) — TextField hides its placeholder on non-empty text
-        // automatically, but chips don't, so we suppress it manually.
+        // Hide the hint as soon as the user has any active filter chip —
+        // TextField hides its own placeholder on non-empty text already.
         guard activeTags.isEmpty else { return "" }
         switch mode {
         case .fullText: return L("common.searchContent")
@@ -1124,102 +1227,118 @@ private struct ToolbarSearchField: View {
         }
     }
 
-    /// Trailing `#token` at the end of `text` in non-tag modes, or the whole
-    /// trailing token in tag mode (where every word is a tag candidate). Nil
-    /// means "no token currently being typed".
-    private var tagQuery: String? {
-        if mode == .tag {
-            // Last whitespace-separated word, or empty buffer if the user
-            // just typed a space — either way we want the picker open.
-            let trailing = text.split(separator: " ", omittingEmptySubsequences: false).last.map(String.init) ?? ""
-            return trailing
-        }
-        guard let hashIdx = text.lastIndex(of: "#") else { return nil }
-        if hashIdx > text.startIndex,
-           !text[text.index(before: hashIdx)].isWhitespace {
-            return nil
-        }
-        let rest = text[text.index(after: hashIdx)...]
-        if rest.contains(where: { $0.isWhitespace }) { return nil }
-        return String(rest)
+    /// Which string the text field edits: the local tag buffer in tag mode,
+    /// the shared keyword query everywhere else.
+    private var fieldText: Binding<String> {
+        mode == .tag ? $tagDraft : $text
     }
 
-    /// Tags shown in the popover: not already selected, and (when the user
-    /// has typed characters into the trailing token) case-insensitively
-    /// contains the query.
+    /// Tags matching whatever the user has typed into the local buffer, minus
+    /// the ones already picked. Returns nothing for an empty buffer — the
+    /// picker is a *search*, not a browse-all list, so focusing tag mode no
+    /// longer dumps every known tag into the dropdown.
     private var suggestedTags: [String] {
-        let pool = availableTags.filter { !activeTags.contains($0.lowercased()) }
-        guard let q = tagQuery, !q.isEmpty else { return pool }
-        return pool.filter { $0.localizedCaseInsensitiveContains(q) }
+        let q = tagDraft.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return [] }
+        return availableTags.filter {
+            !activeTags.contains($0.lowercased()) && $0.localizedCaseInsensitiveContains(q)
+        }
+    }
+
+    /// The tag a Return keypress would add — the top of the filtered list.
+    /// Highlighted in the dropdown so the Enter target is always visible.
+    private var enterTarget: String? {
+        tagDraft.trimmingCharacters(in: .whitespaces).isEmpty ? nil : suggestedTags.first
+    }
+
+    /// Whether the suggestion dropdown is open. Derived purely from state
+    /// (focus + a non-empty query) rather than hand-synced flags, so it can
+    /// never get stuck open showing every tag, and stays closed until the user
+    /// actually starts typing a tag to search for.
+    private var pickerVisible: Bool {
+        focused && mode == .tag
+            && !tagDraft.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     private var sortedActiveTags: [String] {
         activeTags.sorted()
     }
 
+    /// Anything that the clear (×) button should be able to wipe.
+    private var hasInput: Bool {
+        !text.isEmpty || !activeTags.isEmpty || !tagDraft.isEmpty
+    }
+
     private func displayName(forKey key: String) -> String {
         availableTags.first(where: { $0.lowercased() == key }) ?? key
     }
 
+    /// Add `tag` as an active filter chip and reset the buffer, leaving the
+    /// dropdown open so the user can keep stacking tags.
     private func selectTag(_ tag: String) {
-        if mode == .tag {
-            // Replace the trailing typing buffer with the picked tag — append
-            // a trailing space so the user can immediately type the next one.
-            if let lastSpace = text.lastIndex(of: " ") {
-                text = String(text[...lastSpace])
-            } else {
-                text = ""
-            }
-        } else if let hashIdx = text.lastIndex(of: "#") {
-            text = String(text[..<hashIdx])
-        }
         activeTags.insert(tag.lowercased())
-        showingTagPicker = false
+        tagDraft = ""
+        caretIndex = nil
     }
 
-    /// Called whenever `text` changes in tag mode. Commits any whitespace-
-    /// terminated tokens as chips (matching available tags case-insensitively
-    /// with prefix fallback). The last token stays in the buffer until the
-    /// user types another space.
-    private func commitTagBufferIfNeeded() {
-        guard mode == .tag else { return }
-        guard text.contains(" ") else { return }
-
-        let parts = text.split(separator: " ", omittingEmptySubsequences: false)
-        let trailing = parts.last.map(String.init) ?? ""
-        let committed = parts.dropLast()
-        let lowercasedTags = availableTags.map { ($0, $0.lowercased()) }
-
-        for raw in committed {
-            let token = String(raw).trimmingCharacters(in: .whitespaces)
-            guard !token.isEmpty else { continue }
-            let key = token.lowercased()
-            if let match = lowercasedTags.first(where: { $0.1 == key })?.0 {
-                activeTags.insert(match.lowercased())
-            } else if let prefix = lowercasedTags.first(where: { $0.1.hasPrefix(key) })?.0 {
-                activeTags.insert(prefix.lowercased())
-            } else {
-                // Unknown tag — still accept it so the user can search for
-                // a tag they remember even if no item carries it yet.
-                activeTags.insert(key)
-            }
-        }
-        text = trailing
-    }
-
+    /// Return key: add the highlighted suggestion, or — if the buffer matches
+    /// nothing — accept it verbatim so a remembered tag can still be searched
+    /// even when no item carries it yet.
     private func handleSubmit() {
         guard mode == .tag else { return }
-        let token = text.trimmingCharacters(in: .whitespaces)
-        guard !token.isEmpty else { return }
-        let key = token.lowercased()
-        if let match = availableTags.first(where: { $0.lowercased() == key }) {
-            activeTags.insert(match.lowercased())
-        } else if let prefix = availableTags.first(where: { $0.lowercased().hasPrefix(key) }) {
-            activeTags.insert(prefix.lowercased())
-        } else {
-            activeTags.insert(key)
+        if let target = enterTarget {
+            selectTag(target)
+            return
         }
-        text = ""
+        let token = tagDraft.trimmingCharacters(in: .whitespaces)
+        guard !token.isEmpty else { return }
+        activeTags.insert(token.lowercased())
+        tagDraft = ""
+        caretIndex = nil
+    }
+
+    /// Window-local key handler for the tag field. Active only while the field
+    /// is focused in tag mode; returns `true` to swallow the keystroke. With a
+    /// non-empty buffer it defers entirely so normal text editing (moving the
+    /// caret through typed characters, deleting them) keeps working — chip
+    /// navigation only takes over once the buffer is empty.
+    private func handleTagKey(_ keyCode: UInt16) -> Bool {
+        guard mode == .tag else { return false }
+        let tags = sortedActiveTags
+        guard tagDraft.isEmpty else {
+            caretIndex = nil
+            return false
+        }
+        switch keyCode {
+        case 51:  // Delete (Backspace) → remove the chip the caret is on, or last.
+            return deleteAtCaret(in: tags)
+        case 123: // ← step the caret left through the chips
+            guard !tags.isEmpty else { return false }
+            caretIndex = caretIndex.map { max(0, $0 - 1) } ?? (tags.count - 1)
+            return true
+        case 124: // → step back toward the field
+            guard let i = caretIndex else { return false }
+            caretIndex = i >= tags.count - 1 ? nil : i + 1
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Removes the chip under the caret (or the last chip when the caret is in
+    /// the field), then keeps the caret on a sensible neighbor. Returns whether
+    /// a chip was actually removed.
+    private func deleteAtCaret(in tags: [String]) -> Bool {
+        guard !tags.isEmpty else { return false }
+        let target = caretIndex ?? (tags.count - 1)
+        activeTags.remove(tags[target])
+        let newCount = tags.count - 1
+        if newCount == 0 {
+            caretIndex = nil
+        } else if caretIndex != nil {
+            caretIndex = min(target, newCount - 1)
+        }
+        return true
     }
 
     var body: some View {
@@ -1229,54 +1348,102 @@ private struct ToolbarSearchField: View {
                 .foregroundStyle(focused ? tint : .secondary)
                 .animation(.easeOut(duration: 0.15), value: focused)
 
-            // Chips live inside a horizontal scroll so they can never push
-            // the outer bar past its max width, regardless of how many
-            // tags the user stacks up.
-            if !sortedActiveTags.isEmpty {
+            // Chips and the text field share one horizontal scroll rail so the
+            // bar behaves like a token field: as chips pile up they push the
+            // cursor right until the rail overflows, then it scrolls to keep the
+            // cursor pinned at the trailing edge while older chips slide off the
+            // left — never clipped, never squeezed.
+            ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 4) {
-                        ForEach(sortedActiveTags, id: \.self) { key in
-                            TagChipInline(label: displayName(forKey: key)) {
-                                activeTags.remove(key)
+                        if !sortedActiveTags.isEmpty {
+                            HStack(spacing: 4) {
+                                ForEach(Array(sortedActiveTags.enumerated()), id: \.element) { index, key in
+                                    TagChipInline(
+                                        label: displayName(forKey: key),
+                                        isSelected: caretIndex == index
+                                    ) {
+                                        activeTags.remove(key)
+                                    }
+                                    .id(key)
+                                }
                             }
+                            .background(
+                                GeometryReader { g in
+                                    Color.clear.preference(key: ChipsWidthKey.self, value: g.size.width)
+                                }
+                            )
+                        }
+
+                        TextField(placeholder, text: fieldText)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 13))
+                            .focused($focused)
+                            .help(L("common.searchHint.tooltip"))
+                            .frame(width: typingWidth, alignment: .leading)
+                            .onSubmit(handleSubmit)
+                            // SwiftUI's `onKeyPress` never reaches a focused
+                            // TextField — the field editor swallows editing keys
+                            // first — so Backspace and ←/→ chip navigation are
+                            // caught one level up by a window-local monitor.
+                            .background(
+                                TagFieldKeyMonitor(
+                                    isActive: { focused && mode == .tag },
+                                    onKey: handleTagKey
+                                )
+                            )
+                            .id(inputFieldID)
+                    }
+                    // A hair of vertical room so chip borders aren't clipped by
+                    // the scroll view's tight content bounds.
+                    .padding(.vertical, 1)
+                    .onPreferenceChange(ChipsWidthKey.self) { chipsWidth = $0 }
+                }
+                .frame(maxWidth: .infinity)
+                .background(
+                    GeometryReader { g in
+                        Color.clear.preference(key: RailWidthKey.self, value: g.size.width)
+                    }
+                )
+                .onPreferenceChange(RailWidthKey.self) { railWidth = $0 }
+                // Follow the keyboard caret: center the selected chip while
+                // walking ←/→, or snap back to the field when the caret returns.
+                .onChange(of: caretIndex) { _, idx in
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        if let idx, idx < sortedActiveTags.count {
+                            proxy.scrollTo(sortedActiveTags[idx], anchor: .center)
+                        } else {
+                            proxy.scrollTo(inputFieldID, anchor: .trailing)
                         }
                     }
-                    .padding(.trailing, 2)
                 }
-                .frame(maxWidth: 140)
-            }
-
-            TextField(placeholder, text: $text)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .focused($focused)
-                .help(L("common.searchHint.tooltip"))
-                .frame(maxWidth: .infinity)
-                .onChange(of: text) { _, _ in
-                    commitTagBufferIfNeeded()
-                    showingTagPicker = pickerShouldShow()
-                }
-                .onChange(of: focused) { _, isFocused in
-                    if mode == .tag {
-                        showingTagPicker = isFocused
+                // When the chip set changes, keep a stale selection in range and
+                // reveal the cursor as a freshly added chip lands.
+                .onChange(of: activeTags.count) { old, new in
+                    if let i = caretIndex, i >= new {
+                        caretIndex = new > 0 ? new - 1 : nil
+                    }
+                    if new > old {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            proxy.scrollTo(inputFieldID, anchor: .trailing)
+                        }
                     }
                 }
-                .onSubmit { handleSubmit() }
-                .popover(
-                    isPresented: $showingTagPicker,
-                    attachmentAnchor: .point(.bottomLeading),
-                    arrowEdge: .top
-                ) {
-                    TagSuggestionPopover(
-                        tags: suggestedTags,
-                        onSelect: selectTag
-                    )
+                // Typing dismisses any chip selection; losing focus clears it.
+                .onChange(of: tagDraft) { _, draft in
+                    if !draft.isEmpty { caretIndex = nil }
                 }
+                .onChange(of: focused) { _, isFocused in
+                    if !isFocused { caretIndex = nil }
+                }
+            }
 
-            if !text.isEmpty || !activeTags.isEmpty {
+            if hasInput {
                 Button {
                     text = ""
+                    tagDraft = ""
                     activeTags.removeAll()
+                    caretIndex = nil
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 11))
@@ -1326,7 +1493,7 @@ private struct ToolbarSearchField: View {
                 isOn: mode == .tag,
                 tint: .appAccent
             ) {
-                switchMode(to: .tag, clearText: true)
+                switchMode(to: .tag)
             }
             .focusable(false)
         }
@@ -1346,6 +1513,33 @@ private struct ToolbarSearchField: View {
         )
         .frame(minWidth: 200, maxWidth: .infinity)
         .layoutPriority(1)
+        // Measure the bar's own height so the panel below can be offset by it.
+        .background(
+            GeometryReader { g in
+                Color.clear.preference(key: BarHeightKey.self, value: g.size.height)
+            }
+        )
+        .onPreferenceChange(BarHeightKey.self) { barHeight = $0 }
+        // App-styled dropdown panel (not a system popover bubble) pinned just
+        // beneath the bar: a top-left overlay pushed down by the measured bar
+        // height, so it always attaches *below* and never covers the search
+        // field. The toolbar's zIndex lifts it above the list below.
+        .overlay(alignment: .topLeading) {
+            if pickerVisible {
+                TagSuggestionDropdown(
+                    tags: suggestedTags,
+                    hasKnownTags: !availableTags.isEmpty,
+                    enterTarget: enterTarget,
+                    onSelect: selectTag
+                )
+                // Inherit the bar's width; take the wrapped content's height.
+                .frame(maxWidth: .infinity)
+                .fixedSize(horizontal: false, vertical: true)
+                .offset(y: barHeight + 6)
+                .transition(.scale(scale: 0.97, anchor: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.easeOut(duration: 0.16), value: pickerVisible)
         // If settings flip the feature off while we're in semantic mode,
         // fall back to plain text — otherwise the search bar would behave
         // semantically with no visible affordance.
@@ -1359,23 +1553,103 @@ private struct ToolbarSearchField: View {
         }
     }
 
-    private func pickerShouldShow() -> Bool {
-        if mode == .tag {
-            return focused
-        }
-        return tagQuery != nil
-    }
-
     /// Commit a mode change without dragging SwiftUI's implicit animation
     /// transactions along (border tint, popover open/close, segment fill
-    /// would otherwise all cross-fade and feel sluggish).
-    private func switchMode(to newMode: SearchMode, clearText: Bool = false) {
+    /// would otherwise all cross-fade and feel sluggish). Entering tag mode
+    /// focuses the field and opens the dropdown; leaving it clears the local
+    /// buffer so a stale query can't linger behind another mode.
+    private func switchMode(to newMode: SearchMode) {
         var tx = Transaction()
         tx.disablesAnimations = true
         withTransaction(tx) {
             mode = newMode
-            if clearText { text = "" }
-            showingTagPicker = pickerShouldShow()
+            caretIndex = nil
+            if newMode == .tag {
+                text = ""
+                focused = true
+            } else {
+                tagDraft = ""
+            }
+        }
+    }
+}
+
+/// Publishes the natural width of the active-tag chip rail so the search bar
+/// can size the rail to its content (capped) rather than reserving the full
+/// max width of its horizontal ScrollView.
+private struct ChipsWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+/// Publishes the search bar's measured height so the tag suggestion panel can
+/// be offset to sit flush beneath it.
+private struct BarHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+/// Publishes the width of the scrollable chips+field rail, used to decide how
+/// much room is left for the text field before the rail overflows and scrolls.
+private struct RailWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+/// Catches editing keys (Backspace, ←, →) while the tag-search field is focused
+/// so the chips can be navigated and deleted with the keyboard. SwiftUI's
+/// `onKeyPress` doesn't reach a focused TextField (its field editor consumes
+/// editing keys first), so we install a window-local key monitor that runs
+/// *before* the field and only consumes the event when the handler acted on it;
+/// otherwise the keystroke flows through to normal text editing untouched.
+private struct TagFieldKeyMonitor: NSViewRepresentable {
+    /// Gate: only act while our field owns focus in tag mode.
+    var isActive: () -> Bool
+    /// Handles a key by its `keyCode`; returns true to swallow the keystroke.
+    var onKey: (UInt16) -> Bool
+
+    func makeNSView(context: Context) -> NSView {
+        context.coordinator.isActive = isActive
+        context.coordinator.onKey = onKey
+        context.coordinator.install()
+        return NSView()
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.isActive = isActive
+        context.coordinator.onKey = onKey
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.uninstall()
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator {
+        var isActive: (() -> Bool)?
+        var onKey: ((UInt16) -> Bool)?
+        private var monitor: Any?
+
+        func install() {
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self,
+                      self.isActive?() == true,
+                      self.onKey?(event.keyCode) == true
+                else { return event }
+                return nil                            // handled → consume
+            }
+        }
+
+        func uninstall() {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
         }
     }
 }
@@ -1384,94 +1658,164 @@ private struct ToolbarSearchField: View {
 /// that removes it from the active filter set.
 private struct TagChipInline: View {
     let label: String
+    /// True when the keyboard caret is resting on this chip — drawn with a
+    /// stronger sage fill + ring so the user can see which tag ←/→ landed on.
+    var isSelected: Bool = false
     let onRemove: () -> Void
+
+    @State private var hovering = false
+    @State private var closeHovering = false
+
+    private var fillOpacity: Double {
+        if isSelected { return 0.28 }
+        return hovering ? 0.16 : 0.10
+    }
 
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: "tag.fill")
-                .font(.system(size: 8, weight: .semibold))
+                .font(.system(size: 7, weight: .bold))
+                .foregroundStyle(Color.appAccent.opacity(0.65))
             Text(label)
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Color.appAccent)
                 .lineLimit(1)
             Button(action: onRemove) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: 7.5, weight: .bold))
+                    .foregroundStyle(closeHovering ? .white : Color.appAccent.opacity(0.6))
+                    .frame(width: 14, height: 14)
+                    .background(
+                        Circle().fill(closeHovering ? Color.appAccent : Color.clear)
+                    )
+                    .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            .onHover { closeHovering = $0 }
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
+        .padding(.leading, 7)
+        .padding(.trailing, 4)
+        .padding(.vertical, 3)
+        // Continuous rounded rect (not a capsule) so the chip speaks the same
+        // squircle language as the search bar, mode segments, and toolbar —
+        // and a lighter sage fill so it reads as a quiet token, not a badge.
         .background(
-            Capsule(style: .continuous)
-                .fill(Color.appAccent.opacity(0.18))
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.appAccent.opacity(fillOpacity))
         )
         .overlay(
-            Capsule(style: .continuous)
-                .strokeBorder(Color.appAccent.opacity(0.35), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(
+                    Color.appAccent.opacity(isSelected ? 0.55 : 0.22),
+                    lineWidth: isSelected ? 1 : 0.5
+                )
         )
-        .foregroundStyle(Color.appAccent)
         .fixedSize()
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .animation(.easeOut(duration: 0.12), value: closeHovering)
+        .animation(.easeOut(duration: 0.12), value: isSelected)
     }
 }
 
 /// Popover shown beneath the search field while the user is typing a `#tag`
 /// query. Lists available tags (filtered by the query) and forwards taps to
 /// the caller, which inserts the tag and clears the typed token.
-private struct TagSuggestionPopover: View {
+/// Suggestion panel shown beneath the search field in tag mode. Replaces the
+/// system `NSPopover` (arrow + vibrant chrome) with the app's own card surface
+/// — sage border, warm shadow, continuous corners — and lays the candidate
+/// tags out as wrapping pills so a long list fills the width instead of a
+/// space-wasting single column.
+private struct TagSuggestionDropdown: View {
     let tags: [String]
+    /// Whether the history holds *any* tags at all — distinguishes the "no tags
+    /// exist yet" hint from a "nothing matches your query" message.
+    let hasKnownTags: Bool
+    /// The tag Return would commit — drawn with a persistent tint + ↵ hint so
+    /// the keyboard target is obvious without arrow-key navigation.
+    let enterTarget: String?
     let onSelect: (String) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        Group {
             if tags.isEmpty {
-                Text(L("search.tagPicker.empty"))
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .padding(12)
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(tags, id: \.self) { tag in
-                            TagSuggestionRow(tag: tag) { onSelect(tag) }
-                        }
-                    }
-                    .padding(.vertical, 4)
+                HStack(spacing: 6) {
+                    Image(systemName: hasKnownTags ? "magnifyingglass" : "tag.slash")
+                        .font(.system(size: 11))
+                    Text(hasKnownTags ? L("search.tagPicker.empty") : L("search.tagPicker.none"))
+                        .font(.system(size: 12))
                 }
-                .frame(maxHeight: 220)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 12)
+            } else {
+                WrapLayout(spacing: 6, lineSpacing: 6) {
+                    ForEach(tags, id: \.self) { tag in
+                        TagSuggestionChip(
+                            tag: tag,
+                            isEnterTarget: tag == enterTarget
+                        ) { onSelect(tag) }
+                    }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .frame(width: 200)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(.regularMaterial)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+        )
+        .shadow(color: Color.appCardShadow, radius: 14, x: 0, y: 8)
     }
 }
 
-private struct TagSuggestionRow: View {
+/// Compact candidate pill in the suggestion panel — same sage rounded-rect
+/// language as the active-filter chips, so picking and picked tags read as one
+/// family. Highlights on hover and when it's the Return target.
+private struct TagSuggestionChip: View {
     let tag: String
+    var isEnterTarget: Bool = false
     let action: () -> Void
 
     @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
+            HStack(spacing: 4) {
                 Image(systemName: "tag.fill")
-                    .font(.system(size: 10))
-                    .foregroundStyle(Color.appAccent)
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(Color.appAccent.opacity(0.65))
                 Text(tag)
-                    .font(.system(size: 12))
+                    .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
-                Spacer(minLength: 0)
+                if isEnterTarget {
+                    Image(systemName: "return")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(Color.appAccent)
+                }
             }
-            .padding(.vertical, 5)
-            .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .foregroundStyle(Color.appAccent)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
             .background(
-                Rectangle().fill(hovering ? Color.appAccent.opacity(0.15) : Color.clear)
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.appAccent.opacity(hovering || isEnterTarget ? 0.20 : 0.10))
             )
-            .contentShape(Rectangle())
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(Color.appAccent.opacity(0.22), lineWidth: 0.5)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }
 

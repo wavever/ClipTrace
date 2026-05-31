@@ -22,7 +22,7 @@ struct StatsPanelView: View {
             VStack(spacing: 0) {
                 LinearGradient(
                     colors: [
-                        Color.purple.opacity(0.10),
+                        Color.appAccent.opacity(0.10),
                         Color.clear
                     ],
                     startPoint: .top,

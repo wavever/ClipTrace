@@ -47,7 +47,7 @@ struct TrashPanelView: View {
         .background(
             VStack(spacing: 0) {
                 LinearGradient(
-                    colors: [Color.red.opacity(0.07), Color.clear],
+                    colors: [Color.appAccent.opacity(0.10), Color.clear],
                     startPoint: .top,
                     endPoint: .bottom
                 )
@@ -63,15 +63,8 @@ struct TrashPanelView: View {
         HStack(spacing: 14) {
             Button(action: { nav.showList() }) {
                 Image(systemName: "chevron.left")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .frame(width: 36, height: 36)
-                    .background(
-                        Circle().strokeBorder(.secondary.opacity(0.3), lineWidth: 1)
-                    )
-                    .contentShape(Circle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PaperIconButtonStyle(size: 34))
             .help(L("common.back"))
             .keyboardShortcut(.escape, modifiers: [])
 
@@ -86,12 +79,20 @@ struct TrashPanelView: View {
             Spacer()
 
             if !trashed.isEmpty {
-                Button(role: .destructive) {
-                    vm.emptyTrash(context: modelContext)
-                    ToastCenter.shared.show(L("trash.emptyDone"), systemImage: "trash.slash.fill", tint: .red)
+                Button {
+                    ConfirmationCenter.shared.confirm(
+                        title: L("confirm.empty.title"),
+                        message: L("confirm.empty.messageFormat", trashed.count),
+                        confirmLabel: L("trash.emptyButton"),
+                        icon: "trash.slash"
+                    ) {
+                        vm.emptyTrash(context: modelContext)
+                        ToastCenter.shared.show(L("trash.emptyDone"), systemImage: "trash.slash.fill", tint: .red)
+                    }
                 } label: {
                     Label(L("trash.emptyButton"), systemImage: "trash.slash")
                 }
+                .buttonStyle(PaperActionButtonStyle(role: .destructive))
             }
         }
     }
@@ -168,23 +169,30 @@ struct TrashPanelView: View {
 
             Spacer(minLength: 12)
 
-            Button {
+            HoverIconButton(
+                systemName: "arrow.uturn.backward",
+                help: L("trash.restore"),
+                tint: .appAccent
+            ) {
                 vm.restoreItem(item, context: modelContext)
                 ToastCenter.shared.show(L("trash.restored"), systemImage: "arrow.uturn.backward", tint: .appAccent)
-            } label: {
-                Label(L("trash.restore"), systemImage: "arrow.uturn.backward")
-                    .font(.system(size: 12, weight: .medium))
             }
-            .buttonStyle(.bordered)
 
-            Button(role: .destructive) {
-                vm.purgeItem(item, context: modelContext)
-                ToastCenter.shared.show(L("trash.purged"), systemImage: "trash.fill", tint: .red)
-            } label: {
-                Label(L("trash.purge"), systemImage: "trash")
-                    .font(.system(size: 12, weight: .medium))
+            HoverIconButton(
+                systemName: "trash",
+                help: L("trash.purge"),
+                tint: .red
+            ) {
+                ConfirmationCenter.shared.confirm(
+                    title: L("confirm.purge.title"),
+                    message: L("confirm.permanent.message"),
+                    confirmLabel: L("trash.purge"),
+                    icon: "trash"
+                ) {
+                    vm.purgeItem(item, context: modelContext)
+                    ToastCenter.shared.show(L("trash.purged"), systemImage: "trash.fill", tint: .red)
+                }
             }
-            .buttonStyle(.bordered)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -247,19 +255,27 @@ struct TrashPanelView: View {
             HStack(spacing: 8) {
                 BulkClearChip(label: L("trash.clearLast.fiveMin"),
                               systemImage: "5.circle") {
-                    performClearLast(minutes: 5)
+                    confirmClear(rangeLabel: L("trash.clearLast.fiveMin")) {
+                        performClearLast(minutes: 5)
+                    }
                 }
                 BulkClearChip(label: L("trash.clearLast.fifteenMin"),
                               systemImage: "15.circle") {
-                    performClearLast(minutes: 15)
+                    confirmClear(rangeLabel: L("trash.clearLast.fifteenMin")) {
+                        performClearLast(minutes: 15)
+                    }
                 }
                 BulkClearChip(label: L("trash.clearLast.oneHour"),
                               systemImage: "1.circle") {
-                    performClearLast(minutes: 60)
+                    confirmClear(rangeLabel: L("trash.clearLast.oneHour")) {
+                        performClearLast(minutes: 60)
+                    }
                 }
                 BulkClearChip(label: L("trash.clearLast.today"),
                               systemImage: "sun.max") {
-                    performClearToday()
+                    confirmClear(rangeLabel: L("trash.clearLast.today")) {
+                        performClearToday()
+                    }
                 }
                 Spacer(minLength: 0)
             }
@@ -274,6 +290,21 @@ struct TrashPanelView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .strokeBorder(.separator.opacity(0.25), lineWidth: 0.5)
+        )
+    }
+
+    /// Pops the shared confirm dialog before running a bulk-clear. `rangeLabel`
+    /// is the chip's own label (e.g. "最近 5 分钟") so the dialog names exactly
+    /// what's about to be cleared.
+    private func confirmClear(rangeLabel: String, _ action: @escaping () -> Void) {
+        ConfirmationCenter.shared.confirm(
+            title: L("confirm.clearRange.titleFormat", rangeLabel),
+            message: filters.trashEnabled
+                ? L("confirm.clearRange.softMessage")
+                : L("confirm.permanent.message"),
+            confirmLabel: L("common.clear"),
+            icon: "clock.arrow.circlepath",
+            action: action
         )
     }
 

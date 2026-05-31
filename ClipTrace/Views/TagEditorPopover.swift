@@ -106,8 +106,9 @@ struct TagEditorPopover: View {
 }
 
 /// Simple flow layout — wraps child views to multiple lines when they exceed
-/// the proposed width. Used for tag chips inside the popover.
-private struct WrapLayout: Layout {
+/// the proposed width. Shared by the tag editor and the search bar's tag
+/// suggestion panel.
+struct WrapLayout: Layout {
     var spacing: CGFloat = 6
     var lineSpacing: CGFloat = 6
 

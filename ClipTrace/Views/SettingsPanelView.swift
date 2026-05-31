@@ -62,8 +62,8 @@ struct SettingsPanelView: View {
             VStack(spacing: 0) {
                 LinearGradient(
                     colors: [
-                        Color.appFrameSoft.opacity(0.70),
-                        Color.appPaper.opacity(0.0)
+                        Color.appAccent.opacity(0.10),
+                        Color.clear
                     ],
                     startPoint: .top,
                     endPoint: .bottom
@@ -72,9 +72,11 @@ struct SettingsPanelView: View {
                 Spacer(minLength: 0)
             }
             .allowsHitTesting(false)
+            // Match Stats/Trash: just a thin top tint over the shared
+            // VisualEffect + accent halo from MainWindowView — no opaque base,
+            // so the window background tone stays consistent across screens.
             .ignoresSafeArea(edges: .top)
         )
-        .background(Color.appPaper.ignoresSafeArea())
     }
 
     private var header: some View {
@@ -353,60 +355,6 @@ struct SettingsSegmented<Value: Hashable>: View {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
         )
-    }
-}
-
-/// Destructive action with built-in two-step confirmation. The first tap arms
-/// the button (label morphs, background turns solid red); the second tap
-/// executes. Auto-disarms after a short timeout so the dangerous state never
-/// lingers if the user walks away.
-struct ConfirmDestructiveButton: View {
-    let label: String
-    let confirmLabel: String
-    let icon: String
-    let action: () -> Void
-
-    @State private var armed = false
-    @State private var disarmWorkItem: DispatchWorkItem?
-
-    var body: some View {
-        Button {
-            if armed {
-                disarmWorkItem?.cancel()
-                armed = false
-                action()
-            } else {
-                armed = true
-                disarmWorkItem?.cancel()
-                let work = DispatchWorkItem { armed = false }
-                disarmWorkItem = work
-                DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: work)
-            }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: armed ? "exclamationmark.triangle.fill" : icon)
-                    .font(.system(size: 12, weight: .semibold))
-                Text(armed ? confirmLabel : label)
-                    .font(.system(size: 13, weight: armed ? .semibold : .regular))
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .foregroundStyle(armed ? Color.white : Color.red)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(armed ? Color.red : Color.appChipFill)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .strokeBorder(
-                        armed ? Color.clear : Color.red.opacity(0.45),
-                        lineWidth: 1
-                    )
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 6))
-        }
-        .buttonStyle(.plain)
-        .help(armed ? L("common.confirmTooltip") : "")
     }
 }
 
@@ -1663,18 +1611,24 @@ private struct DataSection: View {
                     title: L("settings.data.export.clearStats"),
                     subtitle: L("settings.data.stats.clear.subtitle")
                 ) {
-                    ConfirmDestructiveButton(
-                        label: L("settings.data.export.clearStats"),
-                        confirmLabel: L("common.confirmDestructive"),
-                        icon: "trash"
-                    ) {
-                        stats.resetAll()
-                        ToastCenter.shared.show(
-                            L("settings.data.export.clearedStats"),
-                            systemImage: "chart.bar.xaxis",
-                            tint: .red
-                        )
+                    Button {
+                        ConfirmationCenter.shared.confirm(
+                            title: L("confirm.clearStats.title"),
+                            message: L("confirm.permanent.message"),
+                            confirmLabel: L("settings.data.export.clearStats"),
+                            icon: "trash"
+                        ) {
+                            stats.resetAll()
+                            ToastCenter.shared.show(
+                                L("settings.data.export.clearedStats"),
+                                systemImage: "chart.bar.xaxis",
+                                tint: .red
+                            )
+                        }
+                    } label: {
+                        Label(L("settings.data.export.clearStats"), systemImage: "trash")
                     }
+                    .buttonStyle(PaperActionButtonStyle(role: .destructive))
                 }
             }
 
@@ -1722,18 +1676,24 @@ private struct DataSection: View {
                 title: L("settings.data.clear.title"),
                 subtitle: L("settings.data.clear.subtitle")
             ) {
-                ConfirmDestructiveButton(
-                    label: L("settings.data.export.clearHistory"),
-                    confirmLabel: L("common.confirmDestructive"),
-                    icon: "trash"
-                ) {
-                    vm.deleteAll(context: modelContext)
-                    ToastCenter.shared.show(
-                        L("settings.data.export.clearedHistory"),
-                        systemImage: "trash.fill",
-                        tint: .red
-                    )
+                Button {
+                    ConfirmationCenter.shared.confirm(
+                        title: L("confirm.deleteAll.title"),
+                        message: L("confirm.deleteAll.message"),
+                        confirmLabel: L("settings.data.export.clearHistory"),
+                        icon: "trash"
+                    ) {
+                        vm.deleteAll(context: modelContext)
+                        ToastCenter.shared.show(
+                            L("settings.data.export.clearedHistory"),
+                            systemImage: "trash.fill",
+                            tint: .red
+                        )
+                    }
+                } label: {
+                    Label(L("settings.data.export.clearHistory"), systemImage: "trash")
                 }
+                .buttonStyle(PaperActionButtonStyle(role: .destructive))
             }
 
         }

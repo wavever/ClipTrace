@@ -857,22 +857,6 @@ class ClipboardViewModel: ObservableObject {
         return seen.values.sorted { $0.localizedCompare($1) == .orderedAscending }
     }
 
-    /// Search text with the trailing `#token` (in-progress tag autocomplete)
-    /// removed, so an open picker doesn't bleed into the keyword filter.
-    private var strippedSearchQuery: String {
-        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let hashIdx = trimmed.lastIndex(of: "#") else { return trimmed }
-        // Only strip if the `#` starts a token (start-of-string or whitespace
-        // before it) and the rest contains no whitespace.
-        if hashIdx > trimmed.startIndex,
-           !trimmed[trimmed.index(before: hashIdx)].isWhitespace {
-            return trimmed
-        }
-        let rest = trimmed[trimmed.index(after: hashIdx)...]
-        if rest.contains(where: { $0.isWhitespace }) { return trimmed }
-        return String(trimmed[..<hashIdx]).trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
     func filteredItems(_ items: [ClipboardItem]) -> [ClipboardItem] {
         // Active history never shows soft-deleted entries — those live in
         // the trash screen until they're restored or expire.
@@ -912,10 +896,10 @@ class ClipboardViewModel: ObservableObject {
             result = result.filter { $0.itemType == anchorType }
         }
 
-        // In tag mode the text input is a typing buffer for the next chip,
-        // never a keyword query — only `activeTags` matters for filtering.
+        // In tag mode the search field is a local tag-picker buffer (never
+        // written to `searchText`), so only `activeTags` matters for filtering.
         if searchMode != .tag {
-            let raw = strippedSearchQuery
+            let raw = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
             if !raw.isEmpty {
                 // Strip out app:/since:/before: token modifiers before they
                 // ever reach the keyword/semantic engines.
