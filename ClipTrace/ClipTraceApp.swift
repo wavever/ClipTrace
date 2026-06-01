@@ -115,9 +115,20 @@ struct ClipTraceApp: App {
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        applyInitialActivationPolicy()
+        syncActivationPolicyFromDefaults()
         applyInitialAppearance()
         setupGlobalHotKeys()
+
+        // AppKit resets the activation policy back to the bundle default
+        // (`.regular`, since we ship no `LSUIElement`) when the last standard
+        // window closes — which pops the Dock icon back even though the user
+        // asked to hide it. Re-assert the saved policy after any window closes.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowWillClose(_:)),
+            name: NSWindow.willCloseNotification,
+            object: nil
+        )
         DynamicIslandController.shared.setEnabled(
             DynamicIslandController.shared.isEnabled
         )
@@ -148,13 +159,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    private func applyInitialActivationPolicy() {
+    /// Re-assert the user's chosen Dock visibility from the saved preference.
+    /// Used at launch and again whenever a window closes, since AppKit silently
+    /// reverts an `.accessory` app back to `.regular` (its bundle default) once
+    /// the last standard window goes away.
+    private func syncActivationPolicyFromDefaults() {
         let defaults = UserDefaults.standard
         if defaults.object(forKey: "showInDock") == nil {
             defaults.set(true, forKey: "showInDock")
         }
         let showInDock = defaults.bool(forKey: "showInDock")
         NSApp.setActivationPolicy(showInDock ? .regular : .accessory)
+    }
+
+    /// Window just closed — re-apply the saved policy on the next runloop, once
+    /// AppKit has finished tearing the window down (and applied its own policy
+    /// reset). Without the defer we'd set the policy before AppKit clobbers it.
+    @objc private func windowWillClose(_ notification: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            self?.syncActivationPolicyFromDefaults()
+        }
     }
 
     /// Pin the saved appearance before the first window paints, so the app
