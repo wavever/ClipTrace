@@ -105,22 +105,19 @@ struct MainWindowContent: View {
             backgroundDecoration
                 .allowsHitTesting(false)
 
-            Group {
-                switch nav.screen {
-                case .list:
-                    listScreen
-                case .settings:
-                    SettingsPanelView()
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                case .stats:
-                    StatsPanelView()
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                case .trash:
-                    TrashPanelView()
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                }
+            // The card list stays mounted as the base layer; Settings / Stats /
+            // Trash slide in over it. Returning is then a pure reveal — we no
+            // longer tear down and rebuild the (heavy) list view tree on every
+            // back-navigation, which is what made the settings→list transition
+            // hitch (and occasionally spin the beachball). A move-only
+            // transition also avoids rasterising the material/shadow-heavy
+            // panels into an opacity layer.
+            listScreen
+
+            if nav.screen != .list {
+                secondaryScreen
+                    .transition(.move(edge: .trailing))
             }
-            .animation(.easeOut(duration: 0.22), value: nav.screen)
 
             if let toast = toasts.current {
                 ToastView(toast: toast) { toasts.dismiss() }
@@ -169,6 +166,7 @@ struct MainWindowContent: View {
                 .zIndex(5)
             }
         }
+        .animation(.easeOut(duration: 0.22), value: nav.screen)
         .animation(.spring(response: 0.34, dampingFraction: 0.84), value: confirm.request?.id)
         .animation(.easeOut(duration: 0.22), value: fdaOnboardingDismissed)
         .onAppear {
@@ -243,6 +241,29 @@ struct MainWindowContent: View {
     /// parent body re-runs (which it does on every keystroke / scope toggle).
     private var backgroundDecoration: some View {
         BackgroundHaloView()
+    }
+
+    /// Settings / Stats / Trash, each layered over a private copy of the shared
+    /// backdrop (blur + accent halo). The `.behindWindow` material samples the
+    /// desktop, not the in-window content beneath it, so this fully occludes the
+    /// list that stays mounted behind — letting us keep the list warm without it
+    /// bleeding through the panel.
+    @ViewBuilder
+    private var secondaryScreen: some View {
+        ZStack(alignment: .top) {
+            VisualEffectView(material: .underWindowBackground, blendingMode: .behindWindow)
+                .ignoresSafeArea()
+
+            backgroundDecoration
+                .allowsHitTesting(false)
+
+            switch nav.screen {
+            case .settings: SettingsPanelView()
+            case .stats:    StatsPanelView()
+            case .trash:    TrashPanelView()
+            case .list:     EmptyView()
+            }
+        }
     }
 
     /// Refresh the cached aggregates by querying the model context directly.
@@ -329,9 +350,14 @@ struct MainWindowContent: View {
         // rows are SwiftUI views. `navigableItems` (not the raw filtered list)
         // is the navigation order so "next row" always means the next *visible*
         // row — pinned-first, skipping a collapsed pinned section.
-        .background(
-            PreviewKeyCatcher(
-                items: { navigableItems },
+        .background {
+            // The list now stays mounted behind Settings/Stats/Trash, so only
+            // arm the key catcher on the list screen — a persistent catcher
+            // would hold first-responder there and let Space/⌫/arrows act on the
+            // hidden list (a stray ⌫ could even delete a clip).
+            if nav.screen == .list {
+                PreviewKeyCatcher(
+                    items: { navigableItems },
                 focusedID: { vm.focusedItemID },
                 setFocused: { id in
                     // Animate just the focus move so the sliding highlight
@@ -351,10 +377,11 @@ struct MainWindowContent: View {
                 deleteAction: { item in
                     deleteFocusedAndAdvance(item)
                 }
-            )
-            .frame(width: 0, height: 0)
-            .allowsHitTesting(false)
-        )
+                )
+                .frame(width: 0, height: 0)
+                .allowsHitTesting(false)
+            }
+        }
         // Same thin top tint as Settings/Stats/Trash, layered over the shared
         // VisualEffect + accent halo so the list screen carries the identical
         // theme-colored gradient as every other screen.
