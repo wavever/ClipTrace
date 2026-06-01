@@ -1523,18 +1523,48 @@ private struct MCPSettings: View {
 
             SettingsGroup(icon: "wrench.and.screwdriver", title: L("settings.mcp.tools.title"), tint: .appAccent) {
                 ForEach(MCPServer.publicTools, id: \.name) { tool in
-                    SettingsRow(
-                        icon: "function",
-                        iconTint: .appAccent,
-                        title: tool.name,
-                        subtitle: L(tool.descriptionLocalizationKey)
-                    ) {
-                        EmptyView()
-                    }
+                    MCPToolToggleRow(tool: tool)
+                        .disabled(!mcpEnabled)
                 }
             }
         }
         .opacity(mcpEnabled ? 1 : 0.6)
+    }
+}
+
+/// One MCP tool with an enable switch. Turning it off hides the tool from the
+/// MCP `tools/list` response (so it stops consuming the client's context
+/// window) and rejects direct calls. Because the MCP server runs as a separate
+/// `--mcp` process that reads this on launch, the change applies the next time
+/// the client spawns the server.
+private struct MCPToolToggleRow: View {
+    let tool: MCPServer.ToolInfo
+    @AppStorage private var enabled: Bool
+
+    init(tool: MCPServer.ToolInfo) {
+        self.tool = tool
+        self._enabled = AppStorage(
+            wrappedValue: true,
+            MCPServer.toolEnabledDefaultsKey(tool.name)
+        )
+    }
+
+    var body: some View {
+        // Secondary treatment: a muted icon chip and a small switch mark these
+        // as fine-grained sub-controls, so the list of 12 doesn't compete with
+        // the master "Enable MCP" toggle above.
+        SettingsRow(
+            icon: "function",
+            iconTint: .secondary,
+            title: tool.name,
+            subtitle: L(tool.descriptionLocalizationKey)
+        ) {
+            Toggle("", isOn: $enabled)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .tint(.appAccent)
+        }
     }
 }
 

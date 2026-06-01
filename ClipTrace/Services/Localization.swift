@@ -305,6 +305,15 @@ extension L10n {
         "settings.mcp.tools.search_clipboard.desc": "搜索剪贴板历史。优先使用本地语义嵌入排序,失败时回退到关键字匹配。",
         "settings.mcp.tools.list_recent.desc": "列出最近的剪贴板条目,可按类型过滤。",
         "settings.mcp.tools.get_clip.desc": "根据 UUID 获取单条剪贴板条目,返回完整内容与元数据。",
+        "settings.mcp.tools.list_tags.desc": "列出所有已用标签及各自的条目数量。",
+        "settings.mcp.tools.list_recent_activity.desc": "列出指定时间点之后新增的条目,适合让模型按时间区间写汇总。",
+        "settings.mcp.tools.tag_clip.desc": "给某条剪贴板条目追加标签(与现有标签合并)。",
+        "settings.mcp.tools.untag_clip.desc": "从某条剪贴板条目移除指定标签。",
+        "settings.mcp.tools.favorite_clip.desc": "设置或取消某条条目的收藏状态。",
+        "settings.mcp.tools.pin_clip.desc": "设置或取消某条条目的置顶状态。",
+        "settings.mcp.tools.delete_clip.desc": "删除某条条目,默认软删除到回收站,可选彻底删除。",
+        "settings.mcp.tools.restore_clip.desc": "把某条已软删除的条目从回收站恢复。",
+        "settings.mcp.tools.create_snippet.desc": "新建一条片段条目,可附带标题和标签。",
 
         // settings: general
         "settings.language.title": "界面语言",
@@ -825,6 +834,15 @@ extension L10n {
         "settings.mcp.tools.search_clipboard.desc": "Search clipboard history. Uses local sentence embeddings for semantic ranking when possible, falls back to keyword matching.",
         "settings.mcp.tools.list_recent.desc": "List the most recent clipboard entries, optionally filtered by type.",
         "settings.mcp.tools.get_clip.desc": "Fetch a single clipboard entry by UUID, returning full content plus metadata.",
+        "settings.mcp.tools.list_tags.desc": "List every tag in use along with how many entries carry it.",
+        "settings.mcp.tools.list_recent_activity.desc": "List entries added since a given time — handy for time-bounded summaries.",
+        "settings.mcp.tools.tag_clip.desc": "Add tags to a clipboard entry (merged with its existing tags).",
+        "settings.mcp.tools.untag_clip.desc": "Remove the given tags from a clipboard entry.",
+        "settings.mcp.tools.favorite_clip.desc": "Set or clear an entry's favorite state.",
+        "settings.mcp.tools.pin_clip.desc": "Set or clear an entry's pinned state.",
+        "settings.mcp.tools.delete_clip.desc": "Delete an entry — soft-delete to trash by default, or purge permanently.",
+        "settings.mcp.tools.restore_clip.desc": "Restore a soft-deleted entry from the trash.",
+        "settings.mcp.tools.create_snippet.desc": "Create a snippet entry, optionally with a title and tags.",
 
         // settings: general
         "settings.language.title": "Language",
