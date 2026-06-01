@@ -35,6 +35,20 @@ enum AppearanceTheme: String, CaseIterable, Identifiable {
         case .system: return nil
         }
     }
+
+    /// AppKit appearance used to pin the whole app via `NSApp.appearance`.
+    /// `nil` follows the system. We drive this instead of relying on
+    /// `.preferredColorScheme`, because on macOS SwiftUI pins the window's
+    /// `NSAppearance` for `.light`/`.dark` but fails to clear it when switching
+    /// back to `nil` — leaving the window stuck on the previously forced scheme
+    /// after the user picks "follow system".
+    var nsAppearance: NSAppearance? {
+        switch self {
+        case .light:  return NSAppearance(named: .aqua)
+        case .dark:   return NSAppearance(named: .darkAqua)
+        case .system: return nil
+        }
+    }
 }
 
 /// User-pickable theme accent. We bypass the asset catalog `AccentColor` slot

@@ -44,18 +44,21 @@ struct ClipTraceApp: App {
             MainWindowView()
                 .environmentObject(clipboardVM)
                 .modelContainer(AppContainer.shared)
-                .preferredColorScheme(appearanceTheme.colorScheme)
                 .environment(\.locale, appLanguage.locale ?? Locale.current)
                 .tint(accentPalette.color)
                 .onAppear {
                     applyActivationPolicy()
                     applyCaptureProtection()
+                    applyAppearance()
                 }
                 .onChange(of: showInDock) { _, _ in
                     applyActivationPolicy()
                 }
                 .onChange(of: hideFromCapture) { _, _ in
                     applyCaptureProtection()
+                }
+                .onChange(of: appearanceTheme) { _, _ in
+                    applyAppearance()
                 }
         }
         .defaultSize(width: 1000, height: 640)
@@ -65,11 +68,20 @@ struct ClipTraceApp: App {
             MenuBarView()
                 .environmentObject(clipboardVM)
                 .modelContainer(AppContainer.shared)
-                .preferredColorScheme(appearanceTheme.colorScheme)
                 .environment(\.locale, appLanguage.locale ?? Locale.current)
                 .tint(accentPalette.color)
+                .onAppear { applyAppearance() }
         }
         .menuBarExtraStyle(.window)
+    }
+
+    /// Pin (or release) the app-wide appearance. Driving `NSApp.appearance`
+    /// directly — instead of `.preferredColorScheme` — is what lets "follow
+    /// system" actually reset: setting it to `nil` clears the forced scheme,
+    /// whereas SwiftUI leaves the window's `NSAppearance` stuck on the last
+    /// `.light`/`.dark` value it was given.
+    private func applyAppearance() {
+        NSApp.appearance = appearanceTheme.nsAppearance
     }
 
     /// Toggle `NSWindow.sharingType` on every app window so the clipboard
@@ -104,6 +116,7 @@ struct ClipTraceApp: App {
 class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         applyInitialActivationPolicy()
+        applyInitialAppearance()
         setupGlobalHotKeys()
         DynamicIslandController.shared.setEnabled(
             DynamicIslandController.shared.isEnabled
@@ -142,6 +155,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let showInDock = defaults.bool(forKey: "showInDock")
         NSApp.setActivationPolicy(showInDock ? .regular : .accessory)
+    }
+
+    /// Pin the saved appearance before the first window paints, so the app
+    /// launches in the right scheme rather than flashing the system default.
+    private func applyInitialAppearance() {
+        let raw = UserDefaults.standard.string(forKey: "appearanceTheme")
+            ?? AppearanceTheme.system.rawValue
+        let theme = AppearanceTheme(rawValue: raw) ?? .system
+        NSApp.appearance = theme.nsAppearance
     }
 
     private func setupGlobalHotKeys() {
