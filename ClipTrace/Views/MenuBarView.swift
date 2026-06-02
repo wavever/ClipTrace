@@ -10,12 +10,18 @@ struct MenuBarView: View {
     @State private var paginationGeneration = 0
 
     private static let pageSize = 20
+    /// Menu bar search currently expands the SwiftData fetch to the full
+    /// history. Keep the implementation available, but hide it until it can
+    /// be replaced with a bounded query that does not block the panel.
+    private static let isSearchEnabled = false
 
     var body: some View {
-        let searching = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let searching = Self.isSearchEnabled &&
+            !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
         MenuBarContent(
             searchText: $searchText,
+            isSearchEnabled: Self.isSearchEnabled,
             fetchLimit: searching ? max(totalActiveRecords, Self.pageSize) : fetchLimit,
             totalActiveRecords: $totalActiveRecords,
             isLoadingMore: isLoadingMore,
@@ -62,6 +68,7 @@ struct MenuBarContent: View {
     @Environment(\.openWindow) private var openWindow
 
     @Binding var searchText: String
+    let isSearchEnabled: Bool
     let fetchLimit: Int
     @Binding var totalActiveRecords: Int
     let isLoadingMore: Bool
@@ -69,12 +76,14 @@ struct MenuBarContent: View {
 
     init(
         searchText: Binding<String>,
+        isSearchEnabled: Bool,
         fetchLimit: Int,
         totalActiveRecords: Binding<Int>,
         isLoadingMore: Bool,
         onRequestMore: @escaping () -> Void
     ) {
         _searchText = searchText
+        self.isSearchEnabled = isSearchEnabled
         self.fetchLimit = fetchLimit
         _totalActiveRecords = totalActiveRecords
         self.isLoadingMore = isLoadingMore
@@ -89,6 +98,7 @@ struct MenuBarContent: View {
     }
 
     private var matchingItems: [ClipboardItem] {
+        guard isSearchEnabled else { return allItems }
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return allItems }
 
@@ -102,12 +112,15 @@ struct MenuBarContent: View {
 
     var body: some View {
         let items = matchingItems
-        let searching = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let searching = isSearchEnabled &&
+            !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let canLoadMore = !searching && allItems.count < totalActiveRecords
 
         return VStack(spacing: 0) {
             header
-            searchField
+            if isSearchEnabled {
+                searchField
+            }
             Divider().opacity(0.4)
 
             if items.isEmpty {
@@ -196,7 +209,9 @@ struct MenuBarContent: View {
             Image(systemName: "tray")
                 .font(.system(size: 24, weight: .light))
                 .foregroundStyle(.secondary)
-            Text(searchText.isEmpty ? L("menubar.empty.noRecords") : L("menubar.empty.noMatch"))
+            Text(isSearchEnabled && !searchText.isEmpty
+                ? L("menubar.empty.noMatch")
+                : L("menubar.empty.noRecords"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
