@@ -193,6 +193,8 @@ class ClipboardViewModel: ObservableObject {
 
     let monitor = ClipboardMonitor()
     private var retentionTimer: Timer?
+    private static let embeddingBackfillBatchSize = 12
+    private static let ocrBackfillBatchSize = 2
     
     var filteredTypeDisplayName: String {
         selectedType?.displayName ?? L("common.all")
@@ -203,43 +205,54 @@ class ClipboardViewModel: ObservableObject {
     /// items are exempt from per-type retention — users marked them on purpose.
     func applyRetentionCleanup(context: ModelContext) {
         let filters = FilterSettingsStore.shared
-        let descriptor = FetchDescriptor<ClipboardItem>()
-        guard let items = try? context.fetch(descriptor) else { return }
         let now = Date()
-        var deleted = 0
+        var didMutate = false
 
         // 1) Purge expired trash.
         let trashDays = filters.trashRetentionDays
         if trashDays > 0 {
             let trashCutoff = now.addingTimeInterval(-Double(trashDays) * 86_400)
-            for item in items {
+            var trashDescriptor = FetchDescriptor<ClipboardItem>(
+                predicate: #Predicate { $0.deletedAt != nil }
+            )
+            trashDescriptor.propertiesToFetch = [\.deletedAt]
+            for item in (try? context.fetch(trashDescriptor)) ?? [] {
                 guard let deletedAt = item.deletedAt else { continue }
                 if deletedAt < trashCutoff {
                     context.delete(item)
-                    deleted += 1
+                    didMutate = true
                 }
             }
         }
 
         // 2) Per-type retention on live history.
-        if !filters.retentionByType.isEmpty {
-            for item in items where item.deletedAt == nil && !item.isPinned && !item.isFavorite {
-                let days = filters.retentionDays(for: item.itemType)
-                guard days > 0 else { continue }
-                let cutoff = now.addingTimeInterval(-Double(days) * 86_400)
-                if item.createdAt < cutoff {
-                    if filters.trashEnabled {
-                        // Move into trash so user has a chance to recover.
-                        item.deletedAt = now
-                    } else {
-                        context.delete(item)
-                        deleted += 1
-                    }
+        for type in ClipboardItemType.allCases {
+            let days = filters.retentionDays(for: type)
+            guard days > 0 else { continue }
+            let rawType = type.rawValue
+            let cutoff = now.addingTimeInterval(-Double(days) * 86_400)
+            var liveDescriptor = FetchDescriptor<ClipboardItem>(
+                predicate: #Predicate {
+                    $0.deletedAt == nil &&
+                    !$0.isPinned &&
+                    !$0.isFavorite &&
+                    $0.type == rawType &&
+                    $0.createdAt < cutoff
                 }
+            )
+            liveDescriptor.propertiesToFetch = [\.deletedAt]
+            for item in (try? context.fetch(liveDescriptor)) ?? [] {
+                if filters.trashEnabled {
+                    // Move into trash so user has a chance to recover.
+                    item.deletedAt = now
+                } else {
+                    context.delete(item)
+                }
+                didMutate = true
             }
         }
 
-        if deleted > 0 { try? context.save() } else { try? context.save() }
+        if didMutate { try? context.save() }
     }
 
     /// All trashed items, newest deletion first.
@@ -782,62 +795,51 @@ class ClipboardViewModel: ObservableObject {
 
     // MARK: - Embedding backfill
 
-    /// One-shot pass: compute embeddings for any historical items that are
-    /// missing one, or whose stored vector was generated with the wrong
-    /// language model. Runs on a detached task to avoid blocking the UI and
-    /// publishes progress so the UI can disable semantic search until done.
-    func backfillEmbeddings(context: ModelContext) {
-        Task { @MainActor in
-            let service = EmbeddingService.shared
-            let descriptor = FetchDescriptor<ClipboardItem>(
-                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
-            )
-            guard let orphans = try? context.fetch(descriptor) else { return }
+    /// One-shot pass for historical clips that have never had an embedding
+    /// attempt. The query is intentionally narrow and paged: fetching every
+    /// model here also faults large image blobs into the main actor on launch.
+    func backfillEmbeddings(context: ModelContext) async {
+        guard semanticFeatureEnabled, !isBackfillingEmbeddings else { return }
 
-            // First pass: cheap shape-only check. Trust the stored language
-            // tag when both fields are present and the byte count matches the
-            // current model's dimension. Only items that fail this filter get
-            // re-detected + re-embedded, so steady-state launches do zero
-            // language work and zero embedding work.
-            let pending = orphans.filter { item in
-                // Image clips are embedded off their recognized OCR text. Skip
-                // any image that doesn't have OCR yet (the OCR backfill will
-                // schedule the embed once recognition completes); fall through
-                // for everything else.
-                if item.itemType == .image {
-                    guard let ocr = item.ocrText, !ocr.isEmpty else { return false }
-                }
-                if let existing = item.embedding,
-                   let lang = item.embeddingLang,
-                   let dim = service.dimension(for: lang),
-                   existing.count == dim * MemoryLayout<Float>.size {
-                    return false
-                }
-                return true
-            }
+        var descriptor = FetchDescriptor<ClipboardItem>(
+            predicate: #Predicate {
+                $0.deletedAt == nil &&
+                $0.embeddingLang == nil
+            },
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        guard let total = try? context.fetchCount(descriptor), total > 0 else { return }
 
-            guard !pending.isEmpty else { return }
-
-            backfillTotal = pending.count
+        let service = EmbeddingService.shared
+        backfillTotal = total
+        backfillCompleted = 0
+        isBackfillingEmbeddings = true
+        defer {
+            isBackfillingEmbeddings = false
+            backfillTotal = 0
             backfillCompleted = 0
-            isBackfillingEmbeddings = true
-            defer {
-                isBackfillingEmbeddings = false
-                backfillTotal = 0
-                backfillCompleted = 0
-            }
+        }
 
+        descriptor.fetchLimit = Self.embeddingBackfillBatchSize
+        descriptor.propertiesToFetch = [\.type, \.content, \.ocrText, \.embeddingLang]
+
+        while !Task.isCancelled {
+            guard let pending = try? context.fetch(descriptor), !pending.isEmpty else { break }
             for item in pending {
                 guard !Task.isCancelled else { break }
                 let source = item.itemType == .image ? (item.ocrText ?? "") : item.content
-                let vec = await service.embedAsync(source)
-                if let vec {
+                if let vec = await service.embedAsync(source) {
                     item.embedding = vec.data
                     item.embeddingLang = vec.language
+                } else {
+                    // Empty marks a completed attempt for unsupported content,
+                    // preventing the same row from being retried every launch.
+                    item.embeddingLang = ""
                 }
                 backfillCompleted += 1
             }
             try? context.save()
+            await Task.yield()
         }
     }
 
@@ -1065,28 +1067,37 @@ class ClipboardViewModel: ObservableObject {
     /// text. Vision is run on a detached task per item; recognized text is
     /// stored on `ClipboardItem.ocrText` and the embedding is recomputed so
     /// the same image is searchable in both keyword and semantic modes.
-    func backfillOCR(context: ModelContext) {
-        Task { @MainActor in
-            let descriptor = FetchDescriptor<ClipboardItem>(
-                predicate: #Predicate { $0.deletedAt == nil && $0.type == "image" && $0.ocrText == nil },
-                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
-            )
-            guard let images = try? context.fetch(descriptor), !images.isEmpty else { return }
+    func backfillOCR(context: ModelContext) async {
+        guard !isBackfillingOCR else { return }
 
-            isBackfillingOCR = true
-            defer { isBackfillingOCR = false }
+        var descriptor = FetchDescriptor<ClipboardItem>(
+            predicate: #Predicate { $0.deletedAt == nil && $0.type == "image" && $0.ocrText == nil },
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = Self.ocrBackfillBatchSize
+        descriptor.propertiesToFetch = [\.type, \.content, \.imageData, \.fileURL, \.ocrText]
 
+        guard let firstBatch = try? context.fetch(descriptor), !firstBatch.isEmpty else { return }
+
+        isBackfillingOCR = true
+        defer { isBackfillingOCR = false }
+
+        var images = firstBatch
+        while !images.isEmpty, !Task.isCancelled {
             for item in images {
                 guard !Task.isCancelled else { break }
                 let recognized = await OCRService.shared.recognize(item: item)
                 item.ocrText = recognized
-                if !recognized.isEmpty,
+                if semanticFeatureEnabled,
+                   !recognized.isEmpty,
                    let emb = await EmbeddingService.shared.embedAsync(recognized) {
                     item.embedding = emb.data
                     item.embeddingLang = emb.language
                 }
-                try? context.save()
             }
+            try? context.save()
+            await Task.yield()
+            images = (try? context.fetch(descriptor)) ?? []
         }
     }
 }

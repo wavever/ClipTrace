@@ -13,12 +13,12 @@ struct MainWindowView: View {
     /// SwiftData — the rest are pulled in by the load-more sentinel as the
     /// user scrolls. Chosen so the initial viewport (~10–15 rows) is well-
     /// covered without ever materialising the whole history up front.
-    @State private var pageSize: Int = 80
+    @State private var pageSize: Int = 40
     /// Debounce so a chain of sentinel `.onAppear` calls (which can fire
     /// rapidly while the bottom rebalances) only triggers one bump.
     @State private var isBumpingPage: Bool = false
 
-    private static let pageStep: Int = 60
+    private static let pageStep: Int = 40
     private static let pageCap: Int = 600
 
     var body: some View {
@@ -59,9 +59,26 @@ struct MainWindowContent: View {
         self.canLoadMore = canLoadMore
         self.onRequestMore = onRequestMore
         var descriptor = FetchDescriptor<ClipboardItem>(
+            predicate: #Predicate { $0.deletedAt == nil },
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
         descriptor.fetchLimit = pageSize
+        // Keep large image bytes and embedding vectors faulted until a visible
+        // row or an active semantic search actually needs them.
+        descriptor.propertiesToFetch = [
+            \.id,
+            \.type,
+            \.content,
+            \.fileURL,
+            \.sourceApp,
+            \.createdAt,
+            \.isFavorite,
+            \.isPinned,
+            \.preview,
+            \.deletedAt,
+            \.tagsRaw,
+            \.customTitle,
+        ]
         _allItems = Query(descriptor)
     }
 
@@ -173,17 +190,17 @@ struct MainWindowContent: View {
             // Foreground work: the pasteboard poller must be running before
             // the user can copy anything.
             vm.startMonitoring(context: modelContext)
-            // Background work: OCR + embedding backfills walk the entire
-            // history and were spiking CPU during the first paint. Defer them
-            // until the window has had a chance to render so cold start
-            // stays responsive.
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 1_500_000_000) // ~1.5s
-                vm.backfillOCR(context: modelContext)
-                try? await Task.sleep(nanoseconds: 500_000_000)
-                vm.backfillEmbeddings(context: modelContext)
-            }
             refreshDerivedCaches()
+        }
+        .task {
+            // Historical OCR + embedding repair is maintenance work, not part
+            // of first paint. Run it sequentially after launch settles; the
+            // task is cancelled automatically if this window disappears.
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard !Task.isCancelled else { return }
+            await vm.backfillOCR(context: modelContext)
+            guard !Task.isCancelled else { return }
+            await vm.backfillEmbeddings(context: modelContext)
         }
         .onChange(of: allItems.count) { _, _ in
             refreshDerivedCaches()
@@ -295,9 +312,10 @@ struct MainWindowContent: View {
     private func refreshTagCatalog() {
         // Only items that actually carry tags participate, keeping this much
         // cheaper than a full history walk.
-        let descriptor = FetchDescriptor<ClipboardItem>(
+        var descriptor = FetchDescriptor<ClipboardItem>(
             predicate: #Predicate { $0.deletedAt == nil && $0.tagsRaw != nil }
         )
+        descriptor.propertiesToFetch = [\.deletedAt, \.tagsRaw]
         if let tagged = try? modelContext.fetch(descriptor) {
             allKnownTagsCache = vm.allKnownTags(in: tagged)
         } else {
