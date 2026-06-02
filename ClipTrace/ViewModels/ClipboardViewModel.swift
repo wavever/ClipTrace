@@ -271,6 +271,48 @@ class ClipboardViewModel: ObservableObject {
         }
     }
 
+    // MARK: - User-configurable limits (read from the same UserDefaults keys
+    // the settings UI writes via @AppStorage).
+
+    /// History cap; falls back to the settings default of 500 and is clamped to
+    /// the field's allowed range.
+    static func resolvedMaxRecords() -> Int {
+        let raw = UserDefaults.standard.integer(forKey: "maxRecords")
+        return raw > 0 ? min(max(raw, 50), 100_000) : 500
+    }
+
+    /// Clipboard poll interval in seconds; falls back to 1s.
+    static func resolvedPollInterval() -> TimeInterval {
+        let raw = UserDefaults.standard.double(forKey: "pollInterval")
+        return raw > 0 ? raw : 1.0
+    }
+
+    /// Push the current poll-interval preference to the running monitor so a
+    /// change in settings takes effect without relaunching.
+    func updatePollInterval() {
+        monitor.updateInterval(Self.resolvedPollInterval())
+    }
+
+    /// Trim live history down to the configured cap, deleting the oldest rows.
+    /// Safe to call repeatedly; runs after every capture and whenever the user
+    /// lowers the limit.
+    func enforceMaxRecords(context: ModelContext) {
+        // Cheap headcount first; only materialise the tail when over the cap so
+        // we don't fault every image blob into memory on each paste.
+        let limit = Self.resolvedMaxRecords()
+        let countAll = FetchDescriptor<ClipboardItem>()
+        guard let total = try? context.fetchCount(countAll), total > limit else { return }
+        var tailDescriptor = FetchDescriptor<ClipboardItem>(
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        tailDescriptor.fetchOffset = limit
+        tailDescriptor.fetchLimit = total - limit
+        if let tail = try? context.fetch(tailDescriptor) {
+            for oldItem in tail { context.delete(oldItem) }
+            try? context.save()
+        }
+    }
+
     func startMonitoring(context: ModelContext) {
         // Retention sweep used to run synchronously on the very first frame,
         // which fetched every clipboard item (including embedded image data)
@@ -283,8 +325,8 @@ class ClipboardViewModel: ObservableObject {
         }
         scheduleRetentionTimer(context: context)
 
-        monitor.startMonitoring { [weak self] type, rawContent, imageData, fileURL, sourceApp, bundleId in
-            guard self != nil else { return }
+        monitor.startMonitoring(interval: Self.resolvedPollInterval()) { [weak self] type, rawContent, imageData, fileURL, sourceApp, bundleId in
+            guard let self else { return }
             ClipboardMonitor.debugLog("[VM] onNewContent type=\(type) src=\(sourceApp) bundle=\(bundleId) hasImageData=\(imageData != nil) fileURL=\(fileURL ?? "nil") content=\(rawContent.prefix(80))")
 
             // Drop utm_*/fbclid/etc. before the URL ever lands in history.
@@ -384,26 +426,8 @@ class ClipboardViewModel: ObservableObject {
                 }
             }
 
-            // Trim old items (keep max 500).
-            //
-            // The previous implementation fetched every row (including the
-            // embedded image blobs) just to count and slice, which spiked CPU
-            // and memory on every paste. Use `fetchCount` for the cheap
-            // headcount and only materialise the tail when trimming is
-            // actually needed.
-            let countAll = FetchDescriptor<ClipboardItem>()
-            if let total = try? context.fetchCount(countAll), total > 500 {
-                var tailDescriptor = FetchDescriptor<ClipboardItem>(
-                    sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
-                )
-                tailDescriptor.fetchOffset = 500
-                tailDescriptor.fetchLimit = total - 500
-                if let tail = try? context.fetch(tailDescriptor) {
-                    for oldItem in tail { context.delete(oldItem) }
-                }
-            }
-
-            try? context.save()
+            // Trim old items down to the user-configured cap.
+            self.enforceMaxRecords(context: context)
         }
     }
     

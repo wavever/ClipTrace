@@ -55,6 +55,16 @@ class ClipboardMonitor: ObservableObject {
         timer?.invalidate()
         timer = nil
     }
+
+    /// Reschedule the poll timer at a new interval, reusing the stored
+    /// `onNewContent` callback. No-op when not currently monitoring.
+    func updateInterval(_ interval: TimeInterval) {
+        guard timer != nil else { return }
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            self?.checkForChanges()
+        }
+    }
     
     private func checkForChanges() {
         let currentChangeCount = pasteboard.changeCount

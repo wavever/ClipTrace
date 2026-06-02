@@ -3,6 +3,7 @@ import SwiftData
 import AppKit
 import UniformTypeIdentifiers
 import KeyboardShortcuts
+import ServiceManagement
 
 struct SettingsPanelView: View {
     @ObservedObject private var nav = AppNavigation.shared
@@ -461,6 +462,8 @@ private struct GeneralSection: View {
     @AppStorage("videoPreviewMode") private var videoPreviewModeRaw = VideoPreviewMode.video.rawValue
     @AppStorage("videoPreviewMuted") private var videoPreviewMuted = true
     @ObservedObject private var nav = AppNavigation.shared
+    @EnvironmentObject private var vm: ClipboardViewModel
+    @Environment(\.modelContext) private var modelContext
 
     private var languageBinding: Binding<AppLanguage> {
         Binding(
@@ -554,6 +557,13 @@ private struct GeneralSection: View {
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .tint(.appAccent)
+                        // Reflect the real registration state when the panel
+                        // opens (the toggle used to be a dead bool).
+                        .onAppear { launchAtLogin = LoginItemService.isEnabled }
+                        .onChange(of: launchAtLogin) { _, newValue in
+                            LoginItemService.setEnabled(newValue)
+                            launchAtLogin = LoginItemService.isEnabled
+                        }
                 }
                 SettingsRow(
                     icon: "dock.rectangle",
@@ -655,6 +665,9 @@ private struct GeneralSection: View {
                     subtitle: L("settings.storage.maxRecords.subtitle")
                 ) {
                     MaxRecordsField(value: $maxRecords)
+                        .onChange(of: maxRecords) { _, _ in
+                            vm.enforceMaxRecords(context: modelContext)
+                        }
                 }
                 SettingsRow(
                     icon: "timer",
@@ -672,6 +685,9 @@ private struct GeneralSection: View {
                         selection: $pollInterval,
                         width: 110
                     )
+                    .onChange(of: pollInterval) { _, _ in
+                        vm.updatePollInterval()
+                    }
                 }
             }
 
@@ -2257,6 +2273,44 @@ private struct MaxRecordsField: View {
         } else {
             // Reject empty / non-numeric — fall back to the last good value.
             text = "\(value)"
+        }
+    }
+}
+
+// MARK: - Launch at login
+
+/// Thin wrapper over `SMAppService.mainApp` backing the "launch at login"
+/// toggle. The toggle was previously a dead `@AppStorage` bool; this actually
+/// registers / unregisters the app as a macOS login item.
+enum LoginItemService {
+    /// `true` when the app is registered to launch at login. `.requiresApproval`
+    /// (registered but pending the user's OK in System Settings › Login Items)
+    /// counts as on so the toggle mirrors the user's intent.
+    static var isEnabled: Bool {
+        switch SMAppService.mainApp.status {
+        case .enabled, .requiresApproval: return true
+        default: return false
+        }
+    }
+
+    /// Register or unregister the login item. Errors are logged; the caller
+    /// should re-read `isEnabled` to display the resulting state.
+    static func setEnabled(_ enabled: Bool) {
+        let service = SMAppService.mainApp
+        do {
+            if enabled {
+                switch service.status {
+                case .enabled, .requiresApproval: break   // already set up
+                default: try service.register()
+                }
+            } else {
+                switch service.status {
+                case .notRegistered, .notFound: break       // already off
+                default: try service.unregister()
+                }
+            }
+        } catch {
+            NSLog("[LoginItem] failed to \(enabled ? "register" : "unregister"): \(error)")
         }
     }
 }
