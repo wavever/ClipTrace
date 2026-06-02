@@ -104,6 +104,21 @@
 xcodebuild -project ClipTrace.xcodeproj -scheme ClipTrace -configuration Debug build
 ```
 
+### 代码签名（首次配置）
+
+构建使用**固定的自签名证书**，这样 macOS 才能在重新构建和更新后保留辅助功能权限。
+若没有固定签名身份，权限会在每次构建后被静默失效（系统设置里的开关仍是开着的，
+但 App 会不断提示「想要使用辅助功能控制这台电脑」）。运行一次以下脚本即可生成并
+安装证书：
+
+```bash
+scripts/generate-signing-cert.sh
+```
+
+脚本还会打印 `SIGNING_CERT_P12_BASE64` 和 `SIGNING_CERT_PASSWORD` 两个值，
+将其添加为 GitHub Actions Secret，发布的 DMG 就会用同一身份签名。没有证书的
+贡献者可以用 `CODE_SIGNING_ALLOWED=NO` 进行无签名构建。
+
 ## 快捷键
 
 | 快捷键 | 功能 |

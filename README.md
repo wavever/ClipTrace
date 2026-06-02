@@ -107,6 +107,23 @@ The app binary doubles as a [Model Context Protocol](https://modelcontextprotoco
 xcodebuild -project ClipTrace.xcodeproj -scheme ClipTrace -configuration Debug build
 ```
 
+### Code signing (first-time setup)
+
+Builds are signed with a **stable self-signed certificate** so macOS keeps the
+Accessibility permission across rebuilds and updates. Without a stable signing
+identity the permission is silently invalidated on every build (the toggle
+stays on but the app keeps re-prompting to "control this computer using
+accessibility"). Run once to create and install the certificate:
+
+```bash
+scripts/generate-signing-cert.sh
+```
+
+It also prints the `SIGNING_CERT_P12_BASE64` and `SIGNING_CERT_PASSWORD` values
+to add as GitHub Actions secrets, so released DMGs are signed with the same
+identity. Contributors who don't have the certificate can build unsigned with
+`CODE_SIGNING_ALLOWED=NO`.
+
 ## Keyboard Shortcuts
 
 | Shortcut | Action |
