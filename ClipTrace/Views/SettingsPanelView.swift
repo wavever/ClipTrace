@@ -1634,7 +1634,7 @@ private struct MergeSection: View {
 // MARK: - MCP (composes into AISection)
 
 private struct MCPSettings: View {
-    @AppStorage("mcpEnabled") private var mcpEnabled = true
+    @AppStorage("mcpEnabled") private var mcpEnabled = false
 
     private var executablePath: String {
         Bundle.main.executablePath ?? ""
