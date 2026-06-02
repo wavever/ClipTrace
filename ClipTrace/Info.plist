@@ -8,10 +8,10 @@
     <string>剪迹</string>
     <key>CFBundleIdentifier</key>
     <string>com.wavever.cliptrace</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
-    <key>CFBundleShortVersionString</key>
-    <string>0.9.0</string>
+    <!-- CFBundleVersion / CFBundleShortVersionString are synthesised from
+         CURRENT_PROJECT_VERSION / MARKETING_VERSION because the target has
+         GENERATE_INFOPLIST_FILE=YES; the release workflow overrides both from
+         the git tag. Don't add them here — they'd be ignored and mislead. -->
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>LSApplicationCategoryType</key>

@@ -22,18 +22,6 @@ jobs:
       - name: Show Xcode version
         run: xcodebuild -version
 
-      # Align CFBundleVersion with the marketing version so Sparkle's semver
-      # comparator can decide "appcast.version > running.version" correctly.
-      # Without this step the bundle keeps the static "1" baked into Info.plist
-      # and Sparkle's comparator would parse it as 1.0.0 — which is *higher*
-      # than every 0.9.x release, blocking auto-updates entirely.
-      - name: Pin bundle version to tag
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          plutil -replace CFBundleVersion -string "$VERSION" ClipTrace/Info.plist
-          plutil -replace CFBundleShortVersionString -string "$VERSION" ClipTrace/Info.plist
-          plutil -p ClipTrace/Info.plist | grep -E "Version|SU"
-
       # Import the stable self-signed code-signing certificate so every release
       # is signed with the SAME identity. macOS keys the Accessibility (TCC)
       # grant on the bundle's code-signing designated requirement; a stable
@@ -72,6 +60,13 @@ jobs:
 
       - name: Build (Release)
         run: |
+          # The project sets GENERATE_INFOPLIST_FILE=YES, so Xcode synthesises
+          # CFBundleShortVersionString from MARKETING_VERSION and CFBundleVersion
+          # from CURRENT_PROJECT_VERSION at build time — overwriting anything
+          # poked into Info.plist directly. Drive both from the tag here.
+          # CFBundleVersion must track the release too: otherwise Sparkle sees
+          # the running app as version "1" (> every 0.9.x) and never updates.
+          VERSION="${GITHUB_REF_NAME#v}"
           xcodebuild \
             -project ClipTrace.xcodeproj \
             -scheme ClipTrace \
@@ -81,11 +76,22 @@ jobs:
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="ClipTrace Self-Signed" \
             DEVELOPMENT_TEAM="" \
+            MARKETING_VERSION="$VERSION" \
+            CURRENT_PROJECT_VERSION="$VERSION" \
             build
+          APP="build/Build/Products/Release/ClipTrace.app"
+          # Fail the release if the version didn't actually bake in — otherwise
+          # we ship a bundle that shows the wrong version and breaks auto-update.
+          BUILT_SHORT=$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")
+          BUILT_BUILD=$(plutil -extract CFBundleVersion raw -o - "$APP/Contents/Info.plist")
+          echo "Baked version: short=$BUILT_SHORT build=$BUILT_BUILD (tag=$VERSION)"
+          if [ "$BUILT_SHORT" != "$VERSION" ] || [ "$BUILT_BUILD" != "$VERSION" ]; then
+            echo "::error::Bundle version ($BUILT_SHORT / $BUILT_BUILD) does not match tag ($VERSION)."
+            exit 1
+          fi
           # Guard against silently shipping an ad-hoc build (which would
           # reintroduce the repeated-permission bug): verify the signature and
           # print the designated requirement that the grant is keyed on.
-          APP="build/Build/Products/Release/ClipTrace.app"
           codesign --verify --deep --strict --verbose=2 "$APP"
           if codesign -dvv "$APP" 2>&1 | grep -q "Signature=adhoc"; then
             echo "::error::Release app is ad-hoc signed — the signing identity was not used."
