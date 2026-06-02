@@ -308,7 +308,7 @@ struct MenuBarRow: View {
 
     var body: some View {
         HStack(spacing: 9) {
-            ThumbnailView(item: item, size: 26, cornerRadius: 5)
+            ThumbnailView(item: item, size: 26, cornerRadius: 5, placeholderTint: .primary)
 
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {

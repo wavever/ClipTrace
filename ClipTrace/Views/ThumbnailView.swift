@@ -5,14 +5,20 @@ struct ThumbnailView: View {
     let item: ClipboardItem
     let size: CGFloat
     let cornerRadius: CGFloat
+    /// When set, overrides the per-type placeholder tint for both the glyph and
+    /// its background. The menu bar passes `.primary` so the icon matches the
+    /// row's text and stays legible on its translucent dark backdrop, where the
+    /// muted per-type colors wash out.
+    let placeholderTint: Color?
 
     @State private var image: NSImage?
     @State private var didAttemptLoad = false
 
-    init(item: ClipboardItem, size: CGFloat = 36, cornerRadius: CGFloat = 6) {
+    init(item: ClipboardItem, size: CGFloat = 36, cornerRadius: CGFloat = 6, placeholderTint: Color? = nil) {
         self.item = item
         self.size = size
         self.cornerRadius = cornerRadius
+        self.placeholderTint = placeholderTint
     }
 
     // Per-type warm muted palette. Replaces the previous saturated system
@@ -23,7 +29,9 @@ struct ThumbnailView: View {
     // Shared as a static lookup so we don't allocate a fresh dynamic NSColor
     // per row on every body re-evaluation (which used to fire on every
     // hover / scroll tick for hundreds of rows).
-    private var iconColor: Color { Self.iconColors[item.itemType] ?? Self.iconColors[.text]! }
+    private var iconColor: Color {
+        placeholderTint ?? Self.iconColors[item.itemType] ?? Self.iconColors[.text]!
+    }
 
     private static let iconColors: [ClipboardItemType: Color] = [
         .text:  dynamicColor(light: NSColor(srgbRed: 0.44, green: 0.55, blue: 0.65, alpha: 1),
