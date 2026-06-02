@@ -3,22 +3,96 @@ import SwiftData
 import AppKit
 
 struct MenuBarView: View {
-    @EnvironmentObject var vm: ClipboardViewModel
-    @Query(sort: \ClipboardItem.createdAt, order: .reverse) private var allItems: [ClipboardItem]
-    @Environment(\.openWindow) private var openWindow
     @State private var searchText = ""
-    @State private var visibleLimit = Self.pageSize
+    @State private var fetchLimit = Self.pageSize
+    @State private var totalActiveRecords = 0
     @State private var isLoadingMore = false
     @State private var paginationGeneration = 0
 
     private static let pageSize = 20
 
-    private var matchingItems: [ClipboardItem] {
-        let items = allItems.filter { $0.deletedAt == nil }
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return items }
+    var body: some View {
+        let searching = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
-        return items.filter { item in
+        MenuBarContent(
+            searchText: $searchText,
+            fetchLimit: searching ? max(totalActiveRecords, Self.pageSize) : fetchLimit,
+            totalActiveRecords: $totalActiveRecords,
+            isLoadingMore: isLoadingMore,
+            onRequestMore: loadMore
+        )
+        .onChange(of: searchText) { _, _ in
+            resetPagination()
+        }
+        .onChange(of: totalActiveRecords) { _, _ in
+            clampFetchLimit()
+        }
+    }
+
+    private func resetPagination() {
+        isLoadingMore = false
+        fetchLimit = Self.pageSize
+        paginationGeneration &+= 1
+    }
+
+    private func clampFetchLimit() {
+        fetchLimit = max(Self.pageSize, min(fetchLimit, max(totalActiveRecords, Self.pageSize)))
+    }
+
+    private func loadMore() {
+        guard !isLoadingMore, fetchLimit < totalActiveRecords else { return }
+        isLoadingMore = true
+        let generation = paginationGeneration
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 80_000_000)
+            guard generation == paginationGeneration else { return }
+            fetchLimit = min(fetchLimit + Self.pageSize, totalActiveRecords)
+            isLoadingMore = false
+        }
+    }
+}
+
+/// Owns the paged SwiftData query. Keeping this separate from `MenuBarView`
+/// lets a load-more request rebuild the query with a larger `fetchLimit`
+/// instead of materializing the whole clipboard history when the panel opens.
+struct MenuBarContent: View {
+    @EnvironmentObject var vm: ClipboardViewModel
+    @Query private var allItems: [ClipboardItem]
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.openWindow) private var openWindow
+
+    @Binding var searchText: String
+    let fetchLimit: Int
+    @Binding var totalActiveRecords: Int
+    let isLoadingMore: Bool
+    let onRequestMore: () -> Void
+
+    init(
+        searchText: Binding<String>,
+        fetchLimit: Int,
+        totalActiveRecords: Binding<Int>,
+        isLoadingMore: Bool,
+        onRequestMore: @escaping () -> Void
+    ) {
+        _searchText = searchText
+        self.fetchLimit = fetchLimit
+        _totalActiveRecords = totalActiveRecords
+        self.isLoadingMore = isLoadingMore
+        self.onRequestMore = onRequestMore
+
+        var descriptor = FetchDescriptor<ClipboardItem>(
+            predicate: #Predicate { $0.deletedAt == nil },
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = fetchLimit
+        _allItems = Query(descriptor)
+    }
+
+    private var matchingItems: [ClipboardItem] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return allItems }
+
+        return allItems.filter { item in
             item.content.localizedCaseInsensitiveContains(query) ||
             item.sourceApp.localizedCaseInsensitiveContains(query) ||
             item.effectiveCustomTitle?.localizedCaseInsensitiveContains(query) == true ||
@@ -28,8 +102,8 @@ struct MenuBarView: View {
 
     var body: some View {
         let items = matchingItems
-        let visibleItems = Array(items.prefix(visibleLimit))
-        let canLoadMore = visibleItems.count < items.count
+        let searching = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let canLoadMore = !searching && allItems.count < totalActiveRecords
 
         return VStack(spacing: 0) {
             header
@@ -39,18 +113,18 @@ struct MenuBarView: View {
             if items.isEmpty {
                 emptyState
             } else {
-                itemList(items: visibleItems, canLoadMore: canLoadMore)
+                itemList(items: items, canLoadMore: canLoadMore)
             }
 
             Divider().opacity(0.4)
             footer
         }
         .frame(width: 340)
-        .onChange(of: searchText) { _, _ in
-            resetPagination()
+        .onAppear {
+            refreshRecordCount()
         }
-        .onChange(of: allItems.count) { _, _ in
-            clampVisibleLimit()
+        .onChange(of: allItems.map(\.id)) { _, _ in
+            refreshRecordCount()
         }
     }
 
@@ -152,7 +226,7 @@ struct MenuBarView: View {
 
     private var loadMoreTrigger: some View {
         Button {
-            loadMore()
+            onRequestMore()
         } label: {
             HStack(spacing: 6) {
                 if isLoadingMore {
@@ -172,13 +246,13 @@ struct MenuBarView: View {
         .buttonStyle(.plain)
         .disabled(isLoadingMore)
         .onAppear {
-            loadMore()
+            onRequestMore()
         }
     }
 
     private var footer: some View {
         HStack(spacing: 8) {
-            Text(L("menubar.recordCountFormat", allItems.count))
+            Text(L("menubar.recordCountFormat", totalActiveRecords))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             Spacer()
@@ -200,31 +274,11 @@ struct MenuBarView: View {
         .padding(.vertical, 8)
     }
 
-    private func resetPagination() {
-        isLoadingMore = false
-        visibleLimit = Self.pageSize
-        paginationGeneration &+= 1
-    }
-
-    private func clampVisibleLimit() {
-        visibleLimit = max(Self.pageSize, min(visibleLimit, max(matchingItems.count, Self.pageSize)))
-    }
-
-    private func loadMore() {
-        guard !isLoadingMore, visibleLimit < matchingItems.count else { return }
-        isLoadingMore = true
-        let generation = paginationGeneration
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 80_000_000)
-            guard generation == paginationGeneration else { return }
-            let total = matchingItems.count
-            guard visibleLimit < total else {
-                isLoadingMore = false
-                return
-            }
-            visibleLimit = min(visibleLimit + Self.pageSize, total)
-            isLoadingMore = false
-        }
+    private func refreshRecordCount() {
+        let descriptor = FetchDescriptor<ClipboardItem>(
+            predicate: #Predicate { $0.deletedAt == nil }
+        )
+        totalActiveRecords = (try? modelContext.fetchCount(descriptor)) ?? allItems.count
     }
 }
 
