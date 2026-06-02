@@ -10,7 +10,7 @@ struct ConfirmationDialogView: View {
     var onConfirm: () -> Void
     var onCancel: () -> Void
 
-    private var tint: Color { request.isDestructive ? .red : .appAccent }
+    private var tint: Color { request.isDestructive ? .appDanger : .appAccent }
 
     var body: some View {
         VStack(spacing: 0) {

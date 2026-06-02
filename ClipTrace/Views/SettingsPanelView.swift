@@ -662,15 +662,16 @@ private struct GeneralSection: View {
                     title: L("settings.storage.pollInterval"),
                     subtitle: L("settings.storage.pollInterval.subtitle")
                 ) {
-                    Picker("", selection: $pollInterval) {
-                        Text(L("settings.poll.halfSecond")).tag(0.5)
-                        Text(L("settings.poll.oneSecond")).tag(1.0)
-                        Text(L("settings.poll.twoSeconds")).tag(2.0)
-                        Text(L("settings.poll.fiveSeconds")).tag(5.0)
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .frame(width: 110)
+                    PaperMenuPicker(
+                        options: [
+                            PaperMenuOption(0.5, L("settings.poll.halfSecond")),
+                            PaperMenuOption(1.0, L("settings.poll.oneSecond")),
+                            PaperMenuOption(2.0, L("settings.poll.twoSeconds")),
+                            PaperMenuOption(5.0, L("settings.poll.fiveSeconds")),
+                        ],
+                        selection: $pollInterval,
+                        width: 110
+                    )
                 }
             }
 
@@ -719,7 +720,7 @@ private struct ShortcutSection: View {
                         subtitle: shortcut.subtitle
                     ) {
                         HStack(spacing: 8) {
-                            KeyboardShortcuts.Recorder(for: shortcut.name)
+                            GlobalShortcutRecorder(name: shortcut.name)
                             Button {
                                 KeyboardShortcuts.reset(shortcut.name)
                             } label: {
@@ -1036,6 +1037,176 @@ private struct QuickPasteKeyProbe: NSViewRepresentable {
     }
 }
 
+/// App-styled replacement for `KeyboardShortcuts.Recorder`. Unlike
+/// `QuickPasteKeyRecorder` (which stays panel-local), this drives the global
+/// `KeyboardShortcuts.Name` registry, so the recorded combo really does become
+/// a system-wide hotkey — it just renders as a paper chip to match the rest of
+/// the settings UI. While armed it pauses the existing binding via
+/// `disable(_:)` so the old hotkey can't fire mid-capture, and always restores
+/// or replaces it when recording ends.
+private struct GlobalShortcutRecorder: View {
+    let name: KeyboardShortcuts.Name
+
+    @State private var isRecording = false
+    @State private var current: KeyboardShortcuts.Shortcut?
+    @State private var hovering = false
+
+    /// The package posts this (internally named) notification whenever a
+    /// binding changes — including via the sibling reset button — so we listen
+    /// to keep the displayed combo in sync.
+    private static let didChange = Notification.Name("KeyboardShortcuts_shortcutByNameDidChange")
+
+    var body: some View {
+        Button {
+            toggle()
+        } label: {
+            Text(labelText)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(labelColor)
+                .lineLimit(1)
+                .frame(minWidth: 86)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(backgroundColor)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(
+                            isRecording ? Color.appAccent : Color.appCardBorder,
+                            lineWidth: isRecording ? 1.2 : 0.75
+                        )
+                )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .overlay(alignment: .trailing) {
+            if current != nil, !isRecording {
+                Button {
+                    clear()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 7)
+                .help(L("settings.shortcut.clearTooltip"))
+            }
+        }
+        .overlay {
+            if isRecording {
+                GlobalShortcutProbe(onResult: finishRecording)
+            }
+        }
+        .onAppear { current = KeyboardShortcuts.getShortcut(for: name) }
+        .onReceive(NotificationCenter.default.publisher(for: Self.didChange)) { note in
+            if (note.userInfo?["name"] as? KeyboardShortcuts.Name) == name {
+                current = KeyboardShortcuts.getShortcut(for: name)
+            }
+        }
+    }
+
+    private var labelText: String {
+        if isRecording { return L("settings.shortcut.recording") }
+        return current?.description ?? L("settings.shortcut.empty")
+    }
+
+    private var labelColor: Color {
+        if isRecording { return Color.appAccent }
+        return current == nil ? Color.secondary : Color.appMetal
+    }
+
+    private var backgroundColor: Color {
+        if isRecording { return Color.appAccent.opacity(0.14) }
+        return hovering ? Color.appCardHover : Color.appChipFill
+    }
+
+    private func toggle() {
+        if isRecording {
+            // Tearing down the probe resigns first responder, which funnels
+            // through `finishRecording(nil)` and re-enables the old binding.
+            isRecording = false
+        } else {
+            KeyboardShortcuts.disable(name)
+            isRecording = true
+        }
+    }
+
+    /// Single exit point for a recording session (the probe guarantees it runs
+    /// exactly once — via a captured key or via resigning first responder).
+    private func finishRecording(_ event: NSEvent?) {
+        isRecording = false
+        if let event, event.keyCode != 53, let recorded = KeyboardShortcuts.Shortcut(event: event) {
+            KeyboardShortcuts.setShortcut(recorded, for: name)   // registers the new global hotkey
+            current = recorded
+        } else {
+            KeyboardShortcuts.enable(name)   // Esc / click-away / invalid → restore the paused binding
+        }
+    }
+
+    private func clear() {
+        KeyboardShortcuts.setShortcut(nil, for: name)
+        current = nil
+    }
+}
+
+/// Invisible probe armed while `GlobalShortcutRecorder` is recording. Reports
+/// the first keystroke (or `nil` when it loses first responder) back exactly
+/// once. `hitTest` returns `nil` so a click still falls through to the chip
+/// beneath, letting a second click cancel.
+private struct GlobalShortcutProbe: NSViewRepresentable {
+    let onResult: (NSEvent?) -> Void
+
+    func makeNSView(context: Context) -> ProbeView {
+        let view = ProbeView()
+        view.onResult = onResult
+        return view
+    }
+
+    func updateNSView(_ nsView: ProbeView, context: Context) {
+        nsView.onResult = onResult
+    }
+
+    final class ProbeView: NSView {
+        var onResult: ((NSEvent?) -> Void)?
+        private var finished = false
+
+        override var acceptsFirstResponder: Bool { true }
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let window = self.window else { return }
+                window.makeFirstResponder(self)
+            }
+        }
+
+        @discardableResult
+        private func report(_ event: NSEvent?) -> Bool {
+            guard !finished else { return true }
+            finished = true
+            onResult?(event)
+            return true
+        }
+
+        override func keyDown(with event: NSEvent) { report(event) }
+
+        override func performKeyEquivalent(with event: NSEvent) -> Bool { report(event) }
+
+        override func resignFirstResponder() -> Bool {
+            if !finished {
+                finished = true
+                let callback = onResult
+                DispatchQueue.main.async { callback?(nil) }
+            }
+            return super.resignFirstResponder()
+        }
+    }
+}
+
 // MARK: - Filter
 
 private struct FilterSection: View {
@@ -1170,7 +1341,7 @@ private struct FilterSection: View {
                                 Image(systemName: "minus.circle.fill")
                             }
                             .buttonStyle(PaperIconButtonStyle(size: 28))
-                            .foregroundStyle(.red)
+                            .foregroundStyle(Color.appDanger)
                             .help(L("common.remove"))
                         }
                         .padding(.vertical, 6)
@@ -1233,13 +1404,13 @@ private struct FilterSection: View {
                 } else {
                     ForEach($store.textFilters) { $rule in
                         HStack(spacing: 8) {
-                            Picker("", selection: $rule.mode) {
-                                ForEach(TextFilterRule.Mode.allCases) { mode in
-                                    Text(mode.displayName).tag(mode)
-                                }
-                            }
-                            .labelsHidden()
-                            .frame(width: 130)
+                            PaperMenuPicker(
+                                options: TextFilterRule.Mode.allCases.map {
+                                    PaperMenuOption($0, $0.displayName)
+                                },
+                                selection: $rule.mode,
+                                width: 130
+                            )
 
                             TextField(L("settings.filter.textRules.placeholder"), text: $rule.text)
                                 .paperTextField()
@@ -1250,7 +1421,7 @@ private struct FilterSection: View {
                                 Image(systemName: "minus.circle.fill")
                             }
                             .buttonStyle(PaperIconButtonStyle(size: 28))
-                            .foregroundStyle(.red)
+                            .foregroundStyle(Color.appDanger)
                             .help(L("common.remove"))
                         }
                     }
@@ -1417,14 +1588,13 @@ private struct MergeSection: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 12)
-                Picker("", selection: selection) {
-                    ForEach(MergeSeparatorPreset.allCases) { preset in
-                        Text(preset.displayName).tag(preset)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .frame(width: 160)
+                PaperMenuPicker(
+                    options: MergeSeparatorPreset.allCases.map {
+                        PaperMenuOption($0, $0.displayName)
+                    },
+                    selection: selection,
+                    width: 160
+                )
             }
             if selection.wrappedValue == .custom {
                 TextField(placeholder, text: custom)
@@ -1611,14 +1781,11 @@ private struct DataSection: View {
                         title: L("settings.data.trash.autoClean"),
                         subtitle: L("settings.data.trash.autoClean.subtitle")
                     ) {
-                        Picker("", selection: $filters.trashRetentionDays) {
-                            ForEach(trashRetentionOptions, id: \.value) { opt in
-                                Text(opt.label).tag(opt.value)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .frame(width: 110)
+                        PaperMenuPicker(
+                            options: trashRetentionOptions.map { PaperMenuOption($0.value, $0.label) },
+                            selection: $filters.trashRetentionDays,
+                            width: 110
+                        )
                     }
                 }
             }
@@ -1675,14 +1842,11 @@ private struct DataSection: View {
                             Label(type.displayName, systemImage: type.icon)
                                 .font(.system(size: 13))
                             Spacer()
-                            Picker("", selection: retentionBinding(for: type)) {
-                                ForEach(retentionOptions, id: \.value) { opt in
-                                    Text(opt.label).tag(opt.value)
-                                }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.menu)
-                            .frame(width: 110)
+                            PaperMenuPicker(
+                                options: retentionOptions.map { PaperMenuOption($0.value, $0.label) },
+                                selection: retentionBinding(for: type),
+                                width: 110
+                            )
                         }
                         .padding(.vertical, 3)
                     }
@@ -1741,6 +1905,8 @@ private struct DataSection: View {
 
 @MainActor
 private struct AboutSection: View {
+    @State private var showAcknowledgements = false
+
     private var appName: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
             ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String
@@ -1757,27 +1923,7 @@ private struct AboutSection: View {
 
     var body: some View {
         VStack(spacing: 18) {
-            SettingCard(title: appName, subtitle: nil) {
-                HStack(spacing: 16) {
-                    AppLogoMark(size: 72, shadowRadius: 8, shadowOpacity: 0.85)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(appName)
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(Color.appMetal)
-                        Text(L("settings.about.versionFormat", version))
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                        if !copyright.isEmpty {
-                            Text(copyright)
-                                .font(.system(size: 11))
-                                .foregroundStyle(.tertiary)
-                        }
-                    }
-                    Spacer(minLength: 0)
-                }
-            }
-
-            UpdateCheckCard()
+            AboutHeaderCard(appName: appName, version: version, copyright: copyright)
 
             SettingsGroup(icon: "info.circle", title: L("settings.about.info.title"), tint: .blue) {
                 SettingsRow(
@@ -1857,15 +2003,20 @@ private struct AboutSection: View {
                 }
             }
 
-            SettingCard(
+            SettingInlineCard(
                 title: L("settings.about.acknowledgements.title"),
                 subtitle: L("settings.about.acknowledgements.subtitle")
             ) {
-                Text(L("settings.about.acknowledgements.body"))
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    showAcknowledgements = true
+                } label: {
+                    Label(L("settings.about.acknowledgements.view"), systemImage: "chevron.right")
+                }
+                .buttonStyle(PaperActionButtonStyle(role: .plain))
             }
+        }
+        .sheet(isPresented: $showAcknowledgements) {
+            AcknowledgementsSheet { showAcknowledgements = false }
         }
     }
 
@@ -1879,41 +2030,187 @@ private struct AboutSection: View {
     }
 }
 
-// MARK: - Update check card
+// MARK: - About header card
 //
-// Thin SwiftUI surface over `UpdaterService`, our Sparkle wrapper. The button
-// just triggers `checkForUpdates()`; from there Sparkle drives its own
-// standard UI (checking sheet → up-to-date or update-available dialog →
-// download progress → install & relaunch), so we don't reimplement any of
-// that ourselves. Disabling the button while `canCheck == false` prevents
-// the user from re-firing a check that is already in flight.
+// App icon + name + version, with the update check folded into the same row.
+// Tapping "检查更新" just triggers `checkForUpdates()`; from there Sparkle
+// drives its own standard UI (checking sheet → up-to-date or update-available
+// dialog → download progress → install & relaunch), so we don't reimplement
+// any of that. The button is disabled (and dimmed) while a check is already
+// in flight (`canCheck == false`).
 @MainActor
-private struct UpdateCheckCard: View {
+private struct AboutHeaderCard: View {
+    let appName: String
+    let version: String
+    let copyright: String
+
     @ObservedObject private var updater = UpdaterService.shared
 
     var body: some View {
-        SettingCard(
-            title: L("settings.about.update.title"),
-            subtitle: L("settings.about.update.subtitle")
-        ) {
-            HStack(alignment: .center, spacing: 12) {
-                Image(systemName: "arrow.down.circle")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(Color.appAccent)
-                Text(L("settings.about.update.hint"))
-                    .font(.system(size: 12))
+        HStack(spacing: 16) {
+            AppLogoMark(size: 64, shadowRadius: 8, shadowOpacity: 0.85)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(appName)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Color.appMetal)
+                Text(L("settings.about.versionFormat", version))
+                    .font(.system(size: 12, design: .monospaced))
                     .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 8)
-                Button {
-                    updater.checkForUpdates()
-                } label: {
-                    Label(L("settings.about.update.check"), systemImage: "arrow.clockwise")
+                if !copyright.isEmpty {
+                    Text(copyright)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
                 }
-                .buttonStyle(PaperActionButtonStyle(role: .primary))
-                .disabled(!updater.canCheck)
+            }
+            Spacer(minLength: 12)
+            Button {
+                updater.checkForUpdates()
+            } label: {
+                Label(L("settings.about.update.check"), systemImage: "arrow.clockwise")
+            }
+            .buttonStyle(PaperActionButtonStyle(role: .plain))
+            .disabled(!updater.canCheck)
+            .opacity(updater.canCheck ? 1 : 0.5)
+            .help(L("settings.about.update.title"))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.appCard)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+        )
+        .shadow(color: Color.appCardShadow.opacity(0.55), radius: 7, y: 2)
+    }
+}
+
+// MARK: - Acknowledgements
+
+/// One open-source dependency surfaced in the acknowledgements sheet.
+private struct OpenSourceComponent: Identifiable {
+    let name: String
+    let detail: String
+    let url: URL
+    var id: String { name }
+}
+
+/// Modal listing the open-source components the app ships. Each row links out
+/// to its GitHub repository.
+private struct AcknowledgementsSheet: View {
+    let onClose: () -> Void
+
+    private var components: [OpenSourceComponent] {
+        [
+            OpenSourceComponent(
+                name: "KeyboardShortcuts",
+                detail: L("settings.about.ack.keyboardShortcuts"),
+                url: URL(string: "https://github.com/sindresorhus/KeyboardShortcuts")!
+            ),
+            OpenSourceComponent(
+                name: "Sparkle",
+                detail: L("settings.about.ack.sparkle"),
+                url: URL(string: "https://github.com/sparkle-project/Sparkle")!
+            ),
+        ]
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "heart.text.square")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color.appAccent)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L("settings.about.acknowledgements.title"))
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Color.appMetal)
+                    Text(L("settings.about.acknowledgements.subtitle"))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 24, height: 24)
+                        .background(Circle().fill(.secondary.opacity(0.15)))
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.escape, modifiers: [])
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 16)
+            .padding(.bottom, 12)
+
+            Divider().opacity(0.4)
+
+            ScrollView {
+                VStack(spacing: 8) {
+                    ForEach(components) { component in
+                        AcknowledgementRow(component: component)
+                    }
+                }
+                .padding(16)
             }
         }
+        .frame(width: 380, height: 300)
+        .background(Color.appPaper)
+    }
+}
+
+private struct AcknowledgementRow: View {
+    let component: OpenSourceComponent
+    @State private var hovering = false
+
+    var body: some View {
+        Button {
+            NSWorkspace.shared.open(component.url)
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "chevron.left.forwardslash.chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.appAccent)
+                    .frame(width: 30, height: 30)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color.appAccent.opacity(0.12))
+                    )
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(component.name)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Color.appMetal)
+                    Text(component.detail)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(hovering ? Color.appAccent : Color.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(hovering ? Color.appCardHover : Color.appCard)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(
+                        hovering ? Color.appCardBorderStrong : Color.appCardBorder,
+                        lineWidth: 0.75
+                    )
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(component.url.absoluteString)
     }
 }
 

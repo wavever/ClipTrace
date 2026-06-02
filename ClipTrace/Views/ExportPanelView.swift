@@ -192,6 +192,7 @@ struct ExportPanelView: View {
             Spacer()
 
             Button(L("common.cancel"), action: onClose)
+                .buttonStyle(PaperActionButtonStyle(role: .plain))
                 .keyboardShortcut(.cancelAction)
 
             Button {
@@ -199,14 +200,17 @@ struct ExportPanelView: View {
             } label: {
                 HStack(spacing: 6) {
                     if isExporting {
-                        ProgressView().controlSize(.small)
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(.white)
                     }
                     Text(L("export.exportButton"))
                 }
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(PaperActionButtonStyle(role: .primary))
             .keyboardShortcut(.defaultAction)
             .disabled(matched.isEmpty || isExporting)
+            .opacity(matched.isEmpty || isExporting ? 0.5 : 1)
         }
     }
 

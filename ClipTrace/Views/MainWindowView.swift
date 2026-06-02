@@ -123,17 +123,15 @@ struct MainWindowContent: View {
                 .allowsHitTesting(false)
 
             // The card list stays mounted as the base layer; Settings / Stats /
-            // Trash slide in over it. Returning is then a pure reveal — we no
-            // longer tear down and rebuild the (heavy) list view tree on every
-            // back-navigation, which is what made the settings→list transition
-            // hitch (and occasionally spin the beachball). A move-only
-            // transition also avoids rasterising the material/shadow-heavy
-            // panels into an opacity layer.
+            // Trash cross-fade in over it. Returning is then a pure reveal — we
+            // no longer tear down and rebuild the (heavy) list view tree on
+            // every back-navigation, which is what made the settings→list
+            // transition hitch (and occasionally spin the beachball).
             listScreen
 
             if nav.screen != .list {
                 secondaryScreen
-                    .transition(.move(edge: .trailing))
+                    .transition(.opacity)
             }
 
             if let toast = toasts.current {
@@ -585,28 +583,22 @@ struct MainWindowContent: View {
         HStack(spacing: 12) {
             ScopeSegmentedControl(selected: $vm.selectedScope)
 
-            Picker("", selection: $vm.selectedType) {
-                Text(L("common.allTypes")).tag(nil as ClipboardItemType?)
-                ForEach(ClipboardItemType.allCases, id: \.self) { type in
-                    Label(type.displayName, systemImage: type.icon).tag(type as ClipboardItemType?)
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .frame(width: 128)
+            PaperMenuPicker(
+                options: [PaperMenuOption(nil as ClipboardItemType?, L("common.allTypes"), icon: "square.grid.2x2")]
+                    + ClipboardItemType.allCases.map { PaperMenuOption($0, $0.displayName, icon: $0.icon) },
+                selection: $vm.selectedType,
+                width: 128
+            )
 
             // Sort control — only meaningful inside 收藏, where the list no
             // longer has to stay strictly reverse-chronological.
             if vm.selectedScope == .favorites {
-                Picker("", selection: $vm.favoritesSortOrder) {
-                    ForEach(FavoritesSortOrder.allCases) { order in
-                        Label(order.displayName, systemImage: order.icon).tag(order)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .frame(width: 120)
-                .help(L("favorites.sort.help"))
+                PaperMenuPicker(
+                    options: FavoritesSortOrder.allCases.map { PaperMenuOption($0, $0.displayName, icon: $0.icon) },
+                    selection: $vm.favoritesSortOrder,
+                    width: 120,
+                    help: L("favorites.sort.help")
+                )
             }
 
             ToolbarSearchField(

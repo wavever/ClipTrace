@@ -383,6 +383,9 @@ extension L10n {
         "settings.shortcut.quickPasteCommit": "快速粘贴触发键",
         "settings.shortcut.quickPasteCommit.subtitle": "在快速粘贴浮窗中用 ↑↓ 选中条目后，按此键复制并粘贴到当前应用（仅浮窗内生效，不占用全局快捷键）",
         "settings.shortcut.quickPasteCommit.recording": "请按下按键…",
+        "settings.shortcut.recording": "请按下快捷键…",
+        "settings.shortcut.empty": "未设置",
+        "settings.shortcut.clearTooltip": "清除快捷键",
         "settings.shortcut.quickPasteToggleSelect": "快速粘贴多选键",
         "settings.shortcut.quickPasteToggleSelect.subtitle": "在快速粘贴浮窗中，按此键把当前高亮条目加入或移出多选（按选择顺序粘贴）",
         "settings.shortcut.resetTooltip": "恢复为默认值",
@@ -477,6 +480,9 @@ extension L10n {
         "settings.about.acknowledgements.title": "致谢",
         "settings.about.acknowledgements.subtitle": "本应用使用的开源组件",
         "settings.about.acknowledgements.body": "KeyboardShortcuts — 全局快捷键录制\nApple NLEmbedding — 本地语义索引\n感谢所有开源社区的贡献者。",
+        "settings.about.acknowledgements.view": "查看全部",
+        "settings.about.ack.keyboardShortcuts": "全局快捷键录制",
+        "settings.about.ack.sparkle": "应用内自动更新",
 
         // settings: about / update
         "settings.about.update.title": "检查更新",
@@ -912,6 +918,9 @@ extension L10n {
         "settings.shortcut.quickPasteCommit": "Quick Paste trigger key",
         "settings.shortcut.quickPasteCommit.subtitle": "Inside the Quick Paste panel, select an item with ↑↓ then press this to paste it into the focused app (panel-only — never a global hotkey)",
         "settings.shortcut.quickPasteCommit.recording": "Press a key…",
+        "settings.shortcut.recording": "Press shortcut…",
+        "settings.shortcut.empty": "Not set",
+        "settings.shortcut.clearTooltip": "Clear shortcut",
         "settings.shortcut.quickPasteToggleSelect": "Quick Paste multi-select key",
         "settings.shortcut.quickPasteToggleSelect.subtitle": "In the Quick Paste panel, press this to add or remove the highlighted item from the multi-selection (pasted in pick order)",
         "settings.shortcut.resetTooltip": "Restore default",
@@ -1006,6 +1015,9 @@ extension L10n {
         "settings.about.acknowledgements.title": "Acknowledgements",
         "settings.about.acknowledgements.subtitle": "Open-source components used in this app",
         "settings.about.acknowledgements.body": "KeyboardShortcuts — global hotkey recorder\nApple NLEmbedding — on-device semantic index\nThanks to all contributors of the open-source community.",
+        "settings.about.acknowledgements.view": "View all",
+        "settings.about.ack.keyboardShortcuts": "Global hotkey recording",
+        "settings.about.ack.sparkle": "In-app auto-updates",
 
         // settings: about / update
         "settings.about.update.title": "Check for Updates",

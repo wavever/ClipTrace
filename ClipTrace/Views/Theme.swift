@@ -51,6 +51,11 @@ extension Color {
     /// Warm graphite used where a metal-like neutral fits better than black.
     static var appMetal: Color { Self.dynamic(light: metalLight, dark: metalDark) }
 
+    /// Muted, warm-leaning red for destructive actions (delete / clear). The
+    /// system `.red` reads as too saturated next to the earth-tone palette, so
+    /// this terracotta red keeps "danger" legible without screaming.
+    static var appDanger: Color { Self.dynamic(light: dangerLight, dark: dangerDark) }
+
     // MARK: - Raw values
 
     // Keep the page warm, but not so saturated that the whole app turns tan.
@@ -89,6 +94,11 @@ extension Color {
 
     private static let metalLight = NSColor(srgbRed: 0.355, green: 0.330, blue: 0.285, alpha: 1)
     private static let metalDark  = NSColor(srgbRed: 0.760, green: 0.720, blue: 0.650, alpha: 1)
+
+    // Softened terracotta — kept close to system red's brightness so white
+    // text stays legible, but desaturated and warmed so it sits in the palette.
+    private static let dangerLight = NSColor(srgbRed: 0.760, green: 0.330, blue: 0.300, alpha: 1)
+    private static let dangerDark  = NSColor(srgbRed: 0.815, green: 0.420, blue: 0.385, alpha: 1)
 
     private static func dynamic(light: NSColor, dark: NSColor) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
@@ -205,7 +215,7 @@ struct PaperActionButtonStyle: ButtonStyle {
         switch role {
         case .plain: return Color.appChipFill
         case .primary: return Color.appAccent
-        case .destructive: return .red
+        case .destructive: return Color.appDanger
         }
     }
 
@@ -235,6 +245,297 @@ struct PaperIconButtonStyle: ButtonStyle {
             )
             .scaleEffect(configuration.isPressed ? 0.95 : 1)
             .animation(.easeOut(duration: 0.10), value: configuration.isPressed)
+    }
+}
+
+// MARK: - Paper dropdown
+
+/// One choice in a `PaperMenuPicker`.
+struct PaperMenuOption<Value: Hashable> {
+    let value: Value
+    let title: String
+    var icon: String?
+
+    init(_ value: Value, _ title: String, icon: String? = nil) {
+        self.value = value
+        self.title = title
+        self.icon = icon
+    }
+}
+
+/// Drop-in replacement for `Picker(.menu)`. The system pop-up button opens a
+/// cold AppKit menu that clashes with the warm paper UI, so this renders the
+/// trigger as a paper chip and the choices as a rectangular paper menu with
+/// fully custom rows (hover wash + accent check on the active option). Generic
+/// over any `Hashable` value — including optionals — so it covers every
+/// dropdown in the app (type filter, poll interval, retention, …).
+///
+/// The menu is hosted in a borderless child `NSPanel` rather than a `.popover`
+/// so it reads as a plain rectangle (no bubble arrow) and is never clipped by
+/// an enclosing `ScrollView` such as the settings pane.
+struct PaperMenuPicker<Value: Hashable>: View {
+    let options: [PaperMenuOption<Value>]
+    @Binding var selection: Value
+    var width: CGFloat?
+    var help: String?
+
+    init(
+        options: [PaperMenuOption<Value>],
+        selection: Binding<Value>,
+        width: CGFloat? = nil,
+        help: String? = nil
+    ) {
+        self.options = options
+        self._selection = selection
+        self.width = width
+        self.help = help
+    }
+
+    @State private var hovering = false
+    @StateObject private var controller = PaperDropdownController()
+
+    private var selected: PaperMenuOption<Value>? {
+        options.first { $0.value == selection }
+    }
+
+    var body: some View {
+        Button {
+            toggleMenu()
+        } label: {
+            HStack(spacing: 6) {
+                if let icon = selected?.icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.appAccent)
+                }
+                Text(selected?.title ?? "")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.appMetal)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .frame(width: width, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(hovering || controller.isOpen ? Color.appCardHover : Color.appChipFill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(
+                        controller.isOpen ? Color.appAccent.opacity(0.55) : Color.appCardBorder,
+                        lineWidth: controller.isOpen ? 1 : 0.75
+                    )
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .background(PaperDropdownAnchor(controller: controller))
+        .help(help ?? "")
+    }
+
+    private func toggleMenu() {
+        let menuWidth = max(width ?? 0, 160)
+        controller.toggle(width: menuWidth) {
+            PaperMenuList(
+                options: options,
+                selected: selection,
+                width: menuWidth,
+                onSelect: { value in
+                    if selection != value { selection = value }
+                    controller.close()
+                }
+            )
+        }
+    }
+}
+
+/// Owns the borderless child `NSPanel` that hosts an open menu. Kept as an
+/// `ObservableObject` so the trigger can reflect the open state, and so the
+/// panel + its event monitors are torn down deterministically.
+@MainActor
+final class PaperDropdownController: ObservableObject {
+    weak var anchorView: NSView?
+    @Published private(set) var isOpen = false
+
+    private var panel: NSPanel?
+    private var monitor: Any?
+    private var resignObserver: NSObjectProtocol?
+
+    func toggle<Content: View>(width: CGFloat, @ViewBuilder content: () -> Content) {
+        if isOpen { close() } else { open(width: width, content: content()) }
+    }
+
+    private func open<Content: View>(width: CGFloat, content: Content) {
+        guard let anchorView, let parent = anchorView.window else { return }
+
+        let hosting = NSHostingView(rootView: content)
+        hosting.layoutSubtreeIfNeeded()
+        let height = hosting.fittingSize.height
+        hosting.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        hosting.autoresizingMask = [.width, .height]
+
+        // Anchor rect → screen coordinates (AppKit's y-up space).
+        let rectInWindow = anchorView.convert(anchorView.bounds, to: nil)
+        let anchorOnScreen = parent.convertToScreen(rectInWindow)
+
+        let gap: CGFloat = 4
+        var originX = anchorOnScreen.minX
+        var originY = anchorOnScreen.minY - gap - height        // hang below the trigger
+        if let screen = parent.screen ?? NSScreen.main {
+            let visible = screen.visibleFrame
+            if originY < visible.minY { originY = anchorOnScreen.maxY + gap }   // flip above
+            originX = min(max(originX, visible.minX + 4), visible.maxX - width - 4)
+        }
+
+        let panel = NSPanel(
+            contentRect: NSRect(x: originX, y: originY, width: width, height: height),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.level = .popUpMenu
+        panel.animationBehavior = .utilityWindow
+        panel.contentView = hosting
+
+        parent.addChildWindow(panel, ordered: .above)
+        self.panel = panel
+        isOpen = true
+
+        // Dismiss on any click that isn't inside the menu. Clicks on the
+        // trigger itself are passed through so the button's own toggle closes
+        // it (otherwise the monitor would close it, then the button reopens).
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            guard let self, let panel = self.panel else { return event }
+            if event.window == panel { return event }
+            if let anchorView = self.anchorView, event.window == anchorView.window {
+                let point = anchorView.convert(event.locationInWindow, from: nil)
+                if anchorView.bounds.contains(point) { return event }
+            }
+            self.close()
+            return event
+        }
+
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification,
+            object: parent,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.close() }
+        }
+    }
+
+    func close() {
+        if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
+        if let resignObserver {
+            NotificationCenter.default.removeObserver(resignObserver)
+            self.resignObserver = nil
+        }
+        if let panel {
+            panel.parent?.removeChildWindow(panel)
+            panel.orderOut(nil)
+        }
+        panel = nil
+        isOpen = false
+    }
+}
+
+/// Zero-size companion view that hands the controller the backing `NSView`, so
+/// it can resolve the trigger's window and on-screen frame when opening.
+private struct PaperDropdownAnchor: NSViewRepresentable {
+    let controller: PaperDropdownController
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        MainActor.assumeIsolated { controller.anchorView = view }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        MainActor.assumeIsolated { controller.anchorView = nsView }
+    }
+}
+
+private struct PaperMenuList<Value: Hashable>: View {
+    let options: [PaperMenuOption<Value>]
+    let selected: Value
+    let width: CGFloat
+    let onSelect: (Value) -> Void
+
+    var body: some View {
+        VStack(spacing: 1) {
+            ForEach(options.indices, id: \.self) { idx in
+                let option = options[idx]
+                PaperMenuItem(
+                    title: option.title,
+                    icon: option.icon,
+                    isSelected: option.value == selected,
+                    action: { onSelect(option.value) }
+                )
+            }
+        }
+        .padding(5)
+        .frame(width: width, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.appPaper)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+private struct PaperMenuItem: View {
+    let title: String
+    let icon: String?
+    let isSelected: Bool
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                if let icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(isSelected ? Color.appAccent : Color.appMetal)
+                        .frame(width: 16)
+                }
+                Text(title)
+                    .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                    .foregroundStyle(isSelected ? Color.appAccent : Color.appMetal)
+                    .lineLimit(1)
+                Spacer(minLength: 14)
+                Image(systemName: "checkmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.appAccent)
+                    .opacity(isSelected ? 1 : 0)
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(hovering ? Color.appAccent.opacity(0.14) : Color.clear)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { h in
+            withAnimation(.easeOut(duration: 0.12)) { hovering = h }
+        }
     }
 }
 

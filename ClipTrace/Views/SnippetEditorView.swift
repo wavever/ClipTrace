@@ -25,14 +25,13 @@ struct SnippetEditorView: View {
                 Text(L("snippet.title"))
                     .font(.system(size: 17, weight: .semibold))
                 Spacer()
-                Picker("", selection: $type) {
-                    ForEach([ClipboardItemType.text, .url, .rtf], id: \.self) { t in
-                        Label(t.displayName, systemImage: t.icon).tag(t)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .frame(width: 120)
+                PaperMenuPicker(
+                    options: [ClipboardItemType.text, .url, .rtf].map {
+                        PaperMenuOption($0, $0.displayName, icon: $0.icon)
+                    },
+                    selection: $type,
+                    width: 120
+                )
             }
 
             ZStack(alignment: .topLeading) {
