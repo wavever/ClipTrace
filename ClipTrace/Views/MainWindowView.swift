@@ -474,6 +474,25 @@ struct MainWindowContent: View {
             .disabled(isMergingSelection)
 
             Button {
+                performDeleteSelected(selected)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "trash")
+                    Text(L("selection.deleteCountFormat", selected.count))
+                }
+                    .font(.system(size: 13, weight: .semibold))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(selected.isEmpty ? Color.appDanger.opacity(0.35) : Color.appDanger)
+            )
+            .disabled(selected.isEmpty || isMergingSelection)
+
+            Button {
                 performMerge(selected)
             } label: {
                 HStack(spacing: 6) {
@@ -522,6 +541,31 @@ struct MainWindowContent: View {
                 .strokeBorder(.separator.opacity(0.35), lineWidth: 0.5)
         )
         .shadow(color: .black.opacity(0.18), radius: 18, y: 6)
+    }
+
+    /// Bulk-delete the current selection. Routes through the same shared
+    /// confirm dialog as every other delete, then soft- or hard-deletes (per
+    /// the trash setting) and leaves selection mode.
+    private func performDeleteSelected(_ selected: [ClipboardItem]) {
+        guard !selected.isEmpty, !isMergingSelection else { return }
+        let count = selected.count
+        ConfirmationCenter.shared.confirm(
+            title: L("confirm.deleteSelected.titleFormat", count),
+            message: FilterSettingsStore.shared.trashEnabled
+                ? L("confirm.deleteItem.message")
+                : L("confirm.permanent.message"),
+            confirmLabel: L("common.delete"),
+            icon: "trash"
+        ) {
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                vm.deleteSelected(selected, context: modelContext)
+            }
+            ToastCenter.shared.show(
+                L("selection.deletedFormat", count),
+                systemImage: "trash.fill",
+                tint: .red
+            )
+        }
     }
 
     private func performMerge(_ selected: [ClipboardItem]) {
@@ -617,7 +661,7 @@ struct MainWindowContent: View {
 
             ToolbarIconButton(
                 systemName: vm.isSelectionMode ? "checkmark.circle.fill" : "checkmark.circle",
-                help: vm.isSelectionMode ? L("toolbar.exitSelection") : L("toolbar.selectAndMerge")
+                help: vm.isSelectionMode ? L("toolbar.exitSelection") : L("toolbar.multiSelect")
             ) {
                 withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
                     if vm.isSelectionMode {
@@ -1123,18 +1167,18 @@ private struct RenameClipSheet: View {
                 .foregroundStyle(.secondary)
 
             TextField(fallback, text: $draft)
-                .textFieldStyle(.roundedBorder)
                 .focused($focused)
                 .onSubmit { onCommit(draft) }
+                .paperTextField(focused: focused)
 
             HStack {
                 Spacer()
                 Button(L("common.cancel"), action: onCancel)
+                    .buttonStyle(PaperActionButtonStyle(role: .plain))
                     .keyboardShortcut(.cancelAction)
                 Button(L("common.save")) { onCommit(draft) }
+                    .buttonStyle(PaperActionButtonStyle(role: .primary))
                     .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-                    .tint(Color.appAccent)
             }
         }
         .padding(18)

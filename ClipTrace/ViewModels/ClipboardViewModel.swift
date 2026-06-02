@@ -778,6 +778,24 @@ class ClipboardViewModel: ObservableObject {
         return merged
     }
 
+    /// Soft- or hard-delete every selected entry in a single save pass
+    /// (honoring the trash setting, exactly like `deleteItem`), then leave
+    /// selection mode.
+    func deleteSelected(_ items: [ClipboardItem], context: ModelContext) {
+        guard !items.isEmpty else { return }
+        let toTrash = FilterSettingsStore.shared.trashEnabled
+        let now = Date()
+        for item in items {
+            if toTrash {
+                item.deletedAt = now
+            } else {
+                context.delete(item)
+            }
+        }
+        try? context.save()
+        exitSelectionMode()
+    }
+
     // MARK: - Bulk selection helpers
 
     func selectAll(_ items: [ClipboardItem]) {

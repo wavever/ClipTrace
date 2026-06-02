@@ -185,6 +185,10 @@ struct PaperActionButtonStyle: ButtonStyle {
     }
 
     var role: Role = .plain
+    // Custom button styles don't inherit the system's disabled dimming, so read
+    // it ourselves and fade the whole control — otherwise a disabled primary
+    // (e.g. an empty "保存") would look fully active.
+    @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -200,6 +204,7 @@ struct PaperActionButtonStyle: ButtonStyle {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .strokeBorder(border, lineWidth: role == .plain ? 0.75 : 0)
             )
+            .opacity(isEnabled ? 1 : 0.4)
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .animation(.easeOut(duration: 0.10), value: configuration.isPressed)
     }

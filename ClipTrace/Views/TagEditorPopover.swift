@@ -21,17 +21,16 @@ struct TagEditorPopover: View {
 
             HStack(spacing: 8) {
                 TextField(L("tags.placeholder"), text: $draft)
-                    .textFieldStyle(.roundedBorder)
                     .focused($fieldFocused)
                     .onSubmit(commit)
+                    .paperTextField(focused: fieldFocused)
                 Button {
                     commit()
                 } label: {
                     Image(systemName: "plus")
-                        .frame(width: 24, height: 24)
+                        .font(.system(size: 12, weight: .bold))
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+                .buttonStyle(PaperActionButtonStyle(role: .primary))
                 .disabled(trimmedDraft.isEmpty)
             }
 
@@ -57,6 +56,7 @@ struct TagEditorPopover: View {
                 Button(L("common.done")) {
                     dismiss()
                 }
+                .buttonStyle(PaperActionButtonStyle(role: .primary))
                 .keyboardShortcut(.defaultAction)
             }
         }

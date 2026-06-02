@@ -192,9 +192,9 @@ struct QuickPasteView: View {
                 onCancel()
             } label: {
                 Text(L("common.cancel"))
-                    .font(.system(size: 12))
                     .frame(minWidth: 56)
             }
+            .buttonStyle(PaperActionButtonStyle(role: .plain))
             .keyboardShortcut(.escape, modifiers: [])
 
             Spacer()
@@ -211,7 +211,7 @@ struct QuickPasteView: View {
                 .font(.system(size: 12, weight: .semibold))
                 .frame(minWidth: 120)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(PaperActionButtonStyle(role: .primary))
             .disabled(selectedIDs.isEmpty && focusedID == nil)
         }
         .padding(.horizontal, 12)

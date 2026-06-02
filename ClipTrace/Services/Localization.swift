@@ -91,6 +91,7 @@ extension L10n {
         // confirm dialogs
         "confirm.deleteItem.title": "删除此条目？",
         "confirm.deleteItem.message": "条目会移到垃圾桶，可在垃圾桶中恢复。",
+        "confirm.deleteSelected.titleFormat": "删除选中的 %d 条？",
         "confirm.permanent.message": "此操作无法撤销。",
         "confirm.purge.title": "彻底删除此条目？",
         "confirm.empty.title": "清空垃圾桶？",
@@ -194,7 +195,7 @@ extension L10n {
 
         // toolbar
         "toolbar.newSnippet": "新建片段",
-        "toolbar.selectAndMerge": "选择并合并",
+        "toolbar.multiSelect": "多选",
         "toolbar.exitSelection": "退出选择",
         "toolbar.trash": "垃圾桶",
         "toolbar.stats": "活跃统计",
@@ -221,6 +222,8 @@ extension L10n {
         "selection.clear": "清空",
         "selection.invert": "反选",
         "selection.mergeCountFormat": "合并 %d 条",
+        "selection.deleteCountFormat": "删除 %d 条",
+        "selection.deletedFormat": "已删除 %d 条",
         "selection.merging": "合并中…",
         "selection.mergedFormat": "已合并 %d 条",
         "selection.mergedSuffix.deleted": "（已删除原条目）",
@@ -626,6 +629,7 @@ extension L10n {
         // confirm dialogs
         "confirm.deleteItem.title": "Delete this item?",
         "confirm.deleteItem.message": "It will be moved to Trash, where you can restore it.",
+        "confirm.deleteSelected.titleFormat": "Delete %d selected items?",
         "confirm.permanent.message": "This can’t be undone.",
         "confirm.purge.title": "Delete this item forever?",
         "confirm.empty.title": "Empty Trash?",
@@ -729,7 +733,7 @@ extension L10n {
 
         // toolbar
         "toolbar.newSnippet": "New snippet",
-        "toolbar.selectAndMerge": "Select & merge",
+        "toolbar.multiSelect": "Multi-select",
         "toolbar.exitSelection": "Exit selection",
         "toolbar.trash": "Trash",
         "toolbar.stats": "Activity",
@@ -756,6 +760,8 @@ extension L10n {
         "selection.clear": "Clear",
         "selection.invert": "Invert",
         "selection.mergeCountFormat": "Merge %d",
+        "selection.deleteCountFormat": "Delete %d",
+        "selection.deletedFormat": "Deleted %d",
         "selection.merging": "Merging…",
         "selection.mergedFormat": "Merged %d",
         "selection.mergedSuffix.deleted": " (originals removed)",

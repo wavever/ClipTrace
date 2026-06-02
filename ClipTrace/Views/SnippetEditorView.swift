@@ -65,16 +65,20 @@ struct SnippetEditorView: View {
                     .toggleStyle(.switch)
                     .controlSize(.small)
                 Spacer()
-                Button(L("common.cancel"), role: .cancel) { onCancel() }
-                    .keyboardShortcut(.escape, modifiers: [])
+                Button { onCancel() } label: {
+                    Text(L("common.cancel"))
+                        .frame(minWidth: 60)
+                }
+                .buttonStyle(PaperActionButtonStyle(role: .plain))
+                .keyboardShortcut(.escape, modifiers: [])
                 Button {
                     onSave(trimmed, type, pinAfterSave)
                 } label: {
                     Text(L("common.save"))
                         .frame(minWidth: 60)
                 }
+                .buttonStyle(PaperActionButtonStyle(role: .primary))
                 .keyboardShortcut(.return, modifiers: .command)
-                .buttonStyle(.borderedProminent)
                 .disabled(trimmed.isEmpty)
             }
         }
