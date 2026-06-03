@@ -18,8 +18,21 @@ class ClipboardMonitor: ObservableObject {
     /// Call this **right after** writing to `NSPasteboard.general` from within
     /// the app so the monitor knows to ignore the resulting change-count tick.
     private static let debugLogURL = URL(fileURLWithPath: "/tmp/clipboard-debug.log")
-    static func debugLog(_ message: String) {
-        let line = "\(Date()) \(message)\n"
+
+    /// Verbose clipboard tracing. Off by default: it does synchronous file I/O
+    /// on the polling (main) thread, and several call sites re-decode the
+    /// pasteboard image (`NSImage(pasteboard:)`) just to build the message — so
+    /// leaving it on stutters every single copy and writes clipboard contents
+    /// to /tmp in the clear. Flip on via the `clipboardDebugLogging` user
+    /// default only while diagnosing capture issues.
+    private static let debugLoggingEnabled =
+        UserDefaults.standard.bool(forKey: "clipboardDebugLogging")
+
+    /// `message` is an autoclosure so the (sometimes expensive) interpolation is
+    /// never evaluated when logging is disabled — the common case.
+    static func debugLog(_ message: @autoclosure () -> String) {
+        guard debugLoggingEnabled else { return }
+        let line = "\(Date()) \(message())\n"
         if let data = line.data(using: .utf8) {
             if let handle = try? FileHandle(forWritingTo: debugLogURL) {
                 _ = try? handle.seekToEnd()

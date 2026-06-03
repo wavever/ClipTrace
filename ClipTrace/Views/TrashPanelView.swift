@@ -7,14 +7,43 @@ import AppKit
 /// items are queued and how soon they'll be auto-purged.
 struct TrashPanelView: View {
     @EnvironmentObject var vm: ClipboardViewModel
-    @Query(sort: \ClipboardItem.deletedAt, order: .reverse) private var allItems: [ClipboardItem]
+    @Query private var trashed: [ClipboardItem]
     @Environment(\.modelContext) private var modelContext
 
     @ObservedObject private var nav = AppNavigation.shared
     @ObservedObject private var filters = FilterSettingsStore.shared
 
-    private var trashed: [ClipboardItem] {
-        allItems.filter { $0.deletedAt != nil }
+    init() {
+        // Fetch only the soft-deleted rows. The previous query had no predicate,
+        // so it pulled the *entire* history — every active clip plus its image
+        // and embedding blobs — into memory just to display the trash, then
+        // re-filtered in Swift on every render. Worse, an unpredicated @Query
+        // re-runs on every save, so each purge/clear re-materialised the whole
+        // database on the main thread: that is what made opening the panel and
+        // confirming a clear stutter and beachball.
+        var descriptor = FetchDescriptor<ClipboardItem>(
+            predicate: #Predicate { $0.deletedAt != nil },
+            sortBy: [SortDescriptor(\.deletedAt, order: .reverse)]
+        )
+        // The trash rows never render raw image bytes or embedding vectors;
+        // keep them faulted so entering the panel doesn't materialise every blob
+        // in the trash. ThumbnailView faults imageData back in lazily for the
+        // handful of visible rows, exactly like the main list does.
+        descriptor.propertiesToFetch = [
+            \.id,
+            \.type,
+            \.content,
+            \.fileURL,
+            \.sourceApp,
+            \.createdAt,
+            \.isFavorite,
+            \.isPinned,
+            \.preview,
+            \.deletedAt,
+            \.tagsRaw,
+            \.customTitle,
+        ]
+        _trashed = Query(descriptor)
     }
 
     var body: some View {

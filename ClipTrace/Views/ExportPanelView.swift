@@ -2,14 +2,41 @@ import SwiftUI
 import SwiftData
 
 struct ExportPanelView: View {
-    /// Pulls the *full* history (not the paged slice the main window holds)
-    /// so an export always covers everything the user could expect.
-    @Query(sort: \ClipboardItem.createdAt, order: .reverse)
-    private var allItems: [ClipboardItem]
+    /// Pulls the *full* active history (not the paged slice the main window
+    /// holds) so an export always covers everything the user could expect.
+    @Query private var allItems: [ClipboardItem]
     let onClose: () -> Void
 
     @State private var filter = ExportFilter()
     @State private var isExporting = false
+
+    init(onClose: @escaping () -> Void) {
+        self.onClose = onClose
+        // Active history only — trashed clips shouldn't silently land in an
+        // export — and keep the heavy image/embedding blobs faulted so opening
+        // the sheet doesn't pull every bitmap in the database into memory just
+        // to show a count. The export itself runs on the main thread (the
+        // NSSavePanel completion), so the handful of blobs it needs fault back
+        // in safely there, and only when the user opts into "include image
+        // data" (off by default).
+        var descriptor = FetchDescriptor<ClipboardItem>(
+            predicate: #Predicate { $0.deletedAt == nil },
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        descriptor.propertiesToFetch = [
+            \.id,
+            \.type,
+            \.content,
+            \.preview,
+            \.sourceApp,
+            \.fileURL,
+            \.createdAt,
+            \.isFavorite,
+            \.isPinned,
+            \.deletedAt,
+        ]
+        _allItems = Query(descriptor)
+    }
 
     private var matched: [ClipboardItem] { filter.apply(to: allItems) }
 
