@@ -2,43 +2,24 @@ import SwiftUI
 import SwiftData
 
 struct ExportPanelView: View {
-    /// Pulls the *full* active history (not the paged slice the main window
-    /// holds) so an export always covers everything the user could expect.
-    @Query private var allItems: [ClipboardItem]
     let onClose: () -> Void
+
+    @Environment(\.modelContext) private var modelContext
 
     @State private var filter = ExportFilter()
     @State private var isExporting = false
+    // The panel only needs two numbers to render — how many clips match the
+    // current filter, and how many exist in total. Holding the whole history in
+    // an unpredicated @Query (and re-running `filter.apply` over all of it on
+    // every body evaluation) is what made opening the sheet and every toggle /
+    // even the Cancel button stutter. Compute the counts with cheap DB-side
+    // COUNT queries instead, and only when the filter actually changes.
+    @State private var matchedCount = 0
+    @State private var totalCount = 0
 
     init(onClose: @escaping () -> Void) {
         self.onClose = onClose
-        // Active history only — trashed clips shouldn't silently land in an
-        // export — and keep the heavy image/embedding blobs faulted so opening
-        // the sheet doesn't pull every bitmap in the database into memory just
-        // to show a count. The export itself runs on the main thread (the
-        // NSSavePanel completion), so the handful of blobs it needs fault back
-        // in safely there, and only when the user opts into "include image
-        // data" (off by default).
-        var descriptor = FetchDescriptor<ClipboardItem>(
-            predicate: #Predicate { $0.deletedAt == nil },
-            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
-        )
-        descriptor.propertiesToFetch = [
-            \.id,
-            \.type,
-            \.content,
-            \.preview,
-            \.sourceApp,
-            \.fileURL,
-            \.createdAt,
-            \.isFavorite,
-            \.isPinned,
-            \.deletedAt,
-        ]
-        _allItems = Query(descriptor)
     }
-
-    private var matched: [ClipboardItem] { filter.apply(to: allItems) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -65,7 +46,11 @@ struct ExportPanelView: View {
                 .padding(.vertical, 14)
         }
         .frame(width: 520, height: 600)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color.appPaper)
+        // Counts are computed after the sheet paints (so presentation stays
+        // instant) and refreshed only when the filter changes.
+        .task { recount() }
+        .onChange(of: filter) { _, _ in recount() }
     }
 
     private var header: some View {
@@ -87,6 +72,7 @@ struct ExportPanelView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(L("export.title"))
                     .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(Color.appMetal)
                 Text(L("export.subtitle"))
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
@@ -94,19 +80,15 @@ struct ExportPanelView: View {
             Spacer()
             Button(action: onClose) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 24, height: 24)
-                    .background(Circle().fill(.secondary.opacity(0.15)))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PaperIconButtonStyle(size: 28))
             .help(L("common.close"))
             .keyboardShortcut(.escape, modifiers: [])
         }
     }
 
     private var typesCard: some View {
-        ExportCard(title: L("export.types.title"), subtitle: L("export.types.subtitle")) {
+        SettingCard(title: L("export.types.title"), subtitle: L("export.types.subtitle")) {
             LazyVGrid(
                 columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())],
                 spacing: 8
@@ -136,36 +118,38 @@ struct ExportPanelView: View {
                     .foregroundStyle(.secondary)
                 Text(type.displayName)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(Color.appMetal)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
             .background(
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(isOn ? Color.appAccent.opacity(0.12) : Color.secondary.opacity(0.08))
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(isOn ? Color.appAccent.opacity(0.12) : Color.appChipFill)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 7)
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .strokeBorder(
-                        isOn ? Color.appAccent.opacity(0.4) : Color.secondary.opacity(0.2),
-                        lineWidth: 0.5
+                        isOn ? Color.appAccent.opacity(0.45) : Color.appCardBorder,
+                        lineWidth: 0.75
                     )
             )
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
         .buttonStyle(.plain)
     }
 
     private var rangeCard: some View {
-        ExportCard(title: L("export.range.title"), subtitle: nil) {
-            VStack(alignment: .leading, spacing: 10) {
-                Picker("", selection: $filter.dateRange) {
-                    ForEach(ExportFilter.DateRange.allCases) { range in
-                        Text(range.displayName).tag(range)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
+        SettingCard(title: L("export.range.title")) {
+            VStack(alignment: .leading, spacing: 12) {
+                // Five ranges fit a dropdown better than a cramped pill.
+                PaperMenuPicker(
+                    options: ExportFilter.DateRange.allCases.map {
+                        PaperMenuOption($0, $0.displayName)
+                    },
+                    selection: $filter.dateRange,
+                    width: 220
+                )
 
                 if filter.dateRange == .custom {
                     HStack(spacing: 10) {
@@ -173,35 +157,32 @@ struct ExportPanelView: View {
                         DatePicker(L("export.range.to"), selection: $filter.customEnd, displayedComponents: [.date])
                     }
                     .font(.system(size: 12))
+                    .tint(.appAccent)
                 }
             }
         }
     }
 
     private var favoriteCard: some View {
-        ExportCard(title: L("export.favorites.title"), subtitle: nil) {
-            Picker("", selection: $filter.favoriteScope) {
-                ForEach(ExportFilter.FavoriteScope.allCases) { scope in
-                    Text(scope.displayName).tag(scope)
+        SettingCard(title: L("export.favorites.title")) {
+            SettingsSegmented(
+                selection: $filter.favoriteScope,
+                options: ExportFilter.FavoriteScope.allCases.map {
+                    .init(value: $0, title: $0.displayName, icon: nil)
                 }
-            }
-            .labelsHidden()
-            .pickerStyle(.segmented)
+            )
         }
     }
 
     private var optionsCard: some View {
-        ExportCard(title: L("export.options.title"), subtitle: nil) {
-            Toggle(isOn: $filter.includeImageData) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(L("export.options.includeImage"))
-                        .font(.system(size: 13, weight: .medium))
-                    Text(L("export.options.includeImage.subtitle"))
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .toggleStyle(.switch)
+        SettingInlineCard(
+            title: L("export.options.includeImage"),
+            subtitle: L("export.options.includeImage.subtitle")
+        ) {
+            Toggle("", isOn: $filter.includeImageData)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .tint(.appAccent)
         }
     }
 
@@ -211,7 +192,7 @@ struct ExportPanelView: View {
                 Image(systemName: "doc.on.doc")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-                Text(L("export.willExportFormat", matched.count, allItems.count))
+                Text(L("export.willExportFormat", matchedCount, totalCount))
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
@@ -236,14 +217,49 @@ struct ExportPanelView: View {
             }
             .buttonStyle(PaperActionButtonStyle(role: .primary))
             .keyboardShortcut(.defaultAction)
-            .disabled(matched.isEmpty || isExporting)
-            .opacity(matched.isEmpty || isExporting ? 0.5 : 1)
+            .disabled(matchedCount == 0 || isExporting)
         }
+    }
+
+    /// COUNT(*) for the active history and for the current filter — no rows are
+    /// materialised, so this stays cheap even on a huge history.
+    private func recount() {
+        totalCount = (try? modelContext.fetchCount(
+            FetchDescriptor<ClipboardItem>(predicate: #Predicate { $0.deletedAt == nil })
+        )) ?? 0
+        matchedCount = (try? modelContext.fetchCount(matchingDescriptor())) ?? 0
+    }
+
+    /// A descriptor whose predicate mirrors `ExportFilter.apply`, built from
+    /// captured locals so the whole filter collapses into one SwiftData query
+    /// (used both for the live count and to fetch the rows at export time).
+    private func matchingDescriptor() -> FetchDescriptor<ClipboardItem> {
+        let typeStrings = filter.types.map(\.rawValue)
+        let wantFavoritesOnly = filter.favoriteScope == .favoritesOnly
+        let wantPinnedOnly = filter.favoriteScope == .pinnedOnly
+        let interval = filter.resolvedInterval
+        let start = interval?.start ?? .distantPast
+        let end = interval?.end ?? .distantFuture
+
+        return FetchDescriptor<ClipboardItem>(
+            predicate: #Predicate { item in
+                item.deletedAt == nil &&
+                typeStrings.contains(item.type) &&
+                (!wantFavoritesOnly || item.isFavorite) &&
+                (!wantPinnedOnly || item.isPinned) &&
+                item.createdAt >= start &&
+                item.createdAt <= end
+            },
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
     }
 
     private func exportNow() {
         isExporting = true
-        ExportService.shared.exportToJSON(items: allItems, filter: filter) { result in
+        // Fetch the matching rows (with their image bytes) only now, on an
+        // explicit export — not on every keystroke in the panel.
+        let items = (try? modelContext.fetch(matchingDescriptor())) ?? []
+        ExportService.shared.exportToJSON(items: items, filter: filter) { result in
             DispatchQueue.main.async {
                 isExporting = false
                 switch result {
@@ -251,7 +267,7 @@ struct ExportPanelView: View {
                     break
                 case .success(let url):
                     ToastCenter.shared.show(
-                        L("export.successFormat", matched.count, url.lastPathComponent),
+                        L("export.successFormat", items.count, url.lastPathComponent),
                         systemImage: "checkmark.circle.fill",
                         tint: .green
                     )
@@ -265,36 +281,5 @@ struct ExportPanelView: View {
                 }
             }
         }
-    }
-}
-
-private struct ExportCard<Content: View>: View {
-    let title: String
-    let subtitle: String?
-    @ViewBuilder var content: () -> Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 14, weight: .semibold))
-                if let subtitle {
-                    Text(subtitle)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            content()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(.secondary.opacity(0.08))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(.separator.opacity(0.4), lineWidth: 0.5)
-        )
     }
 }

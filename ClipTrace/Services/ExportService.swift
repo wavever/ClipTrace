@@ -1,7 +1,7 @@
 import AppKit
 import UniformTypeIdentifiers
 
-struct ExportFilter {
+struct ExportFilter: Equatable {
     enum FavoriteScope: String, CaseIterable, Identifiable {
         case all
         case favoritesOnly
@@ -57,7 +57,7 @@ struct ExportFilter {
         return result
     }
 
-    private var resolvedInterval: DateInterval? {
+    var resolvedInterval: DateInterval? {
         let now = Date()
         let cal = Calendar.current
         switch dateRange {
