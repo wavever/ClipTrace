@@ -173,170 +173,52 @@ jobs:
           echo "ed_signature=$ED_SIG" >> "$GITHUB_OUTPUT"
           echo "length=$LENGTH" >> "$GITHUB_OUTPUT"
 
-      # Build the appcast item for this release. We try to fetch the previous
-      # appcast.xml (served by GitHub as `releases/latest/download/appcast.xml`,
-      # which always resolves to the latest published release's asset). If it
-      # exists we keep its <item> entries and prepend the new one so users see
-      # full version history; otherwise we start fresh (bootstrap case for the
-      # first Sparkle release).
-      - name: Generate appcast.xml
+      # Build the Sparkle appcast and the GitHub Release body in one shot via
+      # scripts/build_release_notes.py. The script embeds the *full* changelog
+      # into the appcast <description> (so the updater dialog shows real notes
+      # instead of a bare link) and, when docs/release-notes/<version>.md
+      # provides `## en` / `## zh` sections, emits one <description xml:lang="…">
+      # per language — Sparkle then shows the one matching the user's system
+      # language. With no notes file it falls back to an auto-generated English
+      # changelog from conventional-commit subjects. We fetch the previous
+      # release's appcast.xml (best effort) so prior <item> history is kept.
+      - name: Generate appcast & release notes
+        id: notes
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${{ steps.package.outputs.version }}"
           TAG="${GITHUB_REF_NAME}"
           DMG="${{ steps.package.outputs.dmg }}"
-          ED_SIG="${{ steps.sign.outputs.ed_signature }}"
-          LENGTH="${{ steps.sign.outputs.length }}"
-          DMG_URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/${DMG}"
-          RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${TAG}"
-          PUBDATE=$(date -u +"%a, %d %b %Y %H:%M:%S +0000")
-
-          PREV_ITEMS_FILE=$(mktemp)
           PREV_TAG=$(git tag --sort=-v:refname --merged "${TAG}^" 2>/dev/null | head -n 1 || true)
+          PREV_APPCAST=""
           if [ -n "$PREV_TAG" ] && gh release download "$PREV_TAG" \
               --repo "${{ github.repository }}" \
               --pattern "appcast.xml" \
               --output /tmp/prev-appcast.xml; then
             echo "Existing appcast from $PREV_TAG found — preserving history."
-            # Keep history but drop any item for the version currently being
-            # rebuilt, otherwise rerunning the same tag duplicates appcast items.
-            python3 - /tmp/prev-appcast.xml "$PREV_ITEMS_FILE" "$VERSION" <<'PY'
-          import re
-          import sys
-          
-          src, dst, version = sys.argv[1:4]
-          xml = open(src).read()
-          items = re.findall(r"<item>.*?</item>", xml, flags=re.S)
-          seen = {version}
-          with open(dst, "w") as out:
-              for item in items:
-                  m = re.search(r"<sparkle:version>(.*?)</sparkle:version>", item)
-                  item_version = m.group(1).strip() if m else ""
-                  if item_version in seen:
-                      continue
-                  if item_version:
-                      seen.add(item_version)
-                  out.write(item.rstrip() + "\n")
-          PY
+            PREV_APPCAST="/tmp/prev-appcast.xml"
           else
             echo "No prior appcast — starting fresh."
-            : > "$PREV_ITEMS_FILE"
           fi
 
-          {
-            echo '<?xml version="1.0" standalone="yes"?>'
-            echo '<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">'
-            echo '    <channel>'
-            echo '        <title>ClipTrace</title>'
-            echo "        <link>https://github.com/${{ github.repository }}</link>"
-            echo '        <description>ClipTrace release feed</description>'
-            echo '        <language>en</language>'
-            echo '        <item>'
-            echo "            <title>Version ${VERSION}</title>"
-            echo "            <link>${RELEASE_URL}</link>"
-            echo "            <sparkle:version>${VERSION}</sparkle:version>"
-            echo "            <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>"
-            echo '            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>'
-            echo "            <description><![CDATA[See <a href=\"${RELEASE_URL}\">${TAG}</a> for release notes.]]></description>"
-            echo "            <pubDate>${PUBDATE}</pubDate>"
-            echo "            <enclosure url=\"${DMG_URL}\" sparkle:edSignature=\"${ED_SIG}\" length=\"${LENGTH}\" type=\"application/octet-stream\" />"
-            echo '        </item>'
-            sed 's/^/        /' "$PREV_ITEMS_FILE"
-            echo '    </channel>'
-            echo '</rss>'
-          } > appcast.xml
+          NOTES_FILE="${RUNNER_TEMP}/release-notes.md"
+          VERSION="$VERSION" \
+          TAG="$TAG" \
+          REPO="${{ github.repository }}" \
+          DMG_URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/${DMG}" \
+          ED_SIG="${{ steps.sign.outputs.ed_signature }}" \
+          LENGTH="${{ steps.sign.outputs.length }}" \
+          PREV_TAG="$PREV_TAG" \
+          PREV_APPCAST="$PREV_APPCAST" \
+          NOTES_DIR="docs/release-notes" \
+          OUT_APPCAST="appcast.xml" \
+          OUT_BODY="$NOTES_FILE" \
+          PUBDATE="$(date -u +"%a, %d %b %Y %H:%M:%S +0000")" \
+          python3 scripts/build_release_notes.py
 
           echo "--- Generated appcast.xml ---"
           cat appcast.xml
-
-      # `--generate-notes` only surfaces PRs, and this repo merges feature
-      # branches directly to main — which leaves the release body empty save
-      # for a Full Changelog link. Build concise categorized notes from
-      # conventional commit subjects between the previous tag and this one.
-      - name: Generate release notes
-        id: notes
-        run: |
-          set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
-          PREV_TAG=$(git tag --sort=-v:refname --merged "${TAG}^" 2>/dev/null | head -n 1 || true)
-          NOTES_FILE="${RUNNER_TEMP}/release-notes.md"
-
-          python3 - "$TAG" "${PREV_TAG:-}" "${{ github.repository }}" "$NOTES_FILE" <<'PY'
-          import re
-          import subprocess
-          import sys
-
-          tag, prev_tag, repo, out_path = sys.argv[1:5]
-          repo_url = f"https://github.com/{repo}"
-
-          if prev_tag:
-              rng = f"{prev_tag}..{tag}"
-              compare_url = f"{repo_url}/compare/{prev_tag}...{tag}"
-          else:
-              rng = tag
-              compare_url = f"{repo_url}/commits/{tag}"
-
-          raw = subprocess.check_output(
-              ["git", "log", rng, "--no-merges",
-               "--pretty=format:%H%x1f%s%x1f%b%x1e"],
-              text=True,
-          )
-
-          categories = [
-              ("Features", r"feat"),
-              ("Bug Fixes", r"fix"),
-              ("Performance", r"perf"),
-              ("Refactoring", r"refactor"),
-              ("Documentation", r"docs"),
-              ("Build & CI", r"(build|ci)"),
-              ("Chores", r"chore"),
-          ]
-          prefix_re = re.compile(r"^[a-zA-Z]+(\([^)]*\))?!?:\s*")
-          bump_re = re.compile(r"^chore.*bump version", re.I)
-
-          grouped = {title: [] for title, _ in categories}
-          other = []
-
-          for record in raw.split("\x1e"):
-              # Do not use strip() here: Python treats ASCII unit separator
-              # (\x1f) as whitespace, so commits with an empty body would lose
-              # the trailing field separator and fail to unpack.
-              record = record.strip("\r\n")
-              if not record:
-                  continue
-              parts = record.split("\x1f", 2)
-              if len(parts) < 2:
-                  continue
-              sha, subject = parts[:2]
-              body = parts[2] if len(parts) > 2 else ""
-              if bump_re.match(subject):
-                  continue
-
-              clean_subject = prefix_re.sub("", subject).strip()
-              short = sha[:7]
-              # Keep each changelog entry to a single line. Detailed commit
-              # bodies/trailers are intentionally omitted from release notes.
-              entry = f"- {clean_subject} ([`{short}`]({repo_url}/commit/{sha}))"
-
-              matched = None
-              for title, pat in categories:
-                  if re.match(rf"^{pat}(\([^)]*\))?!?:", subject, re.I):
-                      matched = title
-                      break
-              (grouped[matched] if matched else other).append(entry)
-
-          with open(out_path, "w") as f:
-              for title, _ in categories:
-                  if grouped[title]:
-                      f.write(f"### {title}\n\n")
-                      f.write("\n\n".join(grouped[title]) + "\n\n")
-              if other:
-                  f.write("### Other Changes\n\n")
-                  f.write("\n\n".join(other) + "\n\n")
-              f.write(f"\n**Full Changelog**: {compare_url}\n")
-          PY
-
           echo "--- Generated release notes ---"
           cat "$NOTES_FILE"
           echo "notes_file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
