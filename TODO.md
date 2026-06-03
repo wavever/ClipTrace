@@ -132,7 +132,7 @@
   - MCP 路径已修(`eaf86e4`);`ExportService` 等地方 grep 一遍。
 
 - [ ] **验证 `pollInterval` 默认值** (S)
-  - 当前默认 1.0s。实测 0.25–0.5s CPU,OK 的话默认调到 0.5s。
+  - 当前默认已调为 0.5s。实测 CPU 后再决定是否开放 0.25s。
 
 - [ ] **SwiftData schema 迁移测试** (M)
   - `copyCount` / `customTitle` / `ocrText` 加字段时不踩坑。

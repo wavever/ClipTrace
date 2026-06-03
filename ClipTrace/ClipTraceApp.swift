@@ -13,9 +13,36 @@ struct AppLauncher {
     }
 }
 
+/// Owns clipboard capture for the lifetime of the app, independently of any
+/// window. Closing the main window should leave the menu-bar utility recording;
+/// only an explicit app quit tears the monitor down.
+@MainActor
+final class ClipboardRuntime {
+    static let shared = ClipboardRuntime()
+
+    let viewModel = ClipboardViewModel()
+
+    private let context = AppContainer.shared.mainContext
+    private var started = false
+
+    private init() {}
+
+    func start() {
+        guard !started else { return }
+        started = true
+        viewModel.startMonitoring(context: context)
+    }
+
+    func stop() {
+        guard started else { return }
+        started = false
+        viewModel.stopMonitoring()
+    }
+}
+
 struct ClipTraceApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @StateObject private var clipboardVM = ClipboardViewModel()
+    @StateObject private var clipboardVM = ClipboardRuntime.shared.viewModel
 
     @AppStorage("showInDock") private var showInDock = true
     @AppStorage("menuBarIcon") private var menuBarIcon = true
@@ -118,6 +145,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         syncActivationPolicyFromDefaults()
         applyInitialAppearance()
         setupGlobalHotKeys()
+        ClipboardRuntime.shared.start()
 
         // AppKit resets the activation policy back to the bundle default
         // (`.regular`, since we ship no `LSUIElement`) when the last standard
@@ -141,6 +169,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             _ = UpdaterService.shared
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        ClipboardRuntime.shared.stop()
     }
 
     /// Keep the app alive in the menu bar after the main window is closed.

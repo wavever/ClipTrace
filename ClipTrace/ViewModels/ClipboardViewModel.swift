@@ -123,7 +123,7 @@ class ClipboardViewModel: ObservableObject {
             UserDefaults.standard.set(favoritesSortOrder.rawValue, forKey: "favoritesSortOrder")
         }
     }
-    @Published var isMonitoring = true
+    @Published private(set) var isMonitoring = false
     @Published var showExportPanel = false
     /// Active search engine for the toolbar. Persisted only in-memory — defaults
     /// back to full-text on relaunch, matching the previous behavior.
@@ -281,10 +281,10 @@ class ClipboardViewModel: ObservableObject {
         return raw > 0 ? min(max(raw, 50), 100_000) : 500
     }
 
-    /// Clipboard poll interval in seconds; falls back to 1s.
+    /// Clipboard poll interval in seconds; falls back to 0.5s.
     static func resolvedPollInterval() -> TimeInterval {
         let raw = UserDefaults.standard.double(forKey: "pollInterval")
-        return raw > 0 ? raw : 1.0
+        return raw > 0 ? raw : 0.5
     }
 
     /// Push the current poll-interval preference to the running monitor so a
@@ -314,6 +314,9 @@ class ClipboardViewModel: ObservableObject {
     }
 
     func startMonitoring(context: ModelContext) {
+        guard !isMonitoring else { return }
+        isMonitoring = true
+
         // Retention sweep used to run synchronously on the very first frame,
         // which fetched every clipboard item (including embedded image data)
         // before the window could draw. Push it past the first paint so the
@@ -432,6 +435,8 @@ class ClipboardViewModel: ObservableObject {
     }
     
     func stopMonitoring() {
+        guard isMonitoring else { return }
+        isMonitoring = false
         monitor.stopMonitoring()
         retentionTimer?.invalidate()
         retentionTimer = nil

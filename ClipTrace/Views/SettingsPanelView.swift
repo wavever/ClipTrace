@@ -10,7 +10,7 @@ struct SettingsPanelView: View {
     @State private var section: Section = .general
 
     @AppStorage("maxRecords") private var maxRecords = 500
-    @AppStorage("pollInterval") private var pollInterval = 1.0
+    @AppStorage("pollInterval") private var pollInterval = 0.5
     @AppStorage("launchAtLogin") private var launchAtLogin = false
     @AppStorage("showInDock") private var showInDock = true
     @AppStorage("menuBarIcon") private var menuBarIcon = true

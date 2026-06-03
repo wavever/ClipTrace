@@ -44,8 +44,9 @@ class ClipboardMonitor: ObservableObject {
         lastChangeCount = pasteboard.changeCount
     }
 
-    func startMonitoring(interval: TimeInterval = 1.0, onNewContent: @escaping Callback) {
+    func startMonitoring(interval: TimeInterval = 0.5, onNewContent: @escaping Callback) {
         self.onNewContent = onNewContent
+        guard timer == nil else { return }
         timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             self?.checkForChanges()
         }

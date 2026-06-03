@@ -185,9 +185,6 @@ struct MainWindowContent: View {
         .animation(.spring(response: 0.34, dampingFraction: 0.84), value: confirm.request?.id)
         .animation(.easeOut(duration: 0.22), value: fdaOnboardingDismissed)
         .onAppear {
-            // Foreground work: the pasteboard poller must be running before
-            // the user can copy anything.
-            vm.startMonitoring(context: modelContext)
             refreshDerivedCaches()
         }
         .task {
@@ -208,9 +205,6 @@ struct MainWindowContent: View {
         }
         .onChange(of: vm.favoritesVersion) { _, _ in
             refreshFavoritesCount()
-        }
-        .onDisappear {
-            vm.stopMonitoring()
         }
         .sheet(isPresented: $vm.showExportPanel) {
             ExportPanelView {
