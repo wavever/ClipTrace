@@ -3,11 +3,7 @@ import AppKit
 import KeyboardShortcuts
 
 struct QuickPasteView: View {
-    let items: [ClipboardItem]
-    /// `plainText` is true when the user invoked commit with ⌥ held — pastes
-    /// should strip RTF/file metadata and write only `.string`.
-    var onCommit: (_ items: [ClipboardItem], _ plainText: Bool) -> Void
-    var onCancel: () -> Void
+    @ObservedObject var state: QuickPastePanelState
 
     /// Selection in click order. Used to drive numeric badges and to preserve
     /// concatenation order at commit time.
@@ -18,6 +14,8 @@ struct QuickPasteView: View {
     @State private var focusedID: UUID? = nil
 
     @ObservedObject private var keyStore = QuickPasteKeyStore.shared
+
+    private var items: [ClipboardItem] { state.items }
 
     private var selectedItems: [ClipboardItem] {
         selectedIDs.compactMap { id in items.first(where: { $0.id == id }) }
@@ -52,6 +50,15 @@ struct QuickPasteView: View {
             // Pre-focus the first row so the panel is usable with the keyboard
             // alone: open → ↑/↓ → commit key, no mouse required.
             if focusedID == nil { focusedID = items.first?.id }
+        }
+        .onChange(of: items.map(\.id)) { _, ids in
+            // The panel window is now reused across invocations for speed.
+            // Reset transient selection/focus whenever the freshly-fetched
+            // history snapshot is swapped in, so stale selections from the
+            // previous popup session don't leak into the next one.
+            selectedIDs.removeAll(keepingCapacity: true)
+            hoverID = nil
+            focusedID = ids.first
         }
     }
 
@@ -178,7 +185,7 @@ struct QuickPasteView: View {
         .onTapGesture(count: 2) {
             // Double-click on a single item: paste it directly without needing
             // the button (mirrors the typical clipboard-popup interaction).
-            onCommit([item], false)
+            state.onCommit([item], false)
         }
         .onTapGesture {
             focusedID = item.id
@@ -189,7 +196,7 @@ struct QuickPasteView: View {
     private var footer: some View {
         HStack(spacing: 8) {
             Button {
-                onCancel()
+                state.onCancel()
             } label: {
                 Text(L("common.cancel"))
                     .frame(minWidth: 56)
@@ -233,11 +240,11 @@ struct QuickPasteView: View {
     /// can request a string-only pasteboard write.
     private func commitFromKeyboard(plainText: Bool) {
         if !selectedIDs.isEmpty {
-            onCommit(selectedItems, plainText)
+            state.onCommit(selectedItems, plainText)
         } else if let id = focusedID, let item = items.first(where: { $0.id == id }) {
-            onCommit([item], plainText)
+            state.onCommit([item], plainText)
         } else if let first = items.first {
-            onCommit([first], plainText)
+            state.onCommit([first], plainText)
         }
     }
 

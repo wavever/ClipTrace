@@ -146,6 +146,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         applyInitialAppearance()
         setupGlobalHotKeys()
         ClipboardRuntime.shared.start()
+        DispatchQueue.main.async {
+            QuickPasteController.shared.prewarm()
+        }
 
         // AppKit resets the activation policy back to the bundle default
         // (`.regular`, since we ship no `LSUIElement`) when the last standard
@@ -228,7 +231,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 AppDelegate.openMainWindow()
             }
         }
-        KeyboardShortcuts.onKeyUp(for: .openQuickPaste) {
+        // Open the quick panel on key-down rather than waiting for key-up.
+        // This shaves the user's key-hold time off the perceived latency of
+        // the global shortcut, making the popup appear as soon as the chord is
+        // recognized.
+        KeyboardShortcuts.onKeyDown(for: .openQuickPaste) {
             Task { @MainActor in
                 QuickPasteController.shared.toggle()
             }

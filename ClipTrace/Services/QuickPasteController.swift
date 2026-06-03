@@ -73,10 +73,29 @@ final class KeyablePanel: NSPanel {
 }
 
 @MainActor
+final class QuickPastePanelState: ObservableObject {
+    @Published var items: [ClipboardItem] = []
+
+    var onCommit: (_ items: [ClipboardItem], _ plainText: Bool) -> Void = { _, _ in }
+    var onCancel: () -> Void = {}
+
+    func configure(
+        items: [ClipboardItem],
+        onCommit: @escaping (_ items: [ClipboardItem], _ plainText: Bool) -> Void,
+        onCancel: @escaping () -> Void
+    ) {
+        self.onCommit = onCommit
+        self.onCancel = onCancel
+        self.items = items
+    }
+}
+
+@MainActor
 final class QuickPasteController: NSObject, NSWindowDelegate {
     static let shared = QuickPasteController()
 
     private var panel: NSPanel?
+    private let panelState = QuickPastePanelState()
     /// App that was frontmost when we opened the panel. We re-activate it
     /// before posting the synthetic ⌘V so the keystroke lands in the right
     /// place even if focus drifted while the user picked clips.
@@ -84,8 +103,12 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
 
     private override init() { super.init() }
 
+    func prewarm() {
+        _ = preparePanel(size: NSSize(width: 360, height: 440))
+    }
+
     func toggle() {
-        if panel != nil {
+        if panel?.isVisible == true {
             close()
         } else {
             show()
@@ -95,7 +118,7 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
     /// Show the panel hanging from a fixed anchor point (used by the Dynamic
     /// Island so the list drops straight down from the notch).
     func show(anchor: NSPoint) {
-        if panel != nil { close() }
+        if panel?.isVisible == true { close() }
         show(topCenterAnchor: anchor)
     }
 
@@ -114,7 +137,7 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
             return
         }
 
-        let view = QuickPasteView(
+        panelState.configure(
             items: items,
             onCommit: { [weak self] selected, plainText in
                 self?.commit(selected, plainText: plainText)
@@ -122,25 +145,8 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
             onCancel: { [weak self] in self?.cancel() }
         )
 
-        let hosting = NSHostingController(rootView: view)
-        hosting.view.wantsLayer = true
-
         let size = NSSize(width: 360, height: 440)
-        let panel = KeyablePanel(
-            contentRect: NSRect(origin: .zero, size: size),
-            styleMask: [.nonactivatingPanel, .borderless],
-            backing: .buffered,
-            defer: false
-        )
-        panel.isFloatingPanel = true
-        panel.level = .floating
-        panel.hidesOnDeactivate = false
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.isReleasedWhenClosed = false
-        panel.contentViewController = hosting
-        panel.delegate = self
+        let panel = preparePanel(size: size)
 
         if let topCenterAnchor {
             positionPanelTopCenter(panel, size: size, at: topCenterAnchor)
@@ -156,6 +162,36 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
         panel.makeKey()
 
         self.panel = panel
+    }
+
+    /// Lazily build the floating window once and reuse it. Creating a fresh
+    /// NSPanel + SwiftUI hosting tree on every global-hotkey press made the
+    /// popup feel sluggish, especially on the first invocation after launch.
+    /// Reuse keeps the expensive view graph warm; each show only refreshes the
+    /// lightweight state array and repositions the already-built window.
+    private func preparePanel(size: NSSize) -> NSPanel {
+        if let panel { return panel }
+
+        let hosting = NSHostingController(rootView: QuickPasteView(state: panelState))
+        hosting.view.wantsLayer = true
+
+        let panel = KeyablePanel(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.nonactivatingPanel, .borderless],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isFloatingPanel = true
+        panel.level = .floating
+        panel.hidesOnDeactivate = false
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.isReleasedWhenClosed = false
+        panel.contentViewController = hosting
+        panel.delegate = self
+        self.panel = panel
+        return panel
     }
 
     private func positionPanelAtCursor(_ panel: NSPanel, size: NSSize) {
@@ -210,8 +246,6 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
 
     private func close() {
         panel?.orderOut(nil)
-        panel?.delegate = nil
-        panel = nil
     }
 
     /// Dismiss without pasting and hand keyboard focus back to the app the
