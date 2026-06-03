@@ -94,6 +94,26 @@ struct MenuBarContent: View {
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
         descriptor.fetchLimit = fetchLimit
+        // Keep image bytes and embedding vectors faulted. Each "load more"
+        // bumps `fetchLimit` and SwiftData re-fetches 0..<fetchLimit from
+        // scratch, so without this every loaded clip drags its full bitmap
+        // into memory — which is exactly why scrolling stuttered worse the
+        // further down you paged. ThumbnailView faults imageData back in
+        // lazily for the handful of visible rows, like the main window list.
+        descriptor.propertiesToFetch = [
+            \.id,
+            \.type,
+            \.content,
+            \.fileURL,
+            \.sourceApp,
+            \.createdAt,
+            \.isFavorite,
+            \.isPinned,
+            \.preview,
+            \.deletedAt,
+            \.tagsRaw,
+            \.customTitle,
+        ]
         _allItems = Query(descriptor)
     }
 
@@ -136,7 +156,15 @@ struct MenuBarContent: View {
         .onAppear {
             refreshRecordCount()
         }
-        .onChange(of: allItems.map(\.id)) { _, _ in
+        // Refresh the total-records count when the loaded set changes. Watch
+        // the cheap (count, newest-id) signal rather than mapping every loaded
+        // id on each render — that map was O(n) per frame and grew as the user
+        // paged down, adding its own scroll stutter. A new capture changes the
+        // newest id; an in-page delete changes the count.
+        .onChange(of: allItems.count) { _, _ in
+            refreshRecordCount()
+        }
+        .onChange(of: allItems.first?.id) { _, _ in
             refreshRecordCount()
         }
     }
