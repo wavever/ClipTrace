@@ -16,6 +16,19 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # The macos-14 image still defaults to Xcode 15.4, whose stricter Swift
+      # concurrency checking rejects code this project compiles cleanly under
+      # Xcode 16 (the declared toolchain — see AGENT.md). Select the newest
+      # installed Xcode 16 so CI matches local builds.
+      - name: Select Xcode 16
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -n1)
+          if [ -z "$XCODE" ]; then
+            XCODE=$(ls -d /Applications/Xcode_*.app | sort -V | tail -n1)
+          fi
+          echo "Selecting $XCODE"
+          sudo xcode-select -s "$XCODE/Contents/Developer"
+
       - name: Show Xcode version
         run: xcodebuild -version
 
