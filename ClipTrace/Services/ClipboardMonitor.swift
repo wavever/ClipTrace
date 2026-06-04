@@ -9,6 +9,11 @@ class ClipboardMonitor: ObservableObject {
     private let pasteboard = NSPasteboard.general
     private var onNewContent: Callback?
 
+    /// When true the poll timer is suspended — the app keeps running and the
+    /// history stays browsable, but nothing new is captured. Distinct from
+    /// "not monitoring": the stored callback is preserved so resuming is cheap.
+    private(set) var isPaused = false
+
     /// `changeCount` values produced by our own writes (re-copy from history,
     /// quick-paste, merge, …). When the poller sees one of these, it should
     /// skip processing — otherwise the existing item gets its `createdAt`
@@ -68,6 +73,25 @@ class ClipboardMonitor: ObservableObject {
     func stopMonitoring() {
         timer?.invalidate()
         timer = nil
+    }
+
+    /// Suspend or resume capture without tearing down the stored callback.
+    /// Resuming re-syncs `lastChangeCount` to the live pasteboard so anything
+    /// copied while paused isn't retroactively recorded on the next tick.
+    func setPaused(_ paused: Bool, interval: TimeInterval) {
+        guard paused != isPaused else { return }
+        isPaused = paused
+        if paused {
+            timer?.invalidate()
+            timer = nil
+        } else {
+            // Only spin a timer back up if monitoring was actually started.
+            guard onNewContent != nil, timer == nil else { return }
+            lastChangeCount = pasteboard.changeCount
+            timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+                self?.checkForChanges()
+            }
+        }
     }
 
     /// Reschedule the poll timer at a new interval, reusing the stored

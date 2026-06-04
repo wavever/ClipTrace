@@ -124,6 +124,21 @@ class ClipboardViewModel: ObservableObject {
         }
     }
     @Published private(set) var isMonitoring = false
+
+    /// User-facing "pause capture" switch surfaced in the main window header
+    /// and the menu-bar panel. Persisted so a paused session stays paused
+    /// across relaunches; the visible toggles make that state obvious. While
+    /// paused the poll timer is suspended — the history stays browsable but no
+    /// new clips are recorded.
+    static let pausedKey = "monitoringPaused"
+    @Published var isCapturePaused: Bool = UserDefaults.standard.bool(forKey: ClipboardViewModel.pausedKey) {
+        didSet {
+            guard oldValue != isCapturePaused else { return }
+            UserDefaults.standard.set(isCapturePaused, forKey: Self.pausedKey)
+            monitor.setPaused(isCapturePaused, interval: Self.resolvedPollInterval())
+        }
+    }
+
     @Published var showExportPanel = false
     /// Active search engine for the toolbar. Persisted only in-memory — defaults
     /// back to full-text on relaunch, matching the previous behavior.
@@ -431,6 +446,12 @@ class ClipboardViewModel: ObservableObject {
 
             // Trim old items down to the user-configured cap.
             self.enforceMaxRecords(context: context)
+        }
+
+        // Respect a pause that was persisted from a previous session — the
+        // monitor just spun its timer up, so suspend it right back if needed.
+        if isCapturePaused {
+            monitor.setPaused(true, interval: Self.resolvedPollInterval())
         }
     }
     

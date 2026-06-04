@@ -232,6 +232,84 @@ struct PaperActionButtonStyle: ButtonStyle {
     }
 }
 
+/// A small switch graphic in the paper palette — a capsule track with a white
+/// thumb that slides on/off. Drawn rather than interactive so it can live
+/// inside a larger `Button` (the whole pill becomes the hit target) while still
+/// reading as a familiar on/off switch.
+struct PaperSwitchTrack: View {
+    var isOn: Bool
+    var onColor: Color = .appAccent
+
+    private let width: CGFloat = 30
+    private let height: CGFloat = 17
+    private var thumb: CGFloat { height - 4 }
+    private var travel: CGFloat { (width - thumb) / 2 - 2 }
+
+    var body: some View {
+        ZStack {
+            Capsule()
+                .fill(isOn ? onColor : Color.appMetal.opacity(0.28))
+            Circle()
+                .fill(Color.white)
+                .frame(width: thumb, height: thumb)
+                .shadow(color: Color.black.opacity(0.18), radius: 1, y: 0.5)
+                .offset(x: isOn ? travel : -travel)
+        }
+        .frame(width: width, height: height)
+        .overlay(
+            Capsule().strokeBorder(Color.appCardBorder, lineWidth: 0.5)
+        )
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isOn)
+    }
+}
+
+/// Paper-styled "pause capture" control used in both the main window header and
+/// the menu-bar panel. The whole pill toggles `isPaused`; the leading glyph,
+/// label, and switch indicator all reflect the current state so it's obvious at
+/// a glance whether the clipboard is being recorded.
+struct CaptureToggle: View {
+    @Binding var isPaused: Bool
+    /// Drops the text label for tight layouts (keeps the glyph + switch).
+    var showsLabel: Bool = true
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.72)) {
+                isPaused.toggle()
+            }
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: isPaused ? "pause.fill" : "dot.radiowaves.up.forward")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(isPaused ? Color.appDanger : Color.appAccent)
+                if showsLabel {
+                    Text(isPaused ? L("monitor.paused") : L("monitor.active"))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color.appMetal)
+                        .fixedSize()
+                }
+                PaperSwitchTrack(isOn: !isPaused)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(hovering ? Color.appCardHover : Color.appChipFill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(isPaused ? L("monitor.resume.tooltip") : L("monitor.pause.tooltip"))
+    }
+}
+
 struct PaperIconButtonStyle: ButtonStyle {
     var size: CGFloat = 32
 

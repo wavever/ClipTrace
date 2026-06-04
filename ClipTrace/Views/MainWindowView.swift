@@ -611,6 +611,8 @@ struct MainWindowContent: View {
             }
 
             Spacer()
+
+            CaptureToggle(isPaused: $vm.isCapturePaused)
         }
         .padding(.horizontal, 18)
         .padding(.top, 16)

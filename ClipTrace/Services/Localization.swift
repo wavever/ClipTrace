@@ -201,6 +201,12 @@ extension L10n {
         "toolbar.stats": "活跃统计",
         "toolbar.settings": "设置",
 
+        // monitoring pause toggle
+        "monitor.active": "监听中",
+        "monitor.paused": "已暂停",
+        "monitor.pause.tooltip": "暂停剪贴板监听 · 不再记录新内容",
+        "monitor.resume.tooltip": "恢复剪贴板监听",
+
         // bulk trash shortcuts
         "trash.clearLast.sectionTitle": "快速清除",
         "trash.clearLast.sectionHintSoft": "把最近的条目软删进垃圾桶,置顶 / 收藏不动",
@@ -738,6 +744,12 @@ extension L10n {
         "toolbar.trash": "Trash",
         "toolbar.stats": "Activity",
         "toolbar.settings": "Settings",
+
+        // monitoring pause toggle
+        "monitor.active": "Monitoring",
+        "monitor.paused": "Paused",
+        "monitor.pause.tooltip": "Pause clipboard monitoring — new clips won't be recorded",
+        "monitor.resume.tooltip": "Resume clipboard monitoring",
 
         // bulk trash shortcuts
         "trash.clearLast.sectionTitle": "Quick clear",

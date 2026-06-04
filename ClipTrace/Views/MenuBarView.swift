@@ -175,6 +175,9 @@ struct MenuBarContent: View {
             Text(L("main.title"))
                 .font(.system(size: 14, weight: .semibold))
             Spacer()
+
+            CaptureToggle(isPaused: $vm.isCapturePaused, showsLabel: false)
+
             Button {
                 openWindow(id: "main")
                 AppNavigation.shared.showSettings()
