@@ -232,34 +232,32 @@ struct PaperActionButtonStyle: ButtonStyle {
     }
 }
 
-/// A small switch graphic in the paper palette — a capsule track with a white
-/// thumb that slides on/off. Drawn rather than interactive so it can live
-/// inside a larger `Button` (the whole pill becomes the hit target) while still
-/// reading as a familiar on/off switch.
+/// A quiet switch graphic in the paper palette. It avoids the bright system-like
+/// thumb so the monitor control reads as a status chip instead of an isolated
+/// form control.
 struct PaperSwitchTrack: View {
     var isOn: Bool
-    var onColor: Color = .appAccent
+    var isCompact: Bool = false
 
-    private let width: CGFloat = 30
-    private let height: CGFloat = 17
-    private var thumb: CGFloat { height - 4 }
-    private var travel: CGFloat { (width - thumb) / 2 - 2 }
+    private var tint: Color { isOn ? .appAccent : .appDanger }
+    private var width: CGFloat { isCompact ? 24 : 28 }
+    private var height: CGFloat { isCompact ? 14 : 16 }
+    private var dotSize: CGFloat { isCompact ? 5 : 6 }
+    private var horizontalInset: CGFloat { isCompact ? 5 : 6 }
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: isOn ? .trailing : .leading) {
             Capsule()
-                .fill(isOn ? onColor : Color.appMetal.opacity(0.28))
+                .fill(tint.opacity(0.11))
+            Capsule()
+                .strokeBorder(tint.opacity(0.26), lineWidth: 0.65)
             Circle()
-                .fill(Color.white)
-                .frame(width: thumb, height: thumb)
-                .shadow(color: Color.black.opacity(0.18), radius: 1, y: 0.5)
-                .offset(x: isOn ? travel : -travel)
+                .fill(tint)
+                .frame(width: dotSize, height: dotSize)
+                .padding(.horizontal, horizontalInset)
         }
         .frame(width: width, height: height)
-        .overlay(
-            Capsule().strokeBorder(Color.appCardBorder, lineWidth: 0.5)
-        )
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isOn)
+        .animation(.spring(response: 0.28, dampingFraction: 0.78), value: isOn)
     }
 }
 
@@ -274,38 +272,59 @@ struct CaptureToggle: View {
 
     @State private var hovering = false
 
+    private var stateTint: Color { isPaused ? .appDanger : .appAccent }
+    private var iconName: String { isPaused ? "pause.fill" : "dot.radiowaves.up.forward" }
+    private var cornerRadius: CGFloat { showsLabel ? 7 : 8 }
+    private var horizontalPadding: CGFloat { showsLabel ? 10 : 7 }
+    private var verticalPadding: CGFloat { showsLabel ? 6 : 5 }
+    private var glyphSize: CGFloat { showsLabel ? 18 : 17 }
+
     var body: some View {
         Button {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.72)) {
                 isPaused.toggle()
             }
         } label: {
-            HStack(spacing: 7) {
-                Image(systemName: isPaused ? "pause.fill" : "dot.radiowaves.up.forward")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(isPaused ? Color.appDanger : Color.appAccent)
+            HStack(spacing: showsLabel ? 7 : 6) {
+                Image(systemName: iconName)
+                    .font(.system(size: showsLabel ? 10 : 9, weight: .semibold))
+                    .foregroundStyle(stateTint)
+                    .frame(width: glyphSize, height: glyphSize)
+                    .background(
+                        Circle()
+                            .fill(stateTint.opacity(isPaused ? 0.13 : 0.11))
+                    )
+                    .overlay(
+                        Circle()
+                            .strokeBorder(stateTint.opacity(0.22), lineWidth: 0.5)
+                    )
                 if showsLabel {
                     Text(isPaused ? L("monitor.paused") : L("monitor.active"))
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(Color.appMetal)
                         .fixedSize()
                 }
-                PaperSwitchTrack(isOn: !isPaused)
+                PaperSwitchTrack(isOn: !isPaused, isCompact: !showsLabel)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
+            .padding(.horizontal, horizontalPadding)
+            .padding(.vertical, verticalPadding)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(hovering ? Color.appCardHover : Color.appChipFill)
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(Color.appChipFill)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(
+                        hovering ? stateTint.opacity(0.42) : Color.appCardBorder,
+                        lineWidth: hovering ? 1 : 0.75
+                    )
             )
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         }
         .buttonStyle(.plain)
-        .onHover { hovering = $0 }
+        .onHover { h in
+            withAnimation(.easeOut(duration: 0.12)) { hovering = h }
+        }
         .help(isPaused ? L("monitor.resume.tooltip") : L("monitor.pause.tooltip"))
     }
 }

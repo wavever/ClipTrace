@@ -498,6 +498,7 @@ extension L10n {
         "settings.about.update.subtitle": "通过 GitHub Releases 检查最新版本",
         "settings.about.update.hint": "新版本会自动下载并安装，仅在重启应用时生效。",
         "settings.about.update.check": "立即检查",
+        "settings.about.update.noUpdateFound": "您使用的 %@ 已经是最新版本！",
 
         // retention durations
         "retention.forever": "永久",
@@ -1042,6 +1043,7 @@ extension L10n {
         "settings.about.update.subtitle": "Look for new releases on GitHub",
         "settings.about.update.hint": "Updates download and install automatically, applied next launch.",
         "settings.about.update.check": "Check Now",
+        "settings.about.update.noUpdateFound": "You're using %@, which is already the latest version!",
 
         // retention durations
         "retention.forever": "Forever",
