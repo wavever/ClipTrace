@@ -1,0 +1,45 @@
+name: Privacy or security concern
+description: Public report for non-sensitive privacy/security concerns.
+title: "[Privacy/Security]: "
+labels: ["privacy", "security"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If this report contains a vulnerability, exploit details, private clipboard data, or a way to bypass privacy settings, do not file it publicly. Use SECURITY.md and GitHub private vulnerability reporting instead.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Clipboard capture
+        - Sensitive content filtering
+        - MCP
+        - Local database
+        - Updates / signing
+        - Accessibility
+        - Network access
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: concern
+    attributes:
+      label: Concern
+      description: Describe the concern without including private data.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected privacy or security behavior
+    validations:
+      required: true
+  - type: checkboxes
+    id: safe
+    attributes:
+      label: Safety check
+      options:
+        - label: This public issue does not include private clipboard contents, secrets, tokens, or exploit details.
+          required: true

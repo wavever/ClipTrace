@@ -1,0 +1,52 @@
+name: Feature request
+description: Suggest a focused improvement for ClipTrace.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow is hard or missing today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the smallest version that would be useful.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Clipboard capture
+        - Search
+        - MCP
+        - Quick Paste
+        - Snippets
+        - Export
+        - Privacy
+        - Distribution
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: Impact
+      options:
+        - label: This feature reads, stores, exports, or exposes clipboard data.
+          required: false
+        - label: This feature affects MCP access or AI-client behavior.
+          required: false
+        - label: This feature may require Accessibility, screen recording, or network access.
+          required: false

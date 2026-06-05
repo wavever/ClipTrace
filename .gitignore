@@ -47,3 +47,10 @@ Carthage/Build/
 *.swp
 *.swo
 *~
+
+# Marketing site lives in its own repo (wavever/ClipTrace-HomePage),
+# cloned here as a working copy — don't track it from this repo.
+website/
+
+# Local Claude Code state (machine-local settings + agent worktrees)
+.claude/
