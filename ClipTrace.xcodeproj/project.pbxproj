@@ -57,6 +57,14 @@
 		A10100 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = V10001 /* InfoPlist.strings */; };
 		A20001 /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = P10001 /* KeyboardShortcuts */; };
 		A20002 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = P10002 /* Sparkle */; };
+		A10210 /* WidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10210; };
+		A10211 /* WidgetBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10211; };
+		A10220 /* ClipTraceWidgetsBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10220; };
+		A10221 /* WidgetSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10221; };
+		A10222 /* DataWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10222; };
+		A10223 /* ActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10223; };
+		A10224 /* WidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10210; };
+		A10300 /* ClipTraceWidgetsExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B10200; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -110,6 +118,15 @@
 		B10100 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		B10101 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
 		B10099 /* ClipTrace.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClipTrace.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B10200 /* ClipTraceWidgetsExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ClipTraceWidgetsExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		B10210 /* WidgetSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSnapshot.swift; sourceTree = "<group>"; };
+		B10211 /* WidgetBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetBridge.swift; sourceTree = "<group>"; };
+		B10220 /* ClipTraceWidgetsBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipTraceWidgetsBundle.swift; sourceTree = "<group>"; };
+		B10221 /* WidgetSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSupport.swift; sourceTree = "<group>"; };
+		B10222 /* DataWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataWidget.swift; sourceTree = "<group>"; };
+		B10223 /* ActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityWidget.swift; sourceTree = "<group>"; };
+		B10224 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B10225 /* ClipTraceWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ClipTraceWidgets.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -122,6 +139,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		H10004 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -129,6 +153,7 @@
 			isa = PBXGroup;
 			children = (
 				E10002 /* ClipTrace */,
+				E10010 /* ClipTraceWidgets */,
 				E10007 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -141,10 +166,32 @@
 				E10004 /* Views */,
 				E10005 /* ViewModels */,
 				E10006 /* Services */,
+				E10011 /* Shared */,
 				B10011 /* Assets.xcassets */,
 				V10001 /* InfoPlist.strings */,
 			);
 			path = ClipTrace;
+			sourceTree = "<group>";
+		};
+		E10010 /* ClipTraceWidgets */ = {
+			isa = PBXGroup;
+			children = (
+				B10220 /* ClipTraceWidgetsBundle.swift */,
+				B10221 /* WidgetSupport.swift */,
+				B10222 /* DataWidget.swift */,
+				B10223 /* ActivityWidget.swift */,
+				B10224 /* Info.plist */,
+				B10225 /* ClipTraceWidgets.entitlements */,
+			);
+			path = ClipTraceWidgets;
+			sourceTree = "<group>";
+		};
+		E10011 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				B10210 /* WidgetSnapshot.swift */,
+			);
+			path = Shared;
 			sourceTree = "<group>";
 		};
 		E10003 /* Models */ = {
@@ -216,6 +263,7 @@
 				B10041 /* Localization.swift */,
 				B10043 /* OCRService.swift */,
 				B10045 /* UpdaterService.swift */,
+				B10211 /* WidgetBridge.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -224,6 +272,7 @@
 			isa = PBXGroup;
 			children = (
 				B10099 /* ClipTrace.app */,
+				B10200 /* ClipTraceWidgetsExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -238,10 +287,12 @@
 				H10001 /* Sources */,
 				D10001 /* Frameworks */,
 				H10002 /* Resources */,
+				H10006 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				K10001 /* PBXTargetDependency */,
 			);
 			name = ClipTrace;
 			packageProductDependencies = (
@@ -251,6 +302,23 @@
 			productName = ClipTrace;
 			productReference = B10099 /* ClipTrace.app */;
 			productType = "com.apple.product-type.application";
+		};
+		F10002 /* ClipTraceWidgetsExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = G10007 /* Build configuration list for PBXNativeTarget "ClipTraceWidgetsExtension" */;
+			buildPhases = (
+				H10003 /* Sources */,
+				H10004 /* Frameworks */,
+				H10005 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ClipTraceWidgetsExtension;
+			productName = ClipTraceWidgetsExtension;
+			productReference = B10200 /* ClipTraceWidgetsExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -281,6 +349,7 @@
 			projectRoot = "";
 			targets = (
 				F10001 /* ClipTrace */,
+				F10002 /* ClipTraceWidgetsExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -295,7 +364,46 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		H10005 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXContainerItemProxy section */
+		L10001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 089C1665FE841187C02AAC07 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = F10002;
+			remoteInfo = ClipTraceWidgetsExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		H10006 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				A10300 /* ClipTraceWidgetsExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		K10001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = F10002 /* ClipTraceWidgetsExtension */;
+			targetProxy = L10001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXVariantGroup section */
 		V10001 /* InfoPlist.strings */ = {
@@ -360,6 +468,20 @@
 				A10045 /* UpdaterService.swift in Sources */,
 				A10046 /* PreviewKeyCatcher.swift in Sources */,
 				A10047 /* Theme.swift in Sources */,
+				A10210 /* WidgetSnapshot.swift in Sources */,
+				A10211 /* WidgetBridge.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		H10003 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10220 /* ClipTraceWidgetsBundle.swift in Sources */,
+				A10221 /* WidgetSupport.swift in Sources */,
+				A10222 /* DataWidget.swift in Sources */,
+				A10223 /* ActivityWidget.swift in Sources */,
+				A10224 /* WidgetSnapshot.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -529,6 +651,58 @@
 			};
 			name = Release;
 		};
+		G10008 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ClipTraceWidgets/ClipTraceWidgets.entitlements;
+				CODE_SIGN_IDENTITY = "ClipTrace Self-Signed";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_DEBUG_DYLIB = NO;
+				ENABLE_HARDENED_RUNTIME = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ClipTraceWidgets/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.9.7;
+				PRODUCT_BUNDLE_IDENTIFIER = com.wavever.cliptrace.widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		G10009 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ClipTraceWidgets/ClipTraceWidgets.entitlements;
+				CODE_SIGN_IDENTITY = "ClipTrace Self-Signed";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_DEBUG_DYLIB = NO;
+				ENABLE_HARDENED_RUNTIME = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ClipTraceWidgets/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.9.7;
+				PRODUCT_BUNDLE_IDENTIFIER = com.wavever.cliptrace.widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -546,6 +720,15 @@
 			buildConfigurations = (
 				G10005 /* Debug */,
 				G10006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		G10007 /* Build configuration list for PBXNativeTarget "ClipTraceWidgetsExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				G10008 /* Debug */,
+				G10009 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

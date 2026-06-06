@@ -267,7 +267,11 @@ class ClipboardViewModel: ObservableObject {
             }
         }
 
-        if didMutate { try? context.save() }
+        if didMutate {
+            try? context.save()
+            // History shrank — let the widgets re-read the new counts.
+            WidgetBridge.shared.requestRefresh(context: context)
+        }
     }
 
     /// All trashed items, newest deletion first.
@@ -385,6 +389,7 @@ class ClipboardViewModel: ObservableObject {
                     mostRecent.createdAt = Date()
                     try? context.save()
                     CopyStatsStore.shared.recordCopy()
+                    WidgetBridge.shared.requestRefresh(context: context)
                     DynamicIslandController.shared.flash(
                         itemIcon: type.icon,
                         preview: String(content.prefix(60))
@@ -411,6 +416,10 @@ class ClipboardViewModel: ObservableObject {
 
             // Bump today's copy counter (guarded by user's toggle).
             CopyStatsStore.shared.recordCopy()
+
+            // Refresh the widget snapshot (debounced) so the data/activity
+            // widgets reflect the new clip.
+            WidgetBridge.shared.requestRefresh(context: context)
 
             // Notify the Dynamic Island so it can briefly toast the new clip.
             DynamicIslandController.shared.flash(

@@ -31,6 +31,9 @@ final class ClipboardRuntime {
         guard !started else { return }
         started = true
         viewModel.startMonitoring(context: context)
+        // Seed the shared snapshot at launch so the widgets have data to show
+        // before the first new clip arrives.
+        WidgetBridge.shared.refreshNow(context: context)
     }
 
     func stop() {

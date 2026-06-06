@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- WidgetKit extensions on macOS must be sandboxed or chronod won't load
+         them. Sandbox alone needs no provisioning profile, so this still builds
+         under ClipTrace's self-signed / no-team signing.
+
+         We intentionally do NOT use App Groups (com.apple.security.application-
+         groups): that entitlement requires a provisioning profile, which the
+         self-signed release flow can't provide. Instead the (non-sandboxed) app
+         writes the stats snapshot directly into THIS extension's sandbox
+         container, which the widget reads from its own Application Support. -->
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+</dict>
+</plist>
