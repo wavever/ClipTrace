@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>剪迹 · ClipTrace — Local-first clipboard history for macOS & AI</title>
+<meta name="description" content="ClipTrace (剪迹) is an open-source macOS clipboard manager with offline semantic search and a built-in Model Context Protocol server. Local-first, private, and ready for Claude Desktop, Claude Code, and Cursor." />
+<meta name="theme-color" content="#F6F7F3" />
+<meta name="color-scheme" content="light" />
+<link rel="canonical" href="https://wavever.github.io/ClipTrace/" />
+<link rel="icon" type="image/png" href="assets/icon-192.png" />
+<link rel="apple-touch-icon" href="assets/icon-192.png" />
+<link rel="preload" as="image" href="assets/screenshot-main-1400.webp" type="image/webp" fetchpriority="high" />
+<meta property="og:title" content="剪迹 · ClipTrace" />
+<meta property="og:description" content="Local-first clipboard history for macOS and AI tools. Offline semantic search, built-in MCP server, privacy by default." />
+<meta property="og:url" content="https://wavever.github.io/ClipTrace/" />
+<meta property="og:image" content="https://wavever.github.io/ClipTrace/assets/screenshot-main.png" />
+<meta property="og:image:width" content="2000" />
+<meta property="og:image:height" content="1280" />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="ClipTrace" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="剪迹 · ClipTrace" />
+<meta name="twitter:description" content="Local-first clipboard history for macOS and AI tools. Offline semantic search, built-in MCP server, privacy by default." />
+<meta name="twitter:image" content="https://wavever.github.io/ClipTrace/assets/screenshot-main.png" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,400..600&family=Hanken+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="styles.css" />
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "ClipTrace",
+  "alternateName": "剪迹",
+  "operatingSystem": "macOS 14.0+",
+  "applicationCategory": "UtilitiesApplication",
+  "softwareRequirements": "macOS 14.0 Sonoma or later",
+  "description": "Open-source local-first clipboard history for macOS with offline semantic search and a built-in Model Context Protocol server.",
+  "url": "https://wavever.github.io/ClipTrace/",
+  "downloadUrl": "https://github.com/wavever/ClipTrace/releases/latest",
+  "codeRepository": "https://github.com/wavever/ClipTrace",
+  "license": "https://github.com/wavever/ClipTrace/blob/main/LICENSE",
+  "image": "https://wavever.github.io/ClipTrace/assets/screenshot-main.png",
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  }
+}
+</script>
+</head>
+<body>
+
+<!-- grain + ruled-paper overlays -->
+<div class="grain" aria-hidden="true"></div>
+<a class="skip-link" href="#capture">Skip to content</a>
+
+<!-- ============ NAV ============ -->
+<header class="nav" id="nav">
+  <a class="brand" href="#top" aria-label="ClipTrace home">
+    <img class="brand-mark" src="assets/logo-128.png" alt="" width="34" height="34" decoding="async" />
+    <span class="brand-name">
+      <span class="brand-cjk">剪迹</span>
+      <span class="brand-latin">ClipTrace</span>
+    </span>
+  </a>
+
+  <nav class="nav-links" aria-label="Primary">
+    <a href="#capture" data-en="Capture" data-zh="捕获">Capture</a>
+    <a href="#search" data-en="Search" data-zh="搜索">Search</a>
+    <a href="#mcp" data-en="AI &amp; MCP" data-zh="AI / MCP">AI &amp; MCP</a>
+    <a href="#privacy" data-en="Privacy" data-zh="隐私">Privacy</a>
+  </nav>
+
+  <div class="nav-actions">
+    <button class="lang-toggle" id="langToggle" type="button" aria-label="Switch language">
+      <span class="lang-opt" data-lang="en">EN</span>
+      <span class="lang-sep">/</span>
+      <span class="lang-opt" data-lang="zh">中</span>
+    </button>
+    <a class="ghost-link" href="https://github.com/wavever/ClipTrace" target="_blank" rel="noopener">
+      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+      <span>GitHub</span>
+    </a>
+    <a class="btn btn-primary nav-dl" href="https://github.com/wavever/ClipTrace/releases/latest" target="_blank" rel="noopener" data-en="Download" data-zh="下载">Download</a>
+  </div>
+</header>
+
+<!-- the sage "trace line" spine -->
+<aside class="spine" aria-hidden="true">
+  <span class="spine-node" data-target="hero"><i>01</i></span>
+  <span class="spine-node" data-target="capture"><i>02</i></span>
+  <span class="spine-node" data-target="search"><i>03</i></span>
+  <span class="spine-node" data-target="mcp"><i>04</i></span>
+  <span class="spine-node" data-target="privacy"><i>05</i></span>
+  <span class="spine-node" data-target="download"><i>06</i></span>
+</aside>
+
+<main id="top">
+
+<!-- ============ HERO ============ -->
+<section class="hero" id="hero">
+  <div class="hero-grid">
+    <div class="hero-copy">
+      <p class="eyebrow reveal" data-en="Open-source clipboard archive · macOS 14+" data-zh="开源剪贴板档案库 · macOS 14+">Open-source clipboard archive · macOS 14+</p>
+
+      <h1 class="hero-title">
+        <span class="reveal" style="--d:.05s" data-en="Every clip" data-zh="每一次复制，">Every clip</span>
+        <span class="reveal" style="--d:.12s" data-en="leaves a" data-zh="都会留下">leaves a</span>
+        <span class="reveal hl" style="--d:.19s" data-en="trace." data-zh="痕迹。">trace.</span>
+      </h1>
+
+      <p class="hero-sub reveal" style="--d:.3s"
+         data-en="An open-source clipboard manager for macOS — <strong>local-first</strong>, searchable by meaning, and ready to hand your history to AI tools without ever touching the cloud."
+         data-zh="一个开源的 macOS 剪贴板管理工具 —— <strong>本地优先</strong>、可按语义检索，并能把历史交给 AI 工具使用，全程不经过云端。">
+        An open-source clipboard manager for macOS — <strong>local-first</strong>, searchable by meaning, and ready to hand your history to AI tools without ever touching the cloud.
+      </p>
+
+      <div class="hero-cta reveal" style="--d:.4s">
+        <a class="btn btn-primary btn-lg" href="https://github.com/wavever/ClipTrace/releases/latest" target="_blank" rel="noopener">
+          <svg viewBox="0 0 20 20" width="17" height="17" aria-hidden="true"><path fill="currentColor" d="M10 2.5a.9.9 0 0 1 .9.9v8.06l2.5-2.5a.9.9 0 1 1 1.27 1.27l-4.03 4.03a.9.9 0 0 1-1.27 0L5.33 10.23A.9.9 0 1 1 6.6 8.96l2.5 2.5V3.4a.9.9 0 0 1 .9-.9Zm-6 12.4a.9.9 0 0 1 .9.9v.4a.4.4 0 0 0 .4.4h9.6a.4.4 0 0 0 .4-.4v-.4a.9.9 0 1 1 1.8 0v.4a2.2 2.2 0 0 1-2.2 2.2H5.3a2.2 2.2 0 0 1-2.2-2.2v-.4a.9.9 0 0 1 .9-.9Z"/></svg>
+          <span data-en="Download for macOS" data-zh="下载 macOS 版">Download for macOS</span>
+        </a>
+        <a class="btn btn-ghost btn-lg" href="https://github.com/wavever/ClipTrace" target="_blank" rel="noopener">
+          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+          <span data-en="View source" data-zh="查看源码">View source</span>
+        </a>
+      </div>
+
+      <ul class="hero-meta reveal" style="--d:.5s">
+        <li><span class="dot"></span><span data-en="100% on-device" data-zh="完全在本机">100% on-device</span></li>
+        <li><span class="dot"></span><span data-en="MIT licensed" data-zh="MIT 开源">MIT licensed</span></li>
+        <li><span class="dot"></span><span data-en="No account, no cloud" data-zh="无账号 · 无云端">No account, no cloud</span></li>
+      </ul>
+    </div>
+
+    <div class="hero-stage" id="heroStage">
+      <div class="photo-stack hero-screen-stack" id="photoStack">
+        <figure class="photo ph-stats">
+          <picture>
+            <source srcset="assets/screenshot-stats-1400.webp" type="image/webp" />
+            <img src="assets/screenshot-stats.png" decoding="async" width="2000" height="1280"
+                 alt="ClipTrace activity statistics and yearly heatmap" />
+          </picture>
+          <figcaption data-en="Activity — daily count &amp; yearly heatmap" data-zh="活跃统计 —— 每日次数与年度热力图">Activity — daily count &amp; yearly heatmap</figcaption>
+        </figure>
+        <figure class="photo ph-mcp">
+          <picture>
+            <source srcset="assets/screenshot-mcp-1400.webp" type="image/webp" />
+            <img src="assets/screenshot-mcp.png" decoding="async" width="2000" height="1280"
+                 alt="ClipTrace MCP server settings" />
+          </picture>
+          <figcaption data-en="MCP — connect Claude Desktop, Claude Code or Cursor" data-zh="MCP —— 接入 Claude Desktop、Claude Code 或 Cursor">MCP — connect Claude Desktop, Claude Code or Cursor</figcaption>
+        </figure>
+        <figure class="photo ph-main">
+          <picture>
+            <source srcset="assets/screenshot-main-1400.webp" type="image/webp" />
+            <img src="assets/screenshot-main.png" width="2000" height="1280" fetchpriority="high" decoding="async"
+                 alt="ClipTrace main window with history, search, and tags" />
+          </picture>
+          <figcaption data-en="Main window — history, full-text &amp; semantic search, tags" data-zh="主界面 —— 历史记录、全文与语义搜索、标签">Main window — history, full-text &amp; semantic search, tags</figcaption>
+        </figure>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ MARQUEE / STATS STRIP ============ -->
+<section class="strip">
+  <div class="strip-track">
+    <span data-en="Text · Images · Video · Files · URLs · Rich text" data-zh="文字 · 图片 · 视频 · 文件 · 链接 · 富文本">Text · Images · Video · Files · URLs · Rich text</span>
+    <span class="strip-star">✦</span>
+    <span data-en="Offline semantic search" data-zh="离线语义搜索">Offline semantic search</span>
+    <span class="strip-star">✦</span>
+    <span data-en="Built-in MCP server" data-zh="内置 MCP 服务器">Built-in MCP server</span>
+    <span class="strip-star">✦</span>
+    <span data-en="Menu bar · Quick Paste · Snippets" data-zh="菜单栏 · 快速粘贴 · 片段">Menu bar · Quick Paste · Snippets</span>
+    <span class="strip-star">✦</span>
+    <span data-en="Text · Images · Video · Files · URLs · Rich text" data-zh="文字 · 图片 · 视频 · 文件 · 链接 · 富文本">Text · Images · Video · Files · URLs · Rich text</span>
+    <span class="strip-star">✦</span>
+    <span data-en="Offline semantic search" data-zh="离线语义搜索">Offline semantic search</span>
+    <span class="strip-star">✦</span>
+    <span data-en="Built-in MCP server" data-zh="内置 MCP 服务器">Built-in MCP server</span>
+    <span class="strip-star">✦</span>
+    <span data-en="Menu bar · Quick Paste · Snippets" data-zh="菜单栏 · 快速粘贴 · 片段">Menu bar · Quick Paste · Snippets</span>
+    <span class="strip-star">✦</span>
+  </div>
+</section>
+
+<!-- ============ CAPTURE / FEATURES ============ -->
+<section class="section" id="capture">
+  <div class="section-head reveal">
+    <span class="sec-no">02</span>
+    <div>
+      <p class="kicker" data-en="What it does" data-zh="它能做什么">What it does</p>
+      <h2 data-en="A quiet archive of everything you copy." data-zh="一份安静的复制档案。">A quiet archive of everything you copy.</h2>
+    </div>
+  </div>
+
+  <div class="feature-grid">
+
+    <article class="feature reveal">
+      <div class="feature-ic">
+        <svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="5" y="4.5" width="14" height="16" rx="2.4"/>
+          <path d="M9.2 4.5a2.8 1.6 0 0 1 5.6 0"/>
+          <path d="M9 11h6M9 14.5h4"/>
+        </svg>
+      </div>
+      <h3 data-en="Capture &amp; reuse" data-zh="捕获与复用">Capture &amp; reuse</h3>
+      <p data-en="Auto-captures text, images, video, files, URLs and rich text. Double-click to copy any entry back. Re-copying floats an item up instead of duplicating it." data-zh="自动捕获文字、图片、视频、文件、链接和富文本。双击即可写回剪贴板，重复复制会浮到顶部而不产生重复。">Auto-captures text, images, video, files, URLs and rich text. Double-click to copy any entry back. Re-copying floats an item up instead of duplicating it.</p>
+      <ul class="feature-list">
+        <li data-en="Paste as plain text &amp; trim whitespace" data-zh="粘贴为纯文本 · 清理末尾空白">Paste as plain text &amp; trim whitespace</li>
+        <li data-en="Soft-delete trash with restore &amp; retention" data-zh="软删除垃圾桶 · 可恢复 · 自动保留期">Soft-delete trash with restore &amp; retention</li>
+        <li data-en="Global hotkeys for window &amp; snippets" data-zh="主窗口与片段的全局快捷键">Global hotkeys for window &amp; snippets</li>
+      </ul>
+    </article>
+
+    <article class="feature reveal" style="--d:.08s">
+      <div class="feature-ic">
+        <svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="10.5" cy="10.5" r="6"/>
+          <path d="M15 15l4.5 4.5"/>
+          <path d="M18 3l.6 1.7L20.3 5.3l-1.7.6L18 7.6l-.6-1.7L15.7 5.3l1.7-.6z"/>
+        </svg>
+      </div>
+      <h3 data-en="Search &amp; organize" data-zh="搜索与整理">Search &amp; organize</h3>
+      <p data-en="Full-text and offline semantic search across text and OCR content. Slice history with operators, then keep what matters with tags and pins." data-zh="对文字与 OCR 内容做全文及离线语义搜索。用操作符切分历史，再用标签和置顶留住重要内容。">Full-text and offline semantic search across text and OCR content. Slice history with operators, then keep what matters with tags and pins.</p>
+      <ul class="feature-list">
+        <li><code>app:Safari</code> · <code>since:2d</code> · <code>before:2026-05-01</code></li>
+        <li data-en="Favorites, pins, tags &amp; custom titles" data-zh="收藏 · 置顶 · 标签 · 自定义标题">Favorites, pins, tags &amp; custom titles</li>
+        <li data-en="Multi-select merge for same-type clips" data-zh="同类型条目多选合并">Multi-select merge for same-type clips</li>
+      </ul>
+    </article>
+
+    <article class="feature reveal" style="--d:.16s">
+      <div class="feature-ic">
+        <svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M2.5 12s3.4-6.2 9.5-6.2S21.5 12 21.5 12s-3.4 6.2-9.5 6.2S2.5 12 2.5 12z"/>
+          <circle cx="12" cy="12" r="2.6"/>
+        </svg>
+      </div>
+      <h3 data-en="Content awareness" data-zh="内容感知">Content awareness</h3>
+      <p data-en="ClipTrace reads what it stores. Images get OCR-indexed, links get cleaned, and text is parsed for the formats developers live in." data-zh="剪迹会理解它所保存的内容：图片自动 OCR 入索引，链接自动清理，文字会识别开发者常用的格式。">ClipTrace reads what it stores. Images get OCR-indexed, links get cleaned, and text is parsed for the formats developers live in.</p>
+      <ul class="feature-list">
+        <li data-en="Rich hover preview &amp; image OCR" data-zh="hover 富预览 · 图片 OCR">Rich hover preview &amp; image OCR</li>
+        <li data-en="Detects timestamps, Base64 &amp; JSON" data-zh="识别时间戳 · Base64 · JSON">Detects timestamps, Base64 &amp; JSON</li>
+        <li data-en="Strips utm_*, fbclid, gclid from URLs" data-zh="剥离 URL 中的 utm_*、fbclid、gclid">Strips utm_*, fbclid, gclid from URLs</li>
+      </ul>
+    </article>
+
+    <article class="feature reveal" style="--d:.24s">
+      <div class="feature-ic">
+        <svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 20h16"/>
+          <path d="M6.5 20v-6M12 20V5M17.5 20v-9"/>
+        </svg>
+      </div>
+      <h3 data-en="Export &amp; stats" data-zh="导出与统计">Export &amp; stats</h3>
+      <p data-en="Take your archive anywhere and watch your own rhythm — a GitHub-style heatmap of everything you've copied this year." data-zh="把档案带到任何地方，并回看自己的节奏 —— 一张 GitHub 风格的年度复制热力图。">Take your archive anywhere and watch your own rhythm — a GitHub-style heatmap of everything you've copied this year.</p>
+      <ul class="feature-list">
+        <li data-en="JSON export by type, date, favorite &amp; pin" data-zh="按类型 / 时间 / 收藏 / 置顶导出 JSON">JSON export by type, date, favorite &amp; pin</li>
+        <li data-en="Per-item export to text, PNG &amp; more" data-zh="单条按原始格式导出，如 text、PNG">Per-item export to text, PNG &amp; more</li>
+        <li data-en="Daily counts, 14-day chart &amp; yearly heatmap" data-zh="每日次数 · 14 天柱状图 · 年度热力图">Daily counts, 14-day chart &amp; yearly heatmap</li>
+      </ul>
+    </article>
+
+  </div>
+</section>
+
+<!-- ============ SEARCH SPOTLIGHT ============ -->
+<section class="section search-spot" id="search">
+  <div class="spot-grid">
+    <div class="spot-copy reveal">
+      <span class="sec-no">03</span>
+      <p class="kicker" data-en="Search that understands" data-zh="懂你的搜索">Search that understands</p>
+      <h2 data-en="Find it by meaning — not just the exact word." data-zh="按含义查找 —— 而不只是精确的字。">Find it by meaning — not just the exact word.</h2>
+      <p class="spot-lead" data-en="ClipTrace embeds your clips on-device with Apple's <strong>NLEmbedding</strong>, so a search for “meeting notes” surfaces that “1:1 sync agenda” you pasted last week. No hosted embedding API. No data leaving your Mac." data-zh="剪迹用 Apple 的 <strong>NLEmbedding</strong> 在本机为每条剪贴生成向量，所以搜“会议记录”也能找到上周粘的“1:1 同步议程”。不依赖云端 embedding API，数据不离开你的 Mac。">ClipTrace embeds your clips on-device with Apple's <strong>NLEmbedding</strong>, so a search for “meeting notes” surfaces that “1:1 sync agenda” you pasted last week. No hosted embedding API. No data leaving your Mac.</p>
+      <div class="spot-tags">
+        <span class="op-tag">app:Safari</span>
+        <span class="op-tag">since:2d</span>
+        <span class="op-tag">before:2026-05-01</span>
+        <span class="op-tag">type:image</span>
+      </div>
+    </div>
+
+    <div class="spot-demo reveal" style="--d:.12s">
+      <div class="search-window">
+        <div class="sw-bar">
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M11.74 10.34a5.5 5.5 0 1 0-1.4 1.4l3.2 3.2a1 1 0 0 0 1.42-1.42l-3.22-3.18ZM2.5 6.5a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z"/></svg>
+          <span class="sw-typed" id="swTyped"></span><span class="sw-caret"></span>
+          <span class="sw-toggle" data-en="semantic" data-zh="语义">semantic</span>
+        </div>
+        <div class="sw-results">
+          <div class="sw-row reveal-row" style="--r:0">
+            <span class="sw-score">0.94</span>
+            <div class="sw-rc"><b data-en="1:1 sync — agenda &amp; blockers" data-zh="1:1 同步 —— 议程与阻塞项">1:1 sync — agenda &amp; blockers</b><small>from Notes · 4d ago</small></div>
+            <span class="sw-type">TEXT</span>
+          </div>
+          <div class="sw-row reveal-row" style="--r:1">
+            <span class="sw-score">0.88</span>
+            <div class="sw-rc"><b data-en="Standup recap screenshot" data-zh="站会回顾截图">Standup recap screenshot</b><small data-en="OCR matched · from Slack" data-zh="OCR 命中 · 来自 Slack">OCR matched · from Slack</small></div>
+            <span class="sw-type">IMG</span>
+          </div>
+          <div class="sw-row reveal-row" style="--r:2">
+            <span class="sw-score">0.81</span>
+            <div class="sw-rc"><b data-en="Q3 planning doc link" data-zh="Q3 规划文档链接">Q3 planning doc link</b><small data-en="trackers stripped" data-zh="已剥离跟踪参数">trackers stripped</small></div>
+            <span class="sw-type">LINK</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ MCP / AI (dark terminal band) ============ -->
+<section class="section mcp" id="mcp">
+  <div class="mcp-inner">
+    <div class="mcp-head reveal">
+      <span class="sec-no light">04</span>
+      <p class="kicker light" data-en="AI-native" data-zh="为 AI 而生">AI-native</p>
+      <h2 data-en="Your clipboard, as a tool your AI can call." data-zh="把剪贴板，变成 AI 能调用的工具。">Your clipboard, as a tool your AI can call.</h2>
+      <p class="mcp-lead" data-en="The app binary doubles as a <strong>Model Context Protocol</strong> stdio server. Point Claude Desktop, Claude Code, or Cursor at it and they can search, read, tag and organize your clipboard — locally, with the tools you allow." data-zh="应用 binary 同时是一个 <strong>Model Context Protocol</strong> stdio 服务器。让 Claude Desktop、Claude Code 或 Cursor 接入，它们就能在本地检索、读取、打标签、整理你的剪贴板 —— 只用你允许的工具。">The app binary doubles as a <strong>Model Context Protocol</strong> stdio server. Point Claude Desktop, Claude Code, or Cursor at it and they can search, read, tag and organize your clipboard — locally, with the tools you allow.</p>
+    </div>
+
+    <div class="mcp-body">
+      <div class="terminal reveal">
+        <div class="term-bar"><i></i><i></i><i></i><span>claude_desktop_config.json</span></div>
+        <pre class="term-code"><code><span class="c-brace">{</span>
+  <span class="c-key">"mcpServers"</span>: <span class="c-brace">{</span>
+    <span class="c-key">"clipboard"</span>: <span class="c-brace">{</span>
+      <span class="c-key">"command"</span>: <span class="c-str">"/Applications/ClipTrace.app/Contents/MacOS/ClipTrace"</span>,
+      <span class="c-key">"args"</span>: [<span class="c-str">"--mcp"</span>]
+    <span class="c-brace">}</span>
+  <span class="c-brace">}</span>
+<span class="c-brace">}</span></code></pre>
+        <button class="term-copy" id="termCopy" type="button" data-en="Copy" data-zh="复制">Copy</button>
+      </div>
+
+      <div class="mcp-tools reveal" style="--d:.1s">
+        <p class="tools-label" data-en="Exposed tools" data-zh="暴露的工具">Exposed tools</p>
+        <div class="tool-chips">
+          <span>search_clipboard</span>
+          <span>list_recent</span>
+          <span>get_clip</span>
+          <span>list_tags</span>
+          <span>list_recent_activity</span>
+          <span>tag_clip</span>
+          <span>untag_clip</span>
+          <span>favorite_clip</span>
+          <span>pin_clip</span>
+          <span>delete_clip</span>
+          <span>restore_clip</span>
+          <span>create_snippet</span>
+        </div>
+        <p class="tools-note" data-en="MCP can expose clipboard contents to the client you configure — every tool can be toggled off. Read the privacy notes before enabling it for sensitive workflows." data-zh="MCP 会把剪贴板内容暴露给你配置的客户端 —— 每个工具都可单独关闭。敏感工作流启用前请先阅读隐私说明。">MCP can expose clipboard contents to the client you configure — every tool can be toggled off. Read the privacy notes before enabling it for sensitive workflows.</p>
+        <div class="mcp-logos">
+          <span data-en="Works with" data-zh="兼容">Works with</span>
+          <b>Claude Desktop</b><i>·</i><b>Claude Code</b><i>·</i><b>Cursor</b>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PRIVACY ============ -->
+<section class="section privacy" id="privacy">
+  <div class="section-head reveal">
+    <span class="sec-no">05</span>
+    <div>
+      <p class="kicker" data-en="Privacy by construction" data-zh="从设计上保护隐私">Privacy by construction</p>
+      <h2 data-en="It stays on your Mac — because there's nowhere else for it to go." data-zh="它留在你的 Mac 上 —— 因为它本就无处可去。">It stays on your Mac — because there's nowhere else for it to go.</h2>
+    </div>
+  </div>
+
+  <div class="privacy-grid">
+    <div class="privacy-lead reveal">
+      <p data-en="Clipboard history, OCR text, tags and embeddings never leave the device. There's no account to create and no server to trust. When you do want control, every dial is in your hands:" data-zh="剪贴板历史、OCR 文本、标签与语义向量从不离开设备。没有账号要注册，也没有服务器需要信任。当你想要掌控时，每一个开关都在你手里：">Clipboard history, OCR text, tags and embeddings never leave the device. There's no account to create and no server to trust. When you do want control, every dial is in your hands:</p>
+      <a class="text-link" href="https://github.com/wavever/ClipTrace/blob/main/PRIVACY.md" target="_blank" rel="noopener" data-en="Read the privacy notes →" data-zh="阅读隐私说明 →">Read the privacy notes →</a>
+    </div>
+
+    <ul class="privacy-list reveal" style="--d:.1s">
+      <li data-en="Pause capture whenever you want" data-zh="随时暂停监听">Pause capture whenever you want</li>
+      <li data-en="Exclude specific source apps" data-zh="排除指定来源 App">Exclude specific source apps</li>
+      <li data-en="Honor sensitive pasteboard markers" data-zh="尊重敏感 pasteboard 标记">Honor sensitive pasteboard markers</li>
+      <li data-en="Strip URL tracking parameters" data-zh="剥离 URL 跟踪参数">Strip URL tracking parameters</li>
+      <li data-en="Disable any or all MCP tools" data-zh="关闭部分或全部 MCP 工具">Disable any or all MCP tools</li>
+      <li data-en="Hide the window from screen recording" data-zh="窗口可隐藏于录屏与共享">Hide the window from screen recording</li>
+      <li data-en="Delete history — soft or for good" data-zh="删除历史 —— 软删除或彻底删除">Delete history — soft or for good</li>
+      <li data-en="Set a retention period &amp; auto-clean" data-zh="设置保留期 · 自动清理">Set a retention period &amp; auto-clean</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============ DOWNLOAD CTA ============ -->
+<section class="section download" id="download">
+  <div class="dl-card reveal">
+    <span class="binder big"></span>
+    <img class="dl-logo" src="assets/logo-128.png" alt="" width="84" height="84" loading="lazy" decoding="async" />
+    <h2 data-en="Start keeping a trace." data-zh="开始留下你的痕迹。">Start keeping a trace.</h2>
+    <p class="dl-sub" data-en="Free and open source. Download the latest DMG, drag ClipTrace into Applications, and your clipboard remembers from here on." data-zh="免费且开源。下载最新 DMG，把 ClipTrace 拖进“应用程序”，从此你的剪贴板就有了记忆。">Free and open source. Download the latest DMG, drag ClipTrace into Applications, and your clipboard remembers from here on.</p>
+
+    <div class="dl-actions">
+      <a class="btn btn-primary btn-lg" href="https://github.com/wavever/ClipTrace/releases/latest" target="_blank" rel="noopener">
+        <svg viewBox="0 0 20 20" width="17" height="17" aria-hidden="true"><path fill="currentColor" d="M10 2.5a.9.9 0 0 1 .9.9v8.06l2.5-2.5a.9.9 0 1 1 1.27 1.27l-4.03 4.03a.9.9 0 0 1-1.27 0L5.33 10.23A.9.9 0 1 1 6.6 8.96l2.5 2.5V3.4a.9.9 0 0 1 .9-.9Zm-6 12.4a.9.9 0 0 1 .9.9v.4a.4.4 0 0 0 .4.4h9.6a.4.4 0 0 0 .4-.4v-.4a.9.9 0 1 1 1.8 0v.4a2.2 2.2 0 0 1-2.2 2.2H5.3a2.2 2.2 0 0 1-2.2-2.2v-.4a.9.9 0 0 1 .9-.9Z"/></svg>
+        <span data-en="Download the DMG" data-zh="下载 DMG">Download the DMG</span>
+      </a>
+      <a class="btn btn-ghost btn-lg" href="https://github.com/wavever/ClipTrace#build-from-source" target="_blank" rel="noopener" data-en="Build from source" data-zh="从源码构建">Build from source</a>
+    </div>
+
+    <p class="dl-req">
+      <span data-en="macOS 14.0 Sonoma or later" data-zh="macOS 14.0 Sonoma 或更高版本">macOS 14.0 Sonoma or later</span>
+      <i>·</i>
+      <span data-en="Signed with a stable identity so Accessibility survives updates" data-zh="使用稳定签名身份，更新后保留辅助功能权限">Signed with a stable identity so Accessibility survives updates</span>
+    </p>
+  </div>
+</section>
+
+</main>
+
+<!-- ============ FOOTER ============ -->
+<footer class="footer">
+  <div class="foot-grid">
+    <div class="foot-brand">
+      <img src="assets/logo-128.png" alt="" width="40" height="40" loading="lazy" decoding="async" />
+      <div>
+        <p class="foot-name">剪迹 · ClipTrace</p>
+        <p class="foot-tag" data-en="Local-first clipboard history for macOS and AI tools." data-zh="面向 macOS 与 AI 工具的本地优先剪贴板历史。">Local-first clipboard history for macOS and AI tools.</p>
+        <a class="foot-gh" href="https://github.com/wavever/ClipTrace" target="_blank" rel="noopener" aria-label="ClipTrace on GitHub">
+          <svg class="gh-mark" viewBox="0 0 16 16" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+          <span class="foot-gh-text">
+            <span class="foot-gh-main" data-en="View source on GitHub" data-zh="在 GitHub 上查看源码">View source on GitHub</span>
+            <span class="foot-gh-sub">wavever/ClipTrace</span>
+          </span>
+          <span class="gh-arrow" aria-hidden="true">→</span>
+        </a>
+      </div>
+    </div>
+
+    <nav class="foot-col">
+      <h4 data-en="Product" data-zh="产品">Product</h4>
+      <a href="#capture" data-en="Features" data-zh="功能">Features</a>
+      <a href="#mcp" data-en="AI &amp; MCP" data-zh="AI / MCP">AI &amp; MCP</a>
+      <a href="https://github.com/wavever/ClipTrace/releases/latest" target="_blank" rel="noopener" data-en="Releases" data-zh="版本发布">Releases</a>
+    </nav>
+
+    <nav class="foot-col">
+      <h4 data-en="Docs" data-zh="文档">Docs</h4>
+      <a href="https://github.com/wavever/ClipTrace/blob/main/PRIVACY.md" target="_blank" rel="noopener" data-en="Privacy" data-zh="隐私说明">Privacy</a>
+      <a href="https://github.com/wavever/ClipTrace/blob/main/SECURITY.md" target="_blank" rel="noopener" data-en="Security" data-zh="安全策略">Security</a>
+      <a href="https://github.com/wavever/ClipTrace/blob/main/ROADMAP.md" target="_blank" rel="noopener" data-en="Roadmap" data-zh="路线图">Roadmap</a>
+    </nav>
+
+    <nav class="foot-col">
+      <h4 data-en="Community" data-zh="社区">Community</h4>
+      <a href="https://github.com/wavever/ClipTrace" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/wavever/ClipTrace/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener" data-en="Contributing" data-zh="贡献指南">Contributing</a>
+      <a href="https://github.com/wavever/ClipTrace/blob/main/CODE_OF_CONDUCT.md" target="_blank" rel="noopener" data-en="Code of Conduct" data-zh="行为准则">Code of Conduct</a>
+    </nav>
+  </div>
+
+  <div class="foot-base">
+    <p data-en="Released under the MIT License." data-zh="基于 MIT License 开源。">Released under the MIT License.</p>
+    <p class="foot-made">© 2026 wavever · <span data-en="Built for people who copy a lot." data-zh="为经常复制粘贴的人而做。">Built for people who copy a lot.</span></p>
+  </div>
+</footer>
+
+<script src="script.js"></script>
+</body>
+</html>
