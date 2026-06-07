@@ -15,6 +15,7 @@ struct SettingsPanelView: View {
     @AppStorage("showInDock") private var showInDock = true
     @AppStorage("menuBarIcon") private var menuBarIcon = true
     @AppStorage("hideFromCapture") private var hideFromCapture = false
+    @AppStorage("confirmBeforeQuit") private var confirmBeforeQuit = true
     @AppStorage("trimTrailingWhitespaceOnCopy") private var trimTrailing = false
     @AppStorage("dynamicIslandEnabled") private var dynamicIslandEnabled = false
     @AppStorage("appearanceTheme") private var appearanceThemeRaw = AppearanceTheme.system.rawValue
@@ -144,6 +145,7 @@ struct SettingsPanelView: View {
                 showInDock: $showInDock,
                 menuBarIcon: $menuBarIcon,
                 hideFromCapture: $hideFromCapture,
+                confirmBeforeQuit: $confirmBeforeQuit,
                 trimTrailing: $trimTrailing,
                 dynamicIslandEnabled: $dynamicIslandEnabled,
                 appearanceThemeRaw: $appearanceThemeRaw,
@@ -453,6 +455,7 @@ private struct GeneralSection: View {
     @Binding var showInDock: Bool
     @Binding var menuBarIcon: Bool
     @Binding var hideFromCapture: Bool
+    @Binding var confirmBeforeQuit: Bool
     @Binding var trimTrailing: Bool
     @Binding var dynamicIslandEnabled: Bool
     @Binding var appearanceThemeRaw: String
@@ -594,6 +597,17 @@ private struct GeneralSection: View {
                     subtitle: L("settings.window.hideFromCapture.subtitle")
                 ) {
                     Toggle("", isOn: $hideFromCapture)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .tint(.appAccent)
+                }
+                SettingsRow(
+                    icon: "questionmark.circle",
+                    iconTint: .appAccent,
+                    title: L("settings.window.confirmBeforeQuit"),
+                    subtitle: L("settings.window.confirmBeforeQuit.subtitle")
+                ) {
+                    Toggle("", isOn: $confirmBeforeQuit)
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .tint(.appAccent)

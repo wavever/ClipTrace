@@ -144,6 +144,10 @@ struct ClipTraceApp: App {
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
+    private let confirmBeforeQuitKey = "confirmBeforeQuit"
+    private var quitConfirmationPanel: NSPanel?
+    private var isQuittingAfterConfirmation = false
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         syncActivationPolicyFromDefaults()
         applyInitialAppearance()
@@ -187,6 +191,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
+    /// Command-Q and every explicit terminate request are routed here. By
+    /// default we ask once before fully stopping the clipboard monitor; the
+    /// Settings switch can opt out for users who prefer immediate quit.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if isQuittingAfterConfirmation { return .terminateNow }
+        guard shouldConfirmBeforeQuit else { return .terminateNow }
+        showQuitConfirmation()
+        return .terminateCancel
+    }
+
     /// Re-open the main window when the user clicks the Dock icon after
     /// closing it with the red traffic light. Without this AppKit doesn't
     /// know how to surface the SwiftUI `Window` scene again.
@@ -208,6 +222,128 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let showInDock = defaults.bool(forKey: "showInDock")
         NSApp.setActivationPolicy(showInDock ? .regular : .accessory)
+    }
+
+    private var shouldConfirmBeforeQuit: Bool {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: confirmBeforeQuitKey) == nil {
+            defaults.set(true, forKey: confirmBeforeQuitKey)
+            return true
+        }
+        return defaults.bool(forKey: confirmBeforeQuitKey)
+    }
+
+    private func showQuitConfirmation() {
+        if let panel = quitConfirmationPanel {
+            panel.makeKeyAndOrderFront(nil)
+            return
+        }
+
+        NSApp.activate(ignoringOtherApps: true)
+
+        if let window = mainAppWindow() {
+            presentQuitConfirmation(attachedTo: window)
+            return
+        }
+
+        showMainWindowForQuitPrompt()
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.quitConfirmationPanel == nil else { return }
+            if let window = self.mainAppWindow() {
+                self.presentQuitConfirmation(attachedTo: window)
+            } else {
+                self.presentStandaloneQuitConfirmation()
+            }
+        }
+    }
+
+    private func mainAppWindow() -> NSWindow? {
+        NSApp.windows.first { window in
+            window.title == "剪迹" && window.isVisible
+        } ?? NSApp.windows.first { window in
+            window.isVisible && window.canBecomeKey && !(window is NSPanel)
+        }
+    }
+
+    private func showMainWindowForQuitPrompt() {
+        NSApp.activate(ignoringOtherApps: true)
+        for window in NSApp.windows where window.title == "剪迹" {
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
+    }
+
+    private func presentQuitConfirmation(attachedTo window: NSWindow) {
+        let panel = makeQuitConfirmationPanel(
+            frame: window.frame,
+            dimBackground: true
+        )
+        window.addChildWindow(panel, ordered: .above)
+        quitConfirmationPanel = panel
+        panel.makeKeyAndOrderFront(nil)
+    }
+
+    private func presentStandaloneQuitConfirmation() {
+        let size = NSSize(width: 380, height: 280)
+        let frame = NSRect(origin: .zero, size: size)
+        let panel = makeQuitConfirmationPanel(frame: frame, dimBackground: false)
+        quitConfirmationPanel = panel
+        panel.center()
+        panel.makeKeyAndOrderFront(nil)
+    }
+
+    private func makeQuitConfirmationPanel(frame: NSRect, dimBackground: Bool) -> NSPanel {
+        let request = ConfirmRequest(
+            title: L("quit.confirm.title"),
+            message: L("quit.confirm.message"),
+            confirmLabel: L("quit.confirm.button"),
+            cancelLabel: L("common.cancel"),
+            icon: "power",
+            isDestructive: true,
+            action: {}
+        )
+
+        let panel = QuitConfirmationPanel(
+            contentRect: frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isReleasedWhenClosed = false
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.level = .modalPanel
+        panel.collectionBehavior = [.transient, .ignoresCycle]
+
+        panel.contentView = NSHostingView(
+            rootView: QuitConfirmationHost(
+                request: request,
+                dimBackground: dimBackground,
+                onConfirm: { [weak self] in
+                    self?.confirmQuit()
+                },
+                onCancel: { [weak self] in
+                    self?.dismissQuitConfirmation()
+                }
+            )
+            .frame(width: frame.width, height: frame.height)
+        )
+
+        return panel
+    }
+
+    private func confirmQuit() {
+        isQuittingAfterConfirmation = true
+        dismissQuitConfirmation()
+        NSApp.terminate(nil)
+    }
+
+    private func dismissQuitConfirmation() {
+        guard let panel = quitConfirmationPanel else { return }
+        panel.parent?.removeChildWindow(panel)
+        panel.close()
+        quitConfirmationPanel = nil
     }
 
     /// Window just closed — re-apply the saved policy on the next runloop, once
@@ -252,5 +388,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             window.makeKeyAndOrderFront(nil)
             return
         }
+    }
+}
+
+private final class QuitConfirmationPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+}
+
+private struct QuitConfirmationHost: View {
+    let request: ConfirmRequest
+    let dimBackground: Bool
+    let onConfirm: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        ZStack {
+            if dimBackground {
+                Color.black.opacity(0.45)
+                    .ignoresSafeArea()
+                    .onTapGesture(perform: onCancel)
+            }
+
+            ConfirmationDialogView(
+                request: request,
+                onConfirm: onConfirm,
+                onCancel: onCancel
+            )
+        }
+        .background(Color.clear)
     }
 }
