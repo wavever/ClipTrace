@@ -58,14 +58,14 @@ struct MenuBarView: View {
     }
 }
 
-/// Owns the paged SwiftData query. Keeping this separate from `MenuBarView`
-/// lets a load-more request rebuild the query with a larger `fetchLimit`
-/// instead of materializing the whole clipboard history when the panel opens.
+/// Owns the paged history list for the menu-bar window. This intentionally
+/// uses an explicit `ModelContext(AppContainer.shared)` instead of `@Query`:
+/// on macOS 26 the `MenuBarExtra` window can fail to see the SwiftData
+/// environment even while the main window and Quick Paste read the store fine.
 struct MenuBarContent: View {
     @EnvironmentObject var vm: ClipboardViewModel
-    @Query private var allItems: [ClipboardItem]
-    @Environment(\.modelContext) private var modelContext
     @Environment(\.openWindow) private var openWindow
+    @StateObject private var historyStore = MenuBarHistoryStore()
 
     @Binding var searchText: String
     let isSearchEnabled: Bool
@@ -88,33 +88,10 @@ struct MenuBarContent: View {
         _totalActiveRecords = totalActiveRecords
         self.isLoadingMore = isLoadingMore
         self.onRequestMore = onRequestMore
+    }
 
-        var descriptor = FetchDescriptor<ClipboardItem>(
-            predicate: #Predicate { $0.deletedAt == nil },
-            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
-        )
-        descriptor.fetchLimit = fetchLimit
-        // Keep image bytes and embedding vectors faulted. Each "load more"
-        // bumps `fetchLimit` and SwiftData re-fetches 0..<fetchLimit from
-        // scratch, so without this every loaded clip drags its full bitmap
-        // into memory — which is exactly why scrolling stuttered worse the
-        // further down you paged. ThumbnailView faults imageData back in
-        // lazily for the handful of visible rows, like the main window list.
-        descriptor.propertiesToFetch = [
-            \.id,
-            \.type,
-            \.content,
-            \.fileURL,
-            \.sourceApp,
-            \.createdAt,
-            \.isFavorite,
-            \.isPinned,
-            \.preview,
-            \.deletedAt,
-            \.tagsRaw,
-            \.customTitle,
-        ]
-        _allItems = Query(descriptor)
+    private var allItems: [ClipboardItem] {
+        historyStore.items
     }
 
     private var matchingItems: [ClipboardItem] {
@@ -154,18 +131,10 @@ struct MenuBarContent: View {
         }
         .frame(width: 340)
         .onAppear {
-            refreshRecordCount()
+            reloadHistory()
         }
-        // Refresh the total-records count when the loaded set changes. Watch
-        // the cheap (count, newest-id) signal rather than mapping every loaded
-        // id on each render — that map was O(n) per frame and grew as the user
-        // paged down, adding its own scroll stutter. A new capture changes the
-        // newest id; an in-page delete changes the count.
-        .onChange(of: allItems.count) { _, _ in
-            refreshRecordCount()
-        }
-        .onChange(of: allItems.first?.id) { _, _ in
-            refreshRecordCount()
+        .onChange(of: fetchLimit) { _, _ in
+            reloadHistory()
         }
     }
 
@@ -321,10 +290,55 @@ struct MenuBarContent: View {
     }
 
     private func refreshRecordCount() {
+        historyStore.refreshRecordCount()
+        totalActiveRecords = historyStore.totalActiveRecords
+    }
+
+    private func reloadHistory() {
+        historyStore.reload(fetchLimit: fetchLimit)
+        totalActiveRecords = historyStore.totalActiveRecords
+    }
+}
+
+@MainActor
+private final class MenuBarHistoryStore: ObservableObject {
+    @Published private(set) var items: [ClipboardItem] = []
+    @Published private(set) var totalActiveRecords = 0
+
+    private let context = ModelContext(AppContainer.shared)
+
+    func reload(fetchLimit: Int) {
+        var descriptor = FetchDescriptor<ClipboardItem>(
+            predicate: #Predicate { $0.deletedAt == nil },
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = max(fetchLimit, 1)
+        // Keep large blobs faulted while the menu bar page is built. The store
+        // keeps its ModelContext alive, so visible rows can fault thumbnails in
+        // lazily just like the main window list.
+        descriptor.propertiesToFetch = [
+            \.id,
+            \.type,
+            \.content,
+            \.fileURL,
+            \.sourceApp,
+            \.createdAt,
+            \.isFavorite,
+            \.isPinned,
+            \.preview,
+            \.deletedAt,
+            \.tagsRaw,
+            \.customTitle,
+        ]
+        items = (try? context.fetch(descriptor)) ?? []
+        refreshRecordCount()
+    }
+
+    func refreshRecordCount() {
         let descriptor = FetchDescriptor<ClipboardItem>(
             predicate: #Predicate { $0.deletedAt == nil }
         )
-        totalActiveRecords = (try? modelContext.fetchCount(descriptor)) ?? allItems.count
+        totalActiveRecords = (try? context.fetchCount(descriptor)) ?? items.count
     }
 }
 
