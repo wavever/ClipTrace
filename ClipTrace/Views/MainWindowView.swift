@@ -22,14 +22,17 @@ struct MainWindowView: View {
     private static let pageCap: Int = 600
 
     var body: some View {
-        // When the user is searching or filtering by tag, results may live
-        // beyond the current page; bypass pagination so they're never hidden.
-        let searching = !vm.searchText.isEmpty || !vm.activeTags.isEmpty
-        let effective = searching ? Self.pageCap : pageSize
+        // When the user is searching or filtering, results may live beyond the
+        // current page; bypass pagination so they're never hidden.
+        let filtering = !vm.searchText.isEmpty
+            || !vm.activeTags.isEmpty
+            || vm.selectedType != nil
+            || vm.selectedSourceApp != nil
+        let effective = filtering ? Self.pageCap : pageSize
 
         MainWindowContent(
             pageSize: effective,
-            canLoadMore: !searching && pageSize < Self.pageCap,
+            canLoadMore: !filtering && pageSize < Self.pageCap,
             onRequestMore: requestMore
         )
     }
@@ -101,6 +104,7 @@ struct MainWindowContent: View {
     @State private var totalRecordsCache: Int = 0
     @State private var favoritesCountCache: Int = 0
     @State private var allKnownTagsCache: [String] = []
+    @State private var allKnownSourceAppsCache: [String] = []
 
     /// One spring drives both the highlight glide and the scroll follow, in a
     /// single transaction, so they move as one. `interpolatingSpring` is the key
@@ -285,6 +289,7 @@ struct MainWindowContent: View {
         refreshTotalRecords()
         refreshFavoritesCount()
         refreshTagCatalog()
+        refreshSourceAppCatalog()
     }
 
     private func refreshTotalRecords() {
@@ -312,6 +317,22 @@ struct MainWindowContent: View {
             allKnownTagsCache = vm.allKnownTags(in: tagged)
         } else {
             allKnownTagsCache = []
+        }
+    }
+
+    private func refreshSourceAppCatalog() {
+        var descriptor = FetchDescriptor<ClipboardItem>(
+            predicate: #Predicate { $0.deletedAt == nil && $0.sourceApp != "" }
+        )
+        descriptor.propertiesToFetch = [\.deletedAt, \.sourceApp]
+        if let sourced = try? modelContext.fetch(descriptor) {
+            let apps = vm.allKnownSourceApps(in: sourced)
+            allKnownSourceAppsCache = apps
+            if let selected = vm.selectedSourceApp, !apps.contains(selected) {
+                vm.selectedSourceApp = nil
+            }
+        } else {
+            allKnownSourceAppsCache = []
         }
     }
 
@@ -623,11 +644,10 @@ struct MainWindowContent: View {
         HStack(spacing: 12) {
             ScopeSegmentedControl(selected: $vm.selectedScope)
 
-            PaperMenuPicker(
-                options: [PaperMenuOption(nil as ClipboardItemType?, L("common.allTypes"), icon: "square.grid.2x2")]
-                    + ClipboardItemType.allCases.map { PaperMenuOption($0, $0.displayName, icon: $0.icon) },
-                selection: $vm.selectedType,
-                width: 128
+            ToolbarFilterButton(
+                selectedType: $vm.selectedType,
+                selectedSourceApp: $vm.selectedSourceApp,
+                sourceApps: allKnownSourceAppsCache
             )
 
             // Sort control — only meaningful inside 收藏, where the list no
@@ -715,7 +735,10 @@ struct MainWindowContent: View {
     /// Any active filter — a keyword query or a tag chip — means an empty list
     /// is a "no match" result, not just an empty scope.
     private var isFiltering: Bool {
-        !vm.searchText.isEmpty || !vm.activeTags.isEmpty
+        !vm.searchText.isEmpty
+            || !vm.activeTags.isEmpty
+            || vm.selectedType != nil
+            || vm.selectedSourceApp != nil
     }
 
     private var emptyStateIcon: String {
@@ -1227,6 +1250,304 @@ private struct HeaderStatDivider: View {
             .fill(.tertiary)
             .frame(width: 2.5, height: 2.5)
             .opacity(0.6)
+    }
+}
+
+// MARK: - Toolbar filters
+
+private struct ToolbarFilterButton: View {
+    @Binding var selectedType: ClipboardItemType?
+    @Binding var selectedSourceApp: String?
+    let sourceApps: [String]
+
+    @State private var hovering = false
+    @StateObject private var controller = PaperDropdownController()
+
+    private var activeCount: Int {
+        (selectedType == nil ? 0 : 1) + (selectedSourceApp == nil ? 0 : 1)
+    }
+
+    var body: some View {
+        Button {
+            togglePanel()
+        } label: {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: activeCount > 0 ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(activeCount > 0 || controller.isOpen ? Color.appAccent : .secondary)
+                    .frame(width: 30, height: 30)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7)
+                            .fill(hovering || controller.isOpen ? Color.secondary.opacity(0.18) : Color.clear)
+                    )
+
+                if activeCount > 0 {
+                    Text("\(activeCount)")
+                        .font(.system(size: 8, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(.white)
+                        .frame(width: 13, height: 13)
+                        .background(Circle().fill(Color.appAccent))
+                        .offset(x: 4, y: -4)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(L("toolbar.filters"))
+        .hoverTip(L("toolbar.filters.help"))
+        .background(FilterDropdownAnchor(controller: controller))
+        .onHover { hovering = $0 }
+    }
+
+    private func togglePanel() {
+        controller.toggle(width: 292) {
+            ToolbarFilterPanel(
+                selectedType: $selectedType,
+                selectedSourceApp: $selectedSourceApp,
+                sourceApps: sourceApps
+            )
+        }
+    }
+}
+
+private struct ToolbarFilterPanel: View {
+    @Binding var selectedType: ClipboardItemType?
+    @Binding var selectedSourceApp: String?
+    let sourceApps: [String]
+
+    @State private var panelSelectedType: ClipboardItemType?
+    @State private var panelSelectedSourceApp: String?
+
+    init(
+        selectedType: Binding<ClipboardItemType?>,
+        selectedSourceApp: Binding<String?>,
+        sourceApps: [String]
+    ) {
+        _selectedType = selectedType
+        _selectedSourceApp = selectedSourceApp
+        self.sourceApps = sourceApps
+        _panelSelectedType = State(initialValue: selectedType.wrappedValue)
+        _panelSelectedSourceApp = State(initialValue: selectedSourceApp.wrappedValue)
+    }
+
+    private var hasActiveFilters: Bool {
+        panelSelectedType != nil || panelSelectedSourceApp != nil
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "line.3.horizontal.decrease.circle")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.appAccent)
+                Text(L("filter.title"))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.appMetal)
+                Spacer()
+                if hasActiveFilters {
+                    Button(L("common.reset")) {
+                        panelSelectedType = nil
+                        panelSelectedSourceApp = nil
+                        selectedType = nil
+                        selectedSourceApp = nil
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.appAccent)
+                    .buttonStyle(.plain)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 7) {
+                FilterSectionLabel(title: L("filter.type"))
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 2), spacing: 6) {
+                    FilterChipOption(
+                        title: L("common.allTypes"),
+                        icon: "square.grid.2x2",
+                        isSelected: panelSelectedType == nil
+                    ) {
+                        panelSelectedType = nil
+                        selectedType = nil
+                    }
+                    ForEach(ClipboardItemType.allCases, id: \.rawValue) { type in
+                        FilterChipOption(
+                            title: type.displayName,
+                            icon: type.icon,
+                            isSelected: panelSelectedType == type
+                        ) {
+                            panelSelectedType = type
+                            selectedType = type
+                        }
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 7) {
+                FilterSectionLabel(title: L("filter.app"))
+                VStack(spacing: 1) {
+                    FilterListOption(
+                        title: L("common.allApps"),
+                        icon: "app",
+                        isSelected: panelSelectedSourceApp == nil
+                    ) {
+                        panelSelectedSourceApp = nil
+                        selectedSourceApp = nil
+                    }
+
+                    if sourceApps.isEmpty {
+                        HStack(spacing: 7) {
+                            Image(systemName: "app.dashed")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text(L("filter.noApps"))
+                                .font(.system(size: 12))
+                        }
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 7)
+                    } else {
+                        ScrollView {
+                            VStack(spacing: 1) {
+                                ForEach(sourceApps, id: \.self) { app in
+                                    FilterListOption(
+                                        title: app,
+                                        icon: "app.fill",
+                                        isSelected: panelSelectedSourceApp == app
+                                    ) {
+                                        panelSelectedSourceApp = app
+                                        selectedSourceApp = app
+                                    }
+                                }
+                            }
+                        }
+                        .frame(maxHeight: 180)
+                    }
+                }
+                .padding(4)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.appChipFill)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+                )
+            }
+        }
+        .padding(12)
+        .frame(width: 292, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.appPaper)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+}
+
+private struct FilterSectionLabel: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.secondary)
+    }
+}
+
+private struct FilterChipOption: View {
+    let title: String
+    let icon: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .frame(width: 14)
+                Text(title)
+                    .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(isSelected ? Color.appAccent : Color.appMetal)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(isSelected ? Color.appAccent.opacity(0.16) : (hovering ? Color.appCardHover : Color.appChipFill))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(isSelected ? Color.appAccent.opacity(0.45) : Color.appCardBorder, lineWidth: 0.75)
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
+
+private struct FilterListOption: View {
+    let title: String
+    let icon: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(isSelected ? Color.appAccent : Color.appMetal)
+                    .frame(width: 16)
+                Text(title)
+                    .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                    .foregroundStyle(isSelected ? Color.appAccent : Color.appMetal)
+                    .lineLimit(1)
+                Spacer(minLength: 10)
+                Image(systemName: "checkmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.appAccent)
+                    .opacity(isSelected ? 1 : 0)
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(isSelected ? Color.appAccent.opacity(0.16) : (hovering ? Color.appAccent.opacity(0.14) : Color.clear))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(isSelected ? Color.appAccent.opacity(0.45) : Color.clear, lineWidth: 0.75)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
+
+private struct FilterDropdownAnchor: NSViewRepresentable {
+    let controller: PaperDropdownController
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        MainActor.assumeIsolated { controller.anchorView = view }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        MainActor.assumeIsolated { controller.anchorView = nsView }
     }
 }
 

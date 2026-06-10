@@ -111,6 +111,7 @@ class ClipboardViewModel: ObservableObject {
         }
     }
     @Published var selectedType: ClipboardItemType? = nil
+    @Published var selectedSourceApp: String? = nil
     @Published var selectedScope: ListScope = .all
     /// Sort order for the favorites scope. Persisted so the choice survives
     /// relaunches.
@@ -936,6 +937,17 @@ class ClipboardViewModel: ObservableObject {
         return seen.values.sorted { $0.localizedCompare($1) == .orderedAscending }
     }
 
+    func allKnownSourceApps(in items: [ClipboardItem]) -> [String] {
+        var seen: [String: String] = [:]
+        for item in items where item.deletedAt == nil {
+            let app = item.sourceApp.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !app.isEmpty else { continue }
+            let key = app.lowercased()
+            if seen[key] == nil { seen[key] = app }
+        }
+        return seen.values.sorted { $0.localizedCompare($1) == .orderedAscending }
+    }
+
     func filteredItems(_ items: [ClipboardItem]) -> [ClipboardItem] {
         // Active history never shows soft-deleted entries — those live in
         // the trash screen until they're restored or expire.
@@ -948,6 +960,10 @@ class ClipboardViewModel: ObservableObject {
 
         if let type = selectedType {
             result = result.filter { $0.itemType == type }
+        }
+
+        if let app = selectedSourceApp {
+            result = result.filter { $0.sourceApp == app }
         }
 
         if !activeTags.isEmpty {
