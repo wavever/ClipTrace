@@ -33,7 +33,9 @@ enum AppContainer {
             schema: schema,
             url: storeURL
         )
-        return try ModelContainer(for: schema, configurations: [configuration])
+        let container = try ModelContainer(for: schema, configurations: [configuration])
+        mergeLegacyStoresIfNeeded(into: container)
+        return container
     }
 
     static var storeURL: URL {
@@ -85,6 +87,39 @@ enum AppContainer {
             source.url.path,
             destination.path
         )
+    }
+
+    private static func mergeLegacyStoresIfNeeded(into container: ModelContainer) {
+        let sources = legacyStoreCandidates(excluding: storeURL)
+            .compactMap { url -> (url: URL, count: Int)? in
+                guard let count = clipboardItemCount(at: url), count > 0 else { return nil }
+                return (url, count)
+            }
+            .sorted { lhs, rhs in lhs.count > rhs.count }
+        guard !sources.isEmpty else { return }
+
+        do {
+            let context = ModelContext(container)
+            var descriptor = FetchDescriptor<ClipboardItem>()
+            descriptor.propertiesToFetch = [\.id]
+            var knownIDs = Set(try context.fetch(descriptor).map(\.id))
+            var totalImported = 0
+
+            for source in sources {
+                totalImported += try importMissingClipboardItems(
+                    from: source.url,
+                    into: context,
+                    knownIDs: &knownIDs
+                )
+            }
+
+            if totalImported > 0 {
+                try context.save()
+                NSLog("ClipTrace imported %d missing clipboard history rows from legacy stores", totalImported)
+            }
+        } catch {
+            NSLog("ClipTrace legacy history merge failed: %@", String(describing: error))
+        }
     }
 
     private static func bestLegacyStore(excluding destination: URL) -> (url: URL, count: Int)? {
@@ -157,6 +192,99 @@ enum AppContainer {
         return Int(sqlite3_column_int64(statement, 0))
     }
 
+    private static func importMissingClipboardItems(
+        from storeURL: URL,
+        into context: ModelContext,
+        knownIDs: inout Set<UUID>
+    ) throws -> Int {
+        guard regularFileSize(at: storeURL) > 0 else { return 0 }
+
+        var database: OpaquePointer?
+        let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX
+        guard sqlite3_open_v2(storeURL.path, &database, flags, nil) == SQLITE_OK,
+              let database else {
+            defer {
+                if let database {
+                    sqlite3_close(database)
+                }
+            }
+            throw StoreRecoveryError.openFailed(storeURL.path)
+        }
+        defer { sqlite3_close(database) }
+
+        guard let columns = clipboardItemColumns(in: database), columns.contains("ZID") else {
+            return 0
+        }
+
+        let selectedColumns = [
+            "ZID", "ZTYPE", "ZCONTENT", "ZIMAGEDATA", "ZFILEURL", "ZSOURCEAPP",
+            "ZCREATEDAT", "ZISFAVORITE", "ZISPINNED", "ZPREVIEW", "ZEMBEDDING",
+            "ZEMBEDDINGLANG", "ZDELETEDAT", "ZTAGSRAW", "ZCUSTOMTITLE", "ZOCRTEXT"
+        ]
+        let selectList = selectedColumns
+            .map { columns.contains($0) ? $0 : "NULL AS \($0)" }
+            .joined(separator: ", ")
+        let sql = "SELECT \(selectList) FROM ZCLIPBOARDITEM"
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK,
+              let statement else {
+            throw StoreRecoveryError.queryFailed(storeURL.path)
+        }
+        defer { sqlite3_finalize(statement) }
+
+        var imported = 0
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let legacy = LegacyClipboardItem(statement: statement),
+                  !knownIDs.contains(legacy.id) else {
+                continue
+            }
+
+            let item = ClipboardItem(
+                type: ClipboardItemType(rawValue: legacy.type) ?? .text,
+                content: legacy.content,
+                imageData: legacy.imageData,
+                fileURL: legacy.fileURL,
+                sourceApp: legacy.sourceApp,
+                preview: legacy.preview
+            )
+            item.id = legacy.id
+            item.type = legacy.type
+            item.createdAt = legacy.createdAt
+            item.isFavorite = legacy.isFavorite
+            item.isPinned = legacy.isPinned
+            item.embedding = legacy.embedding
+            item.embeddingLang = legacy.embeddingLang
+            item.deletedAt = legacy.deletedAt
+            item.tagsRaw = legacy.tagsRaw
+            item.customTitle = legacy.customTitle
+            item.ocrText = legacy.ocrText
+
+            context.insert(item)
+            knownIDs.insert(legacy.id)
+            imported += 1
+        }
+
+        return imported
+    }
+
+    private static func clipboardItemColumns(in database: OpaquePointer) -> Set<String>? {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, "PRAGMA table_info(ZCLIPBOARDITEM)", -1, &statement, nil) == SQLITE_OK,
+              let statement else {
+            return nil
+        }
+        defer { sqlite3_finalize(statement) }
+
+        var columns = Set<String>()
+        while sqlite3_step(statement) == SQLITE_ROW {
+            if let name = sqlite3_column_text(statement, 1) {
+                columns.insert(String(cString: name))
+            }
+        }
+        return columns.isEmpty ? nil : columns
+    }
+
     private static func regularFileSize(at url: URL) -> UInt64 {
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
               attributes[.type] as? FileAttributeType == .typeRegular else {
@@ -213,5 +341,87 @@ enum AppContainer {
         formatter.timeZone = .current
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         return formatter.string(from: Date())
+    }
+}
+
+private enum StoreRecoveryError: Error {
+    case openFailed(String)
+    case queryFailed(String)
+}
+
+private struct LegacyClipboardItem {
+    let id: UUID
+    let type: String
+    let content: String
+    let imageData: Data?
+    let fileURL: String?
+    let sourceApp: String
+    let createdAt: Date
+    let isFavorite: Bool
+    let isPinned: Bool
+    let preview: String?
+    let embedding: Data?
+    let embeddingLang: String?
+    let deletedAt: Date?
+    let tagsRaw: String?
+    let customTitle: String?
+    let ocrText: String?
+
+    init?(statement: OpaquePointer) {
+        guard let id = Self.uuid(at: 0, in: statement) else { return nil }
+
+        self.id = id
+        self.type = Self.string(at: 1, in: statement) ?? ClipboardItemType.text.rawValue
+        self.content = Self.string(at: 2, in: statement) ?? ""
+        self.imageData = Self.data(at: 3, in: statement)
+        self.fileURL = Self.string(at: 4, in: statement)
+        self.sourceApp = Self.string(at: 5, in: statement) ?? ""
+        self.createdAt = Self.date(at: 6, in: statement) ?? Date()
+        self.isFavorite = Self.bool(at: 7, in: statement)
+        self.isPinned = Self.bool(at: 8, in: statement)
+        self.preview = Self.string(at: 9, in: statement)
+        self.embedding = Self.data(at: 10, in: statement)
+        self.embeddingLang = Self.string(at: 11, in: statement)
+        self.deletedAt = Self.date(at: 12, in: statement)
+        self.tagsRaw = Self.string(at: 13, in: statement)
+        self.customTitle = Self.string(at: 14, in: statement)
+        self.ocrText = Self.string(at: 15, in: statement)
+    }
+
+    private static func uuid(at index: Int32, in statement: OpaquePointer) -> UUID? {
+        guard let data = data(at: index, in: statement), data.count == 16 else { return nil }
+        let bytes = [UInt8](data)
+        return UUID(uuid: (
+            bytes[0], bytes[1], bytes[2], bytes[3],
+            bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[8], bytes[9], bytes[10], bytes[11],
+            bytes[12], bytes[13], bytes[14], bytes[15]
+        ))
+    }
+
+    private static func data(at index: Int32, in statement: OpaquePointer) -> Data? {
+        guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
+        let byteCount = Int(sqlite3_column_bytes(statement, index))
+        guard byteCount > 0 else { return Data() }
+        guard let bytes = sqlite3_column_blob(statement, index) else { return nil }
+        return Data(bytes: bytes, count: byteCount)
+    }
+
+    private static func string(at index: Int32, in statement: OpaquePointer) -> String? {
+        guard sqlite3_column_type(statement, index) != SQLITE_NULL,
+              let value = sqlite3_column_text(statement, index) else {
+            return nil
+        }
+        return String(cString: value)
+    }
+
+    private static func bool(at index: Int32, in statement: OpaquePointer) -> Bool {
+        guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return false }
+        return sqlite3_column_int(statement, index) != 0
+    }
+
+    private static func date(at index: Int32, in statement: OpaquePointer) -> Date? {
+        guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
+        return Date(timeIntervalSinceReferenceDate: sqlite3_column_double(statement, index))
     }
 }
