@@ -3,20 +3,6 @@ import SwiftUI
 import SwiftData
 import KeyboardShortcuts
 
-/// Shared SwiftData container used by the SwiftUI scenes and by the floating
-/// QuickPaste panel. Centralising the container guarantees the popup reads
-/// from the same store the main window writes to.
-@MainActor
-enum AppContainer {
-    static let shared: ModelContainer = {
-        do {
-            return try ModelContainer(for: ClipboardItem.self)
-        } catch {
-            fatalError("Failed to open ModelContainer: \(error)")
-        }
-    }()
-}
-
 /// The keystrokes that drive the QuickPaste panel's keyboard flow: `↑`/`↓`
 /// move the highlight, `toggleSelectShortcut` adds/removes the highlighted
 /// clip from the multi-selection, and `commitShortcut` pastes.

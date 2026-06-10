@@ -42,7 +42,7 @@ enum MCPServer {
 
         let container: ModelContainer
         do {
-            container = try ModelContainer(for: Schema([ClipboardItem.self]))
+            container = try AppContainer.makeContainer()
         } catch {
             log("Failed to open ModelContainer: \(error)")
             return
