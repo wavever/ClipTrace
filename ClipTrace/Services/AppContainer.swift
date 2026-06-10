@@ -15,6 +15,7 @@ enum AppContainer {
     private static let legacyProjectFolderName = "ClipBoardManager"
     private static let bundleFolderName = "com.wavever.cliptrace"
     private static let sidecarSuffixes = ["", "-wal", "-shm"]
+    private static let scannedStoreExtensions = ["store", "sqlite"]
 
     static let shared: ModelContainer = {
         do {
@@ -138,7 +139,7 @@ enum AppContainer {
             .appendingPathComponent(bundleFolderName, isDirectory: true)
             .appendingPathComponent("Data/Library/Application Support", isDirectory: true)
 
-        let candidates = [
+        let knownCandidates = [
             applicationSupportRoot.appendingPathComponent(storeFileName),
             homeSupport.appendingPathComponent(storeFileName),
             homeSupport
@@ -155,6 +156,7 @@ enum AppContainer {
                 .appendingPathComponent(legacyProjectFolderName, isDirectory: true)
                 .appendingPathComponent(storeFileName)
         ]
+        let candidates = knownCandidates + scannedLegacyStoreCandidates()
 
         var seen = Set<String>()
         let destinationPath = destination.standardizedFileURL.path
@@ -164,6 +166,73 @@ enum AppContainer {
             seen.insert(path)
             return url
         }
+    }
+
+    private static func scannedLegacyStoreCandidates() -> [URL] {
+        let homeSupport = homeApplicationSupportRoot
+        var roots: [(url: URL, depth: Int)] = [(homeSupport, 4)]
+
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let containerRoot = home.appendingPathComponent("Library/Containers", isDirectory: true)
+        if let containerURLs = try? FileManager.default.contentsOfDirectory(
+            at: containerRoot,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) {
+            for url in containerURLs where isRelevantContainer(url) {
+                roots.append((url, 8))
+            }
+        }
+
+        var candidates: [URL] = []
+        for root in roots {
+            candidates.append(contentsOf: storeCandidates(under: root.url, maxDepth: root.depth))
+        }
+        return candidates
+    }
+
+    private static func isRelevantContainer(_ url: URL) -> Bool {
+        let name = url.lastPathComponent.lowercased()
+        return name.contains("clip") || name.contains("clipboard") || name.contains("wavever")
+    }
+
+    private static func storeCandidates(under root: URL, maxDepth: Int) -> [URL] {
+        var rootIsDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: root.path, isDirectory: &rootIsDirectory),
+              rootIsDirectory.boolValue else {
+            return []
+        }
+
+        let rootDepth = root.standardizedFileURL.pathComponents.count
+        let keys: [URLResourceKey] = [.isDirectoryKey, .isRegularFileKey]
+        let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: keys,
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        )
+
+        var urls: [URL] = []
+        while let url = enumerator?.nextObject() as? URL {
+            let depth = url.standardizedFileURL.pathComponents.count - rootDepth
+            if depth > maxDepth {
+                if (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+                    enumerator?.skipDescendants()
+                }
+                continue
+            }
+
+            guard isPotentialStoreURL(url) else { continue }
+            urls.append(url)
+        }
+        return urls
+    }
+
+    private static func isPotentialStoreURL(_ url: URL) -> Bool {
+        let name = url.lastPathComponent.lowercased()
+        guard !name.hasSuffix("-wal"), !name.hasSuffix("-shm") else { return false }
+        guard scannedStoreExtensions.contains(url.pathExtension.lowercased()) else { return false }
+        guard regularFileSize(at: url) > 0 else { return false }
+        return true
     }
 
     private static func clipboardItemCount(at storeURL: URL) -> Int? {
