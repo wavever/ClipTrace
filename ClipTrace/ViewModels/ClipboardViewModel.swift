@@ -148,9 +148,9 @@ class ClipboardViewModel: ObservableObject {
     @Published var selectedItemIDs: Set<UUID> = []
     @Published var showSnippetEditor = false
     /// Single-row keyboard focus — used by arrow keys and the Space-to-preview
-    /// shortcut. Distinct from `selectedItemIDs`, which only matters in merge
-    /// mode. Nil means "no row focused"; consumers can fall back to the first
-    /// visible row in that case.
+    /// shortcut. Distinct from the multi-selection used by bulk actions. Nil
+    /// means "no row focused"; consumers can fall back to the first visible row
+    /// in that case.
     @Published var focusedItemID: UUID? = nil
 
     /// True while `backfillEmbeddings` is actively recomputing vectors. The
@@ -981,14 +981,6 @@ class ClipboardViewModel: ObservableObject {
                     return activeTags.isSubset(of: itemKeys)
                 }
             }
-        }
-
-        // When merging, the user can only combine items of one type. Once a
-        // first item is selected we lock the visible list to that same type so
-        // incompatible rows can't be tapped by mistake.
-        if isSelectionMode,
-           let anchorType = items.first(where: { selectedItemIDs.contains($0.id) })?.itemType {
-            result = result.filter { $0.itemType == anchorType }
         }
 
         // In tag mode the search field is a local tag-picker buffer (never

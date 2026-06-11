@@ -438,6 +438,7 @@ struct MainWindowContent: View {
         let selected = vm.orderedSelectedItems(items)
         let blockReason = vm.mergeBlockReason(selectedItems: selected)
         let canMerge = blockReason == nil
+        let hasMixedTypes = hasMixedSelectedTypes(selected)
         let allSelected = !items.isEmpty && selected.count == items.count
 
         return HStack(spacing: 10) {
@@ -533,7 +534,7 @@ struct MainWindowContent: View {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(canMerge && !isMergingSelection ? Color.appAccent : Color.appAccent.opacity(0.35))
             )
-            .disabled(!canMerge || isMergingSelection)
+            .disabled((!canMerge && !hasMixedTypes) || isMergingSelection)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -585,6 +586,14 @@ struct MainWindowContent: View {
 
     private func performMerge(_ selected: [ClipboardItem]) {
         guard !isMergingSelection else { return }
+        if hasMixedSelectedTypes(selected) {
+            ToastCenter.shared.show(
+                L("selection.requireSameType"),
+                systemImage: "exclamationmark.triangle.fill",
+                tint: .red
+            )
+            return
+        }
         let selectedCount = selected.count
         isMergingSelection = true
 
@@ -610,6 +619,10 @@ struct MainWindowContent: View {
                 tint: .appAccent
             )
         }
+    }
+
+    private func hasMixedSelectedTypes(_ selected: [ClipboardItem]) -> Bool {
+        Set(selected.map(\.itemType)).count > 1
     }
 
     private var header: some View {
