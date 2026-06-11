@@ -63,14 +63,17 @@ final class QuickPastePanelState: ObservableObject {
     @Published var items: [ClipboardItem] = []
 
     var onCommit: (_ items: [ClipboardItem], _ plainText: Bool) -> Void = { _, _ in }
+    var onTogglePin: (_ item: ClipboardItem) -> Void = { _ in }
     var onCancel: () -> Void = {}
 
     func configure(
         items: [ClipboardItem],
         onCommit: @escaping (_ items: [ClipboardItem], _ plainText: Bool) -> Void,
+        onTogglePin: @escaping (_ item: ClipboardItem) -> Void,
         onCancel: @escaping () -> Void
     ) {
         self.onCommit = onCommit
+        self.onTogglePin = onTogglePin
         self.onCancel = onCancel
         self.items = items
     }
@@ -82,6 +85,7 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
 
     private var panel: NSPanel?
     private let panelState = QuickPastePanelState()
+    private let context = ModelContext(AppContainer.shared)
     /// App that was frontmost when we opened the panel. We re-activate it
     /// before posting the synthetic ⌘V so the keystroke lands in the right
     /// place even if focus drifted while the user picked clips.
@@ -127,6 +131,9 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
             items: items,
             onCommit: { [weak self] selected, plainText in
                 self?.commit(selected, plainText: plainText)
+            },
+            onTogglePin: { [weak self] item in
+                self?.togglePin(item)
             },
             onCancel: { [weak self] in self?.cancel() }
         )
@@ -213,19 +220,32 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
     }
 
     private func fetchRecentItems() -> [ClipboardItem] {
-        let context = ModelContext(AppContainer.shared)
-        var descriptor = FetchDescriptor<ClipboardItem>(
-            predicate: #Predicate { $0.deletedAt == nil },
+        let pinnedDescriptor = FetchDescriptor<ClipboardItem>(
+            predicate: #Predicate { $0.deletedAt == nil && $0.isPinned },
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
-        descriptor.fetchLimit = 60
-        let items = (try? context.fetch(descriptor)) ?? []
-        // Float pinned items to the top while preserving recency within each
-        // group — Bool isn't Comparable so we can't express this in SortDescriptor.
-        return items.sorted { lhs, rhs in
+        let pinned = (try? context.fetch(pinnedDescriptor)) ?? []
+
+        var recentDescriptor = FetchDescriptor<ClipboardItem>(
+            predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false },
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        recentDescriptor.fetchLimit = 60
+        let recent = (try? context.fetch(recentDescriptor)) ?? []
+
+        return pinned + recent
+    }
+
+    private func sortPinnedFirst(_ items: [ClipboardItem]) -> [ClipboardItem] {
+        items.sorted { lhs, rhs in
             if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
             return lhs.createdAt > rhs.createdAt
         }
+    }
+
+    private func togglePin(_ item: ClipboardItem) {
+        ClipboardRuntime.shared.viewModel.togglePin(item)
+        panelState.items = sortPinnedFirst(panelState.items)
     }
 
     // MARK: - Close

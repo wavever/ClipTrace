@@ -134,10 +134,17 @@ struct QuickPasteView: View {
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(displayPreview(for: item))
-                    .font(.system(size: 12.5))
-                    .lineLimit(2)
-                    .foregroundStyle(.primary)
+                HStack(spacing: 4) {
+                    if item.isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.orange)
+                    }
+                    Text(displayPreview(for: item))
+                        .font(.system(size: 12.5))
+                        .lineLimit(2)
+                        .foregroundStyle(.primary)
+                }
                 HStack(spacing: 6) {
                     HStack(spacing: 2) {
                         Image(systemName: item.itemType.icon)
@@ -190,6 +197,12 @@ struct QuickPasteView: View {
         .onTapGesture {
             focusedID = item.id
             toggle(item.id)
+        }
+        .contextMenu {
+            Button(item.isPinned ? L("action.unpin") : L("action.pin"),
+                   systemImage: item.isPinned ? "pin.slash" : "pin") {
+                state.onTogglePin(item)
+            }
         }
     }
 

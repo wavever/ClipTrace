@@ -79,7 +79,7 @@ enum FavoritesSortOrder: String, CaseIterable, Identifiable {
         case .dateNewest: return "arrow.down"
         case .dateOldest: return "arrow.up"
         case .name:       return "textformat"
-        case .type:       return "square.grid.2x2"
+        case .type:       return "doc.text.image"
         }
     }
 }
@@ -173,11 +173,12 @@ class ClipboardViewModel: ObservableObject {
     ) as? Bool ?? true
 
     /// Monotonic bump counters published so views can rebuild O(n) derived
-    /// state (allKnownTags, favorites count) lazily — only when the relevant
-    /// mutation actually happens, instead of scanning every row on every body
-    /// re-run. Bumped from `addTag/removeTag/toggleFavorite/...`.
+    /// state (allKnownTags, favorites count, pinned ordering) lazily — only
+    /// when the relevant mutation actually happens, instead of scanning every
+    /// row on every body re-run. Bumped from `addTag/removeTag/toggleFavorite/...`.
     @Published var tagCatalogVersion: Int = 0
     @Published var favoritesVersion: Int = 0
+    @Published var pinsVersion: Int = 0
 
     func setSemanticFeatureEnabled(_ enabled: Bool) {
         UserDefaults.standard.set(enabled, forKey: Self.semanticFeatureEnabledKey)
@@ -569,6 +570,7 @@ class ClipboardViewModel: ObservableObject {
         item.isPinned = pinned
         context.insert(item)
         try? context.save()
+        if pinned { pinsVersion &+= 1 }
 
         // Embed off-thread so the snippet shows up in semantic search.
         Task { @MainActor in
@@ -634,6 +636,10 @@ class ClipboardViewModel: ObservableObject {
 
     func togglePin(_ item: ClipboardItem) {
         item.isPinned.toggle()
+        pinsVersion &+= 1
+        if let context = item.modelContext {
+            try? context.save()
+        }
     }
 
     /// Apply a user-typed title to `item`. Empty / whitespace input clears

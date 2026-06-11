@@ -130,11 +130,20 @@ struct MenuBarContent: View {
             footer
         }
         .frame(width: 340)
+        .background {
+            Color.appPaper
+                .ignoresSafeArea()
+        }
         .onAppear {
             reloadHistory()
         }
         .onChange(of: fetchLimit) { _, _ in
             reloadHistory()
+        }
+        .onChange(of: vm.pinsVersion) { _, _ in
+            withAnimation(.easeOut(duration: 0.16)) {
+                reloadHistory()
+            }
         }
     }
 
@@ -226,7 +235,8 @@ struct MenuBarContent: View {
                     MenuBarRow(
                         item: item,
                         onCopy: { vm.copyToClipboard(item) },
-                        onCopyPlainText: { vm.copyAsPlainText(item) }
+                        onCopyPlainText: { vm.copyAsPlainText(item) },
+                        onTogglePin: { togglePin(item) }
                     )
                 }
 
@@ -298,6 +308,10 @@ struct MenuBarContent: View {
         historyStore.reload(fetchLimit: fetchLimit)
         totalActiveRecords = historyStore.totalActiveRecords
     }
+
+    private func togglePin(_ item: ClipboardItem) {
+        vm.togglePin(item)
+    }
 }
 
 @MainActor
@@ -308,15 +322,14 @@ private final class MenuBarHistoryStore: ObservableObject {
     private let context = ModelContext(AppContainer.shared)
 
     func reload(fetchLimit: Int) {
-        var descriptor = FetchDescriptor<ClipboardItem>(
-            predicate: #Predicate { $0.deletedAt == nil },
+        var pinnedDescriptor = FetchDescriptor<ClipboardItem>(
+            predicate: #Predicate { $0.deletedAt == nil && $0.isPinned },
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
-        descriptor.fetchLimit = max(fetchLimit, 1)
         // Keep large blobs faulted while the menu bar page is built. The store
         // keeps its ModelContext alive, so visible rows can fault thumbnails in
         // lazily just like the main window list.
-        descriptor.propertiesToFetch = [
+        pinnedDescriptor.propertiesToFetch = [
             \.id,
             \.type,
             \.content,
@@ -330,7 +343,17 @@ private final class MenuBarHistoryStore: ObservableObject {
             \.tagsRaw,
             \.customTitle,
         ]
-        items = (try? context.fetch(descriptor)) ?? []
+
+        var recentDescriptor = FetchDescriptor<ClipboardItem>(
+            predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false },
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        recentDescriptor.fetchLimit = max(fetchLimit, 1)
+        recentDescriptor.propertiesToFetch = pinnedDescriptor.propertiesToFetch
+
+        let pinned = (try? context.fetch(pinnedDescriptor)) ?? []
+        let recent = (try? context.fetch(recentDescriptor)) ?? []
+        items = pinned + recent
         refreshRecordCount()
     }
 
@@ -346,6 +369,7 @@ struct MenuBarRow: View {
     let item: ClipboardItem
     let onCopy: () -> Void
     var onCopyPlainText: (() -> Void)? = nil
+    var onTogglePin: () -> Void = {}
 
     @State private var isHovered = false
     @State private var copySucceeded = false
@@ -357,6 +381,11 @@ struct MenuBarRow: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
+                    if item.isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.system(size: 8))
+                            .foregroundStyle(.orange)
+                    }
                     if item.isFavorite {
                         Image(systemName: "star.fill")
                             .font(.system(size: 8))
@@ -387,11 +416,11 @@ struct MenuBarRow: View {
                 } label: {
                     Image(systemName: copySucceeded ? "checkmark" : "doc.on.doc")
                         .font(.system(size: 11, weight: copySucceeded ? .bold : .regular))
-                        .foregroundStyle(copySucceeded ? Color.white : Color.secondary)
+                        .foregroundStyle(copySucceeded ? Color.appAccent : Color.secondary)
                         .frame(width: 22, height: 22)
                         .background(
                             RoundedRectangle(cornerRadius: 5)
-                                .fill(copySucceeded ? Color.green : Color.secondary.opacity(0.18))
+                                .fill(copySucceeded ? Color.appAccent.opacity(0.16) : Color.secondary.opacity(0.18))
                         )
                 }
                 .buttonStyle(.plain)
@@ -417,6 +446,11 @@ struct MenuBarRow: View {
                     triggerCopySuccessFlash()
                 }
                 .keyboardShortcut("c", modifiers: [.command, .option])
+            }
+            Divider()
+            Button(item.isPinned ? L("action.unpin") : L("action.pin"),
+                   systemImage: item.isPinned ? "pin.slash" : "pin") {
+                onTogglePin()
             }
         }
     }
