@@ -124,13 +124,7 @@ jobs:
           fi
           VERSION="${GITHUB_REF_NAME#v}"
           DMG_NAME="ClipTrace-${VERSION}.dmg"
-          STAGING=$(mktemp -d)
-          cp -R "$APP_PATH" "$STAGING/"
-          ln -s /Applications "$STAGING/Applications"
-          hdiutil create -volname "ClipTrace" \
-            -srcfolder "$STAGING" \
-            -ov -format UDZO \
-            "$DMG_NAME"
+          scripts/package_dmg.sh "$APP_PATH" "$DMG_NAME" "ClipTrace" "ClipTrace"
           echo "dmg=$DMG_NAME" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 

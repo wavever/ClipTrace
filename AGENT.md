@@ -89,8 +89,8 @@ App **未公证**（需要付费 Developer ID）。首次启动仍会有 Gatekee
    导入临时钥匙串；未设置则直接失败。
 2. **Release 构建**：用 `ClipTrace Self-Signed` 签名；校验产物非 ad-hoc，且烤进去的
    版本号与 tag 一致。
-3. 打包 `.app` 成 DMG，用 **Sparkle EdDSA 签名** DMG，重新生成 `appcast.xml`，发布
-   GitHub Release。
+3. 通过 `scripts/package_dmg.sh` 打包 `.app` 成带背景指引的 DMG（拖入 Applications
+   安装），用 **Sparkle EdDSA 签名** DMG，重新生成 `appcast.xml`，发布 GitHub Release。
 
 ### 版本号 —— 重要
 
