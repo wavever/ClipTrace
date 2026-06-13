@@ -2,6 +2,103 @@ import SwiftUI
 import SwiftData
 import AppKit
 
+enum MenuBarSurfaceStyle {
+    case paper
+    case dynamicIsland
+
+    var isIsland: Bool { self == .dynamicIsland }
+
+    var background: Color {
+        switch self {
+        case .paper:
+            Color.appPaper
+        case .dynamicIsland:
+            Color.black
+        }
+    }
+
+    var primaryText: Color {
+        switch self {
+        case .paper:
+            Color.appMetal
+        case .dynamicIsland:
+            Color.white.opacity(0.94)
+        }
+    }
+
+    var secondaryText: Color {
+        switch self {
+        case .paper:
+            Color.secondary
+        case .dynamicIsland:
+            Color.white.opacity(0.58)
+        }
+    }
+
+    var tertiaryText: Color {
+        switch self {
+        case .paper:
+            Color.secondary.opacity(0.65)
+        case .dynamicIsland:
+            Color.white.opacity(0.36)
+        }
+    }
+
+    var divider: Color {
+        switch self {
+        case .paper:
+            Color.primary.opacity(0.16)
+        case .dynamicIsland:
+            Color.white.opacity(0.10)
+        }
+    }
+
+    var rowHoverFill: Color {
+        switch self {
+        case .paper:
+            Color.appAccent.opacity(0.12)
+        case .dynamicIsland:
+            Color.white.opacity(0.09)
+        }
+    }
+
+    var controlFill: Color {
+        switch self {
+        case .paper:
+            Color.secondary.opacity(0.18)
+        case .dynamicIsland:
+            Color.white.opacity(0.10)
+        }
+    }
+
+    var controlFillActive: Color {
+        switch self {
+        case .paper:
+            Color.appAccent.opacity(0.16)
+        case .dynamicIsland:
+            Color.appAccent.opacity(0.24)
+        }
+    }
+
+    var headerButtonFill: Color {
+        switch self {
+        case .paper:
+            Color.clear
+        case .dynamicIsland:
+            Color.white.opacity(0.08)
+        }
+    }
+
+    var thumbnailTint: Color {
+        switch self {
+        case .paper:
+            Color.primary
+        case .dynamicIsland:
+            Color.white.opacity(0.86)
+        }
+    }
+}
+
 struct MenuBarView: View {
     @State private var searchText = ""
     @State private var fetchLimit = Self.pageSize
@@ -9,11 +106,28 @@ struct MenuBarView: View {
     @State private var isLoadingMore = false
     @State private var paginationGeneration = 0
 
+    private let onRequestClose: (() -> Void)?
+    private let onOpenMain: (() -> Void)?
+    private let onOpenSettings: (() -> Void)?
+    private let surfaceStyle: MenuBarSurfaceStyle
+
     private static let pageSize = 20
     /// Menu bar search currently expands the SwiftData fetch to the full
     /// history. Keep the implementation available, but hide it until it can
     /// be replaced with a bounded query that does not block the panel.
     private static let isSearchEnabled = false
+
+    init(
+        surfaceStyle: MenuBarSurfaceStyle = .paper,
+        onRequestClose: (() -> Void)? = nil,
+        onOpenMain: (() -> Void)? = nil,
+        onOpenSettings: (() -> Void)? = nil
+    ) {
+        self.surfaceStyle = surfaceStyle
+        self.onRequestClose = onRequestClose
+        self.onOpenMain = onOpenMain
+        self.onOpenSettings = onOpenSettings
+    }
 
     var body: some View {
         let searching = Self.isSearchEnabled &&
@@ -25,7 +139,11 @@ struct MenuBarView: View {
             fetchLimit: searching ? max(totalActiveRecords, Self.pageSize) : fetchLimit,
             totalActiveRecords: $totalActiveRecords,
             isLoadingMore: isLoadingMore,
-            onRequestMore: loadMore
+            onRequestMore: loadMore,
+            surfaceStyle: surfaceStyle,
+            onRequestClose: onRequestClose,
+            onOpenMain: onOpenMain,
+            onOpenSettings: onOpenSettings
         )
         .onChange(of: searchText) { _, _ in
             resetPagination()
@@ -67,12 +185,18 @@ struct MenuBarContent: View {
     @Environment(\.openWindow) private var openWindow
     @StateObject private var historyStore = MenuBarHistoryStore()
 
+    private static let listHeight: CGFloat = 460
+
     @Binding var searchText: String
     let isSearchEnabled: Bool
     let fetchLimit: Int
     @Binding var totalActiveRecords: Int
     let isLoadingMore: Bool
     let onRequestMore: () -> Void
+    let surfaceStyle: MenuBarSurfaceStyle
+    let onRequestClose: (() -> Void)?
+    let onOpenMain: (() -> Void)?
+    let onOpenSettings: (() -> Void)?
 
     init(
         searchText: Binding<String>,
@@ -80,7 +204,11 @@ struct MenuBarContent: View {
         fetchLimit: Int,
         totalActiveRecords: Binding<Int>,
         isLoadingMore: Bool,
-        onRequestMore: @escaping () -> Void
+        onRequestMore: @escaping () -> Void,
+        surfaceStyle: MenuBarSurfaceStyle = .paper,
+        onRequestClose: (() -> Void)? = nil,
+        onOpenMain: (() -> Void)? = nil,
+        onOpenSettings: (() -> Void)? = nil
     ) {
         _searchText = searchText
         self.isSearchEnabled = isSearchEnabled
@@ -88,6 +216,10 @@ struct MenuBarContent: View {
         _totalActiveRecords = totalActiveRecords
         self.isLoadingMore = isLoadingMore
         self.onRequestMore = onRequestMore
+        self.surfaceStyle = surfaceStyle
+        self.onRequestClose = onRequestClose
+        self.onOpenMain = onOpenMain
+        self.onOpenSettings = onOpenSettings
     }
 
     private var allItems: [ClipboardItem] {
@@ -118,7 +250,9 @@ struct MenuBarContent: View {
             if isSearchEnabled {
                 searchField
             }
-            Divider().opacity(0.4)
+            Rectangle()
+                .fill(surfaceStyle.divider)
+                .frame(height: 1)
 
             if items.isEmpty {
                 emptyState
@@ -126,14 +260,16 @@ struct MenuBarContent: View {
                 itemList(items: items, canLoadMore: canLoadMore)
             }
 
-            Divider().opacity(0.4)
+            Rectangle()
+                .fill(surfaceStyle.divider)
+                .frame(height: 1)
             footer
         }
         .frame(width: 340)
         .background {
-            Color.appPaper
-                .ignoresSafeArea()
+            panelBackground
         }
+        .preferredColorScheme(surfaceStyle.isIsland ? .dark : nil)
         .onAppear {
             reloadHistory()
         }
@@ -147,35 +283,78 @@ struct MenuBarContent: View {
         }
     }
 
+    @ViewBuilder
+    private var panelBackground: some View {
+        switch surfaceStyle {
+        case .paper:
+            Color.appPaper
+                .ignoresSafeArea()
+        case .dynamicIsland:
+            ZStack(alignment: .top) {
+                Color.black
+                LinearGradient(
+                    colors: [
+                        Color.white.opacity(0.12),
+                        Color.white.opacity(0.03),
+                        Color.clear
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 180)
+
+                RadialGradient(
+                    colors: [
+                        Color.appAccent.opacity(0.22),
+                        Color.clear
+                    ],
+                    center: .top,
+                    startRadius: 10,
+                    endRadius: 210
+                )
+                .frame(height: 260)
+                .blendMode(.screen)
+            }
+            .ignoresSafeArea()
+        }
+    }
+
     private var header: some View {
         HStack(spacing: 9) {
             AppLogoMark(size: 26, shadowRadius: 2, shadowOpacity: 0.35)
             Text(L("main.title"))
                 .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(surfaceStyle.primaryText)
             Spacer()
 
             CaptureToggle(isPaused: $vm.isCapturePaused, showsLabel: false)
 
             Button {
-                openWindow(id: "main")
-                AppNavigation.shared.showSettings()
-                NSApp.activate(ignoringOtherApps: true)
+                openSettings()
             } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 13))
                     .frame(width: 26, height: 26)
+                    .foregroundStyle(surfaceStyle.primaryText)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(surfaceStyle.headerButtonFill)
+                    )
             }
             .buttonStyle(.plain)
             .help(L("menubar.openSettings"))
 
             Button {
-                openWindow(id: "main")
-                AppNavigation.shared.showList()
-                NSApp.activate(ignoringOtherApps: true)
+                openMain()
             } label: {
                 Image(systemName: "macwindow")
                     .font(.system(size: 13))
                     .frame(width: 26, height: 26)
+                    .foregroundStyle(surfaceStyle.primaryText)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(surfaceStyle.headerButtonFill)
+                    )
             }
             .buttonStyle(.plain)
             .help(L("menubar.openMainWindow"))
@@ -188,17 +367,18 @@ struct MenuBarContent: View {
         HStack(spacing: 7) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 11))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(surfaceStyle.secondaryText)
             TextField(L("common.search"), text: $searchText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
+                .foregroundStyle(surfaceStyle.primaryText)
             if !searchText.isEmpty {
                 Button {
                     searchText = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(surfaceStyle.tertiaryText)
                 }
                 .buttonStyle(.plain)
             }
@@ -207,7 +387,7 @@ struct MenuBarContent: View {
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 7)
-                .fill(.secondary.opacity(0.15))
+                .fill(surfaceStyle.controlFill)
         )
         .padding(.horizontal, 12)
         .padding(.bottom, 10)
@@ -217,14 +397,14 @@ struct MenuBarContent: View {
         VStack(spacing: 8) {
             Image(systemName: "tray")
                 .font(.system(size: 24, weight: .light))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(surfaceStyle.secondaryText)
             Text(isSearchEnabled && !searchText.isEmpty
                 ? L("menubar.empty.noMatch")
                 : L("menubar.empty.noRecords"))
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(surfaceStyle.secondaryText)
         }
-        .frame(maxWidth: .infinity, minHeight: 160)
+        .frame(maxWidth: .infinity, minHeight: Self.listHeight)
         .padding(20)
     }
 
@@ -234,6 +414,7 @@ struct MenuBarContent: View {
                 ForEach(items) { item in
                     MenuBarRow(
                         item: item,
+                        surfaceStyle: surfaceStyle,
                         onCopy: { vm.copyToClipboard(item) },
                         onCopyPlainText: { vm.copyAsPlainText(item) },
                         onTogglePin: { togglePin(item) }
@@ -246,7 +427,9 @@ struct MenuBarContent: View {
             }
             .padding(6)
         }
-        .frame(maxHeight: 420)
+        // Use a fixed height, not just `maxHeight`: the menu panel must grow
+        // even when the current history has fewer rows than the visible area.
+        .frame(height: Self.listHeight)
     }
 
     private var loadMoreTrigger: some View {
@@ -264,7 +447,7 @@ struct MenuBarContent: View {
                 Text(isLoadingMore ? L("menubar.loadingMore") : L("menubar.loadMore"))
                     .font(.caption2)
             }
-            .foregroundStyle(.secondary)
+            .foregroundStyle(surfaceStyle.secondaryText)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 8)
         }
@@ -279,18 +462,18 @@ struct MenuBarContent: View {
         HStack(spacing: 8) {
             Text(L("menubar.recordCountFormat", totalActiveRecords))
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(surfaceStyle.secondaryText)
             Spacer()
             Text(L("menubar.shortcutHint"))
                 .font(.caption2)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(surfaceStyle.tertiaryText)
             Spacer()
             Button {
                 NSApp.terminate(nil)
             } label: {
                 Text(L("menubar.quit"))
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(surfaceStyle.secondaryText)
             }
             .buttonStyle(.plain)
             .help(L("menubar.quit"))
@@ -311,6 +494,28 @@ struct MenuBarContent: View {
 
     private func togglePin(_ item: ClipboardItem) {
         vm.togglePin(item)
+    }
+
+    private func openMain() {
+        if let onOpenMain {
+            onOpenMain()
+        } else {
+            openWindow(id: "main")
+            AppNavigation.shared.showList()
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        onRequestClose?()
+    }
+
+    private func openSettings() {
+        if let onOpenSettings {
+            onOpenSettings()
+        } else {
+            openWindow(id: "main")
+            AppNavigation.shared.showSettings()
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        onRequestClose?()
     }
 }
 
@@ -367,6 +572,7 @@ private final class MenuBarHistoryStore: ObservableObject {
 
 struct MenuBarRow: View {
     let item: ClipboardItem
+    var surfaceStyle: MenuBarSurfaceStyle = .paper
     let onCopy: () -> Void
     var onCopyPlainText: (() -> Void)? = nil
     var onTogglePin: () -> Void = {}
@@ -377,7 +583,7 @@ struct MenuBarRow: View {
 
     var body: some View {
         HStack(spacing: 9) {
-            ThumbnailView(item: item, size: 26, cornerRadius: 5, placeholderTint: .primary)
+            ThumbnailView(item: item, size: 26, cornerRadius: 5, placeholderTint: surfaceStyle.thumbnailTint)
 
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
@@ -393,6 +599,7 @@ struct MenuBarRow: View {
                     }
                     Text(item.effectiveCustomTitle ?? item.preview ?? item.content)
                         .font(.system(size: 12))
+                        .foregroundStyle(surfaceStyle.primaryText)
                         .lineLimit(1)
                 }
                 HStack(spacing: 4) {
@@ -403,7 +610,7 @@ struct MenuBarRow: View {
                     }
                     Text("\(item.sourceApp) · \(item.formattedDate)")
                         .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(surfaceStyle.secondaryText)
                         .lineLimit(1)
                 }
             }
@@ -416,11 +623,11 @@ struct MenuBarRow: View {
                 } label: {
                     Image(systemName: copySucceeded ? "checkmark" : "doc.on.doc")
                         .font(.system(size: 11, weight: copySucceeded ? .bold : .regular))
-                        .foregroundStyle(copySucceeded ? Color.appAccent : Color.secondary)
+                        .foregroundStyle(copySucceeded ? Color.appAccent : surfaceStyle.secondaryText)
                         .frame(width: 22, height: 22)
                         .background(
                             RoundedRectangle(cornerRadius: 5)
-                                .fill(copySucceeded ? Color.appAccent.opacity(0.16) : Color.secondary.opacity(0.18))
+                                .fill(copySucceeded ? surfaceStyle.controlFillActive : surfaceStyle.controlFill)
                         )
                 }
                 .buttonStyle(.plain)
@@ -432,7 +639,7 @@ struct MenuBarRow: View {
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(isHovered ? Color.appAccent.opacity(0.12) : .clear)
+                .fill(isHovered ? surfaceStyle.rowHoverFill : .clear)
         )
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { triggerCopy() }

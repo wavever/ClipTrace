@@ -19,15 +19,32 @@ struct DynamicIslandView: View {
 
     var body: some View {
         ZStack {
-            Capsule()
-                .fill(Color.black)
+            background
             content
                 .padding(.horizontal, state.horizontalPadding)
+                .padding(.vertical, state.verticalPadding)
         }
         .frame(width: state.size.width, height: state.size.height)
-        .contentShape(Capsule())
+        .contentShape(RoundedRectangle(cornerRadius: state.cornerRadius, style: .continuous))
         .onTapGesture { onTap() }
         .animation(.spring(response: 0.32, dampingFraction: 0.78), value: state)
+    }
+
+    @ViewBuilder
+    private var background: some View {
+        switch state {
+        case .idle:
+            Capsule()
+                .fill(Color.black)
+        case .toast:
+            RoundedRectangle(cornerRadius: state.cornerRadius, style: .continuous)
+                .fill(Color.appPaper.opacity(0.97))
+                .overlay(
+                    RoundedRectangle(cornerRadius: state.cornerRadius, style: .continuous)
+                        .strokeBorder(Color.appCardBorder, lineWidth: 0.8)
+                )
+                .shadow(color: Color.appCardShadow.opacity(0.34), radius: 18, y: 10)
+        }
     }
 
     @ViewBuilder
@@ -38,20 +55,34 @@ struct DynamicIslandView: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.white)
         case let .toast(icon, preview):
-            HStack(spacing: 8) {
-                // Tint the leading glyph with the app accent so the pill, even
-                // sitting on the hardware-black notch, still nods to the
-                // current theme color; the label stays white for legibility.
+            HStack(spacing: 12) {
                 Image(systemName: icon)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Color.appAccent)
-                Text(preview)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                    .frame(width: 34, height: 34)
+                    .background(
+                        Circle()
+                            .fill(Color.appAccent.opacity(0.14))
+                    )
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(L("dynamicIsland.copied"))
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(Color.appMetal)
+                    Text(preview)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color.appMetal.opacity(0.72))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+
+                Spacer(minLength: 0)
+
+                Text(L("dynamicIsland.openHint"))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.appAccent)
             }
-            .transition(.opacity.combined(with: .scale(scale: 0.9)))
+            .transition(.opacity.combined(with: .move(edge: .top)))
         }
     }
 }
@@ -60,14 +91,28 @@ extension DynamicIslandState {
     var size: CGSize {
         switch self {
         case .idle:  return CGSize(width: 60, height: 26)
-        case .toast: return CGSize(width: 280, height: 32)
+        case .toast: return CGSize(width: 360, height: 70)
         }
     }
 
     var horizontalPadding: CGFloat {
         switch self {
         case .idle:  return 0
-        case .toast: return 14
+        case .toast: return 16
+        }
+    }
+
+    var verticalPadding: CGFloat {
+        switch self {
+        case .idle:  return 0
+        case .toast: return 12
+        }
+    }
+
+    var cornerRadius: CGFloat {
+        switch self {
+        case .idle:  return size.height / 2
+        case .toast: return 22
         }
     }
 }

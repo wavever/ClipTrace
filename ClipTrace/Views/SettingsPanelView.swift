@@ -486,6 +486,15 @@ private struct GeneralSection: View {
             set: { videoPreviewModeRaw = $0.rawValue }
         )
     }
+    private var dynamicIslandCanReplaceMenuBar: Bool {
+        dynamicIslandEnabled && DynamicIslandController.hasNotchedDisplay
+    }
+    private var menuBarIconBinding: Binding<Bool> {
+        Binding(
+            get: { dynamicIslandCanReplaceMenuBar ? false : menuBarIcon },
+            set: { menuBarIcon = $0 }
+        )
+    }
     // Read/write the @Observable singleton directly so the swatch ring also
     // re-evaluates on selection, and external writes (e.g. CLI / tests) flow
     // back into the UI.
@@ -583,13 +592,17 @@ private struct GeneralSection: View {
                     icon: "menubar.rectangle",
                     iconTint: .appAccent,
                     title: L("settings.window.menuBarIcon"),
-                    subtitle: L("settings.window.menuBarIcon.subtitle")
+                    subtitle: dynamicIslandCanReplaceMenuBar
+                        ? L("settings.window.menuBarIcon.disabledByDynamicIsland")
+                        : L("settings.window.menuBarIcon.subtitle")
                 ) {
-                    Toggle("", isOn: $menuBarIcon)
+                    Toggle("", isOn: menuBarIconBinding)
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .tint(.appAccent)
+                        .disabled(dynamicIslandCanReplaceMenuBar)
                 }
+                .opacity(dynamicIslandCanReplaceMenuBar ? 0.58 : 1)
                 SettingsRow(
                     icon: "eye.slash",
                     iconTint: .appAccent,
@@ -1542,44 +1555,36 @@ private struct MergeSection: View {
                     title: L("settings.merge.imageParams.title"),
                     subtitle: L("settings.merge.imageParams.subtitle")
                 ) {
-                    VStack(spacing: 12) {
-                        HStack {
-                            Text(L("settings.merge.imageParams.direction")).font(.system(size: 13))
-                                .foregroundStyle(Color.appMetal)
-                            Spacer()
-                            Picker("", selection: $store.imageDirection) {
-                                ForEach(ImageMergeDirection.allCases) { dir in
-                                    Label(dir.displayName, systemImage: dir.icon).tag(dir)
-                                }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.segmented)
-                            .frame(width: 220)
+                    VStack(spacing: 8) {
+                        imageParamRow(
+                            icon: "rectangle.split.1x2",
+                            title: L("settings.merge.imageParams.direction")
+                        ) {
+                            SettingsSegmented(
+                                selection: $store.imageDirection,
+                                options: imageDirectionOptions,
+                                tint: .appAccent
+                            )
+                            .frame(width: 260)
                         }
-                        HStack {
-                            Text(L("settings.merge.imageParams.background")).font(.system(size: 13))
-                                .foregroundStyle(Color.appMetal)
-                            Spacer()
-                            Picker("", selection: $store.imageBackground) {
-                                ForEach(ImageMergeBackground.allCases) { bg in
-                                    Text(bg.displayName).tag(bg)
-                                }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.segmented)
-                            .frame(width: 220)
+
+                        imageParamRow(
+                            icon: "paintpalette",
+                            title: L("settings.merge.imageParams.background")
+                        ) {
+                            SettingsSegmented(
+                                selection: $store.imageBackground,
+                                options: imageBackgroundOptions,
+                                tint: .appAccent
+                            )
+                            .frame(width: 260)
                         }
-                        HStack {
-                            Text(L("settings.merge.imageParams.spacing"))
-                                .font(.system(size: 13))
-                                .foregroundStyle(Color.appMetal)
-                            Spacer()
-                            Text("\(Int(store.imageSpacing)) px")
-                                .font(.system(size: 12, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                                .frame(width: 50, alignment: .trailing)
-                            Slider(value: $store.imageSpacing, in: 0...64, step: 1)
-                                .frame(width: 180)
+
+                        imageParamRow(
+                            icon: "arrow.left.and.right",
+                            title: L("settings.merge.imageParams.spacing")
+                        ) {
+                            imageSpacingControl
                         }
                     }
                 }
@@ -1592,6 +1597,93 @@ private struct MergeSection: View {
                 custom: $store.textCustomSeparator,
                 placeholder: L("settings.merge.textSep.placeholder")
             )
+        }
+    }
+
+    private var imageDirectionOptions: [SettingsSegmented<ImageMergeDirection>.Option] {
+        ImageMergeDirection.allCases.map {
+            .init(value: $0, title: $0.displayName, icon: $0.icon)
+        }
+    }
+
+    private var imageBackgroundOptions: [SettingsSegmented<ImageMergeBackground>.Option] {
+        ImageMergeBackground.allCases.map {
+            .init(value: $0, title: $0.displayName, icon: imageBackgroundIcon(for: $0))
+        }
+    }
+
+    private var imageSpacingControl: some View {
+        HStack(spacing: 10) {
+            Text("\(Int(store.imageSpacing)) px")
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Color.appAccent)
+                .frame(width: 58)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(Color.appAccent.opacity(0.12))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(Color.appAccent.opacity(0.22), lineWidth: 0.75)
+                )
+
+            Slider(value: $store.imageSpacing, in: 0...64, step: 1)
+                .tint(.appAccent)
+                .frame(width: 170)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(Color.appChipFill)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+        )
+    }
+
+    private func imageParamRow<Control: View>(
+        icon: String,
+        title: String,
+        @ViewBuilder control: () -> Control
+    ) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.appAccent.opacity(0.13))
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.appAccent)
+            }
+            .frame(width: 30, height: 30)
+
+            Text(title)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Color.appMetal)
+
+            Spacer(minLength: 12)
+
+            control()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.appChipFill.opacity(0.55))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.appCardBorder.opacity(0.9), lineWidth: 0.65)
+        )
+    }
+
+    private func imageBackgroundIcon(for background: ImageMergeBackground) -> String {
+        switch background {
+        case .transparent: return "circle.dotted"
+        case .white:       return "sun.max"
+        case .black:       return "moon.fill"
         }
     }
 

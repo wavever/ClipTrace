@@ -49,6 +49,7 @@ struct ClipTraceApp: App {
 
     @AppStorage("showInDock") private var showInDock = true
     @AppStorage("menuBarIcon") private var menuBarIcon = true
+    @AppStorage("dynamicIslandEnabled") private var dynamicIslandEnabled = false
     @AppStorage("hideFromCapture") private var hideFromCapture = false
     @AppStorage("appearanceTheme") private var appearanceThemeRaw = AppearanceTheme.system.rawValue
     @AppStorage("appLanguage") private var appLanguageRaw = AppLanguage.system.rawValue
@@ -84,6 +85,9 @@ struct ClipTraceApp: App {
                 .onChange(of: showInDock) { _, _ in
                     applyActivationPolicy()
                 }
+                .onChange(of: dynamicIslandEnabled) { _, enabled in
+                    DynamicIslandController.shared.setEnabled(enabled)
+                }
                 .onChange(of: hideFromCapture) { _, _ in
                     applyCaptureProtection()
                 }
@@ -94,7 +98,7 @@ struct ClipTraceApp: App {
         .defaultSize(width: 1000, height: 640)
         .windowStyle(.hiddenTitleBar)
 
-        MenuBarExtra("ClipBoard", image: "MenuBarIcon", isInserted: $menuBarIcon) {
+        MenuBarExtra("ClipBoard", image: "MenuBarIcon", isInserted: menuBarInsertionBinding) {
             MenuBarView()
                 .environmentObject(clipboardVM)
                 .modelContainer(AppContainer.shared)
@@ -103,6 +107,28 @@ struct ClipTraceApp: App {
                 .onAppear { applyAppearance() }
         }
         .menuBarExtraStyle(.window)
+    }
+
+    /// Dynamic Island is a replacement entry point for notched MacBooks. Keep
+    /// the real menu-bar extra suppressed only while that built-in notched
+    /// display is present, so clamshell/external-only setups still have a menu.
+    private var menuBarInsertionBinding: Binding<Bool> {
+        Binding(
+            get: {
+                let islandCanReplaceMenuBar = dynamicIslandEnabled
+                    && DynamicIslandController.hasNotchedDisplay
+                return menuBarIcon && !islandCanReplaceMenuBar
+            },
+            set: { inserted in
+                if inserted {
+                    dynamicIslandEnabled = false
+                    DynamicIslandController.shared.setEnabled(false)
+                    menuBarIcon = true
+                } else if !(dynamicIslandEnabled && DynamicIslandController.hasNotchedDisplay) {
+                    menuBarIcon = false
+                }
+            }
+        )
     }
 
     /// Pin (or release) the app-wide appearance. Driving `NSApp.appearance`
