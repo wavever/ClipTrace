@@ -28,7 +28,7 @@ enum AppContainer {
     static func makeContainer() throws -> ModelContainer {
         try recoverLegacyStoreIfNeeded()
 
-        let schema = Schema([ClipboardItem.self])
+        let schema = Schema([ClipboardItem.self, ClipboardGroup.self])
         let configuration = ModelConfiguration(
             "ClipTrace",
             schema: schema,
@@ -288,7 +288,7 @@ enum AppContainer {
         let selectedColumns = [
             "ZID", "ZTYPE", "ZCONTENT", "ZIMAGEDATA", "ZFILEURL", "ZSOURCEAPP",
             "ZCREATEDAT", "ZISFAVORITE", "ZISPINNED", "ZPREVIEW", "ZEMBEDDING",
-            "ZEMBEDDINGLANG", "ZDELETEDAT", "ZTAGSRAW", "ZCUSTOMTITLE", "ZOCRTEXT"
+            "ZEMBEDDINGLANG", "ZDELETEDAT", "ZTAGSRAW", "ZCUSTOMTITLE", "ZOCRTEXT", "ZGROUPID"
         ]
         let selectList = selectedColumns
             .map { columns.contains($0) ? $0 : "NULL AS \($0)" }
@@ -328,6 +328,7 @@ enum AppContainer {
             item.tagsRaw = legacy.tagsRaw
             item.customTitle = legacy.customTitle
             item.ocrText = legacy.ocrText
+            item.groupID = legacy.groupID
 
             context.insert(item)
             knownIDs.insert(legacy.id)
@@ -435,6 +436,7 @@ private struct LegacyClipboardItem {
     let tagsRaw: String?
     let customTitle: String?
     let ocrText: String?
+    let groupID: UUID?
 
     init?(statement: OpaquePointer) {
         guard let id = Self.uuid(at: 0, in: statement) else { return nil }
@@ -455,6 +457,7 @@ private struct LegacyClipboardItem {
         self.tagsRaw = Self.string(at: 13, in: statement)
         self.customTitle = Self.string(at: 14, in: statement)
         self.ocrText = Self.string(at: 15, in: statement)
+        self.groupID = Self.uuid(at: 16, in: statement)
     }
 
     private static func uuid(at index: Int32, in statement: OpaquePointer) -> UUID? {

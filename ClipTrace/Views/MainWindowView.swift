@@ -28,6 +28,7 @@ struct MainWindowView: View {
             || !vm.activeTags.isEmpty
             || vm.selectedType != nil
             || vm.selectedSourceApp != nil
+            || !vm.selectedGroupFilter.isAll
         let effective = filtering ? Self.pageCap : pageSize
 
         MainWindowContent(
@@ -51,6 +52,7 @@ struct MainWindowView: View {
 struct MainWindowContent: View {
     @EnvironmentObject var vm: ClipboardViewModel
     @Query private var allItems: [ClipboardItem]
+    @Query private var groups: [ClipboardGroup]
     @Environment(\.modelContext) private var modelContext
 
     let pageSize: Int
@@ -81,8 +83,17 @@ struct MainWindowContent: View {
             \.deletedAt,
             \.tagsRaw,
             \.customTitle,
+            \.groupID,
         ]
         _allItems = Query(descriptor)
+
+        let groupDescriptor = FetchDescriptor<ClipboardGroup>(
+            sortBy: [
+                SortDescriptor(\.sortOrder),
+                SortDescriptor(\.createdAt)
+            ]
+        )
+        _groups = Query(groupDescriptor)
     }
 
     @ObservedObject private var nav = AppNavigation.shared
@@ -96,6 +107,7 @@ struct MainWindowContent: View {
     /// Non-nil when the user picked "Rename" from a row's context menu —
     /// drives the rename sheet at the root level so it survives row-view churn.
     @State private var renameTarget: ClipboardItem?
+    @State private var groupEditorRequest: GroupEditorRequest?
 
     /// Header-stat caches. With pagination, `allItems` only contains the
     /// current page so these come from dedicated `fetchCount` / tag queries
@@ -224,6 +236,18 @@ struct MainWindowContent: View {
                     renameTarget = nil
                 },
                 onCancel: { renameTarget = nil }
+            )
+        }
+        .sheet(item: $groupEditorRequest) { request in
+            GroupEditorSheet(
+                title: request.title,
+                initialName: request.initialName,
+                actionTitle: request.actionTitle,
+                onCommit: { name in
+                    handleGroupEditorCommit(request, name: name)
+                    groupEditorRequest = nil
+                },
+                onCancel: { groupEditorRequest = nil }
             )
         }
         .sheet(isPresented: $vm.showSnippetEditor) {
@@ -469,6 +493,17 @@ struct MainWindowContent: View {
                     vm.invertSelection(items)
                 }
             }
+            SelectionMoveGroupButton(
+                groups: groups.sortedForDisplay(),
+                showsRemoveFromGroup: selected.contains { $0.groupID != nil },
+                isDisabled: selected.isEmpty || isMergingSelection,
+                onMove: { group in
+                    performMoveSelected(selected, to: group)
+                },
+                onCreateGroup: {
+                    groupEditorRequest = .create(assigning: selected)
+                }
+            )
 
             Divider().frame(height: 18).opacity(0.5)
 
@@ -584,6 +619,19 @@ struct MainWindowContent: View {
         }
     }
 
+    private func performMoveSelected(_ selected: [ClipboardItem], to group: ClipboardGroup?) {
+        guard !selected.isEmpty, !isMergingSelection else { return }
+        let count = selected.count
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+            vm.assign(selected, to: group, context: modelContext)
+        }
+        ToastCenter.shared.show(
+            group.map { L("selection.movedToGroupFormat", count, $0.displayName) } ?? L("selection.removedFromGroupFormat", count),
+            systemImage: group == nil ? "folder.badge.minus" : "folder.fill",
+            tint: .appAccent
+        )
+    }
+
     private func performMerge(_ selected: [ClipboardItem]) {
         guard !isMergingSelection else { return }
         if hasMixedSelectedTypes(selected) {
@@ -661,6 +709,14 @@ struct MainWindowContent: View {
                 selectedType: $vm.selectedType,
                 selectedSourceApp: $vm.selectedSourceApp,
                 sourceApps: allKnownSourceAppsCache
+            )
+
+            GroupFilterMenu(
+                groups: groups.sortedForDisplay(),
+                selection: $vm.selectedGroupFilter,
+                onCreateGroup: {
+                    groupEditorRequest = .create()
+                }
             )
 
             // Sort control — only meaningful inside 收藏, where the list no
@@ -752,6 +808,7 @@ struct MainWindowContent: View {
             || !vm.activeTags.isEmpty
             || vm.selectedType != nil
             || vm.selectedSourceApp != nil
+            || !vm.selectedGroupFilter.isAll
     }
 
     private var emptyStateIcon: String {
@@ -778,11 +835,9 @@ struct MainWindowContent: View {
         }
     }
 
-    /// Split filtered items into a pinned section + the rest, but only when
-    /// the user is on the "全部" scope — inside "收藏" a section header
-    /// would just be noise so we fold pinned entries back to the top of the
-    /// list. Pin-ordering lives here (not in the VM) so we only walk the list
-    /// once per render.
+    /// Split filtered items into a pinned section + the rest only for the
+    /// top-level all-data view. Group-specific lists omit pinned items at the
+    /// filter layer, and favorites keeps a single flat list.
     private func splitItems(for items: [ClipboardItem]) -> (pinned: [ClipboardItem], others: [ClipboardItem]) {
         // Single partition pass; previous implementation walked the list
         // twice (filter pinned + filter not-pinned).
@@ -793,7 +848,7 @@ struct MainWindowContent: View {
         for item in items {
             if item.isPinned { pinned.append(item) } else { others.append(item) }
         }
-        if vm.selectedScope == .all {
+        if vm.selectedScope == .all && vm.selectedGroupFilter.isAll {
             return (pinned, others)
         }
         return ([], pinned + others)
@@ -802,7 +857,7 @@ struct MainWindowContent: View {
     /// The list flattened in the exact order it's drawn on screen, for
     /// keyboard navigation: pinned rows first (when that section is expanded),
     /// then the rest. Arrow keys, Return, and ⌫ all walk this so the focused
-    /// row matches what the user sees and never lands on a hidden/collapsed one.
+    /// row matches what the user sees.
     private var navigableItems: [ClipboardItem] {
         let split = splitItems(for: filteredItems)
         guard !split.pinned.isEmpty else { return split.others }
@@ -864,14 +919,10 @@ struct MainWindowContent: View {
                     if !split.pinned.isEmpty {
                         pinnedHeader(count: split.pinned.count)
                         if !pinnedCollapsed {
-                            ForEach(split.pinned) { item in
-                                cardRow(for: item)
-                            }
+                            rows(for: split.pinned)
                         }
                     }
-                    ForEach(split.others) { item in
-                        cardRow(for: item)
-                    }
+                    rows(for: split.others)
                     // Load-more sentinel: a near-invisible footer that, when it
                     // scrolls into view inside the LazyVStack, asks the parent to
                     // grow the page size. `.id(pageSize)` makes each new page
@@ -911,6 +962,13 @@ struct MainWindowContent: View {
         }
     }
 
+    @ViewBuilder
+    private func rows(for items: [ClipboardItem]) -> some View {
+        ForEach(items) { item in
+            cardRow(for: item)
+        }
+    }
+
     /// The one keyboard-focus highlight, parked over the focused row via its
     /// published frame. Drawn only in browse mode — selection/merge mode keeps
     /// its static per-row checkmarks/tint since several rows can be active.
@@ -944,6 +1002,7 @@ struct MainWindowContent: View {
     private func cardRow(for item: ClipboardItem) -> some View {
         ClipboardItemRow(
             item: item,
+            groupName: nil,
             isSelectionMode: vm.isSelectionMode,
             // In normal browsing mode the same "selected" affordance doubles
             // as the keyboard-focus marker for arrow-nav + Space preview.
@@ -1083,6 +1142,31 @@ struct MainWindowContent: View {
         Button(L("action.rename"), systemImage: "pencil") {
             renameTarget = item
         }
+        Menu(L("group.moveTo"), systemImage: "folder") {
+            if item.groupID != nil {
+                Button(L("group.removeFromGroup"), systemImage: "folder.badge.minus") {
+                    vm.assign(item, to: nil, context: modelContext)
+                    ToastCenter.shared.show(L("group.removedFromGroup"), systemImage: "folder.badge.minus")
+                }
+                if !groups.isEmpty {
+                    Divider()
+                }
+            }
+            if !groups.isEmpty {
+                ForEach(groups.sortedForDisplay()) { group in
+                    Button(group.displayName, systemImage: item.groupID == group.id ? "checkmark" : "folder") {
+                        vm.assign(item, to: group, context: modelContext)
+                        ToastCenter.shared.show(L("group.movedToFormat", group.displayName), systemImage: "folder.fill", tint: .appAccent)
+                    }
+                }
+            }
+            if item.groupID != nil || !groups.isEmpty {
+                Divider()
+            }
+            Button(L("group.newAndMove"), systemImage: "folder.badge.plus") {
+                groupEditorRequest = .create(assigning: item)
+            }
+        }
         if item.itemType == .url {
             Divider()
             Button(L("action.openInBrowser"), systemImage: "safari") {
@@ -1141,7 +1225,7 @@ struct MainWindowContent: View {
     /// Open the native QuickLook panel for `item`, using the current filtered
     /// list as the navigation stack so arrow keys move through neighbors.
     private func showQuickLook(for item: ClipboardItem) {
-        let items = filteredItems
+        let items = navigableItems
         let index = items.firstIndex(where: { $0.id == item.id }) ?? 0
         vm.focusedItemID = item.id
         QuickLookCoordinator.shared.preview(items: items, startingAt: index)
@@ -1167,6 +1251,23 @@ struct MainWindowContent: View {
             .components(separatedBy: .newlines)
             .first ?? ""
         return firstLine.isEmpty ? item.itemType.displayName : firstLine
+    }
+
+    private func handleGroupEditorCommit(_ request: GroupEditorRequest, name: String) {
+        switch request.kind {
+        case .create(let assigning):
+            guard let group = vm.createGroup(named: name, groups: groups, context: modelContext) else { return }
+            if !assigning.isEmpty {
+                vm.assign(assigning, to: group, context: modelContext)
+                ToastCenter.shared.show(L("group.movedToFormat", group.displayName), systemImage: "folder.fill", tint: .appAccent)
+            } else {
+                vm.selectedGroupFilter = .group(group.id)
+                ToastCenter.shared.show(L("group.createdFormat", group.displayName), systemImage: "folder.badge.plus", tint: .appAccent)
+            }
+        case .rename(let group):
+            vm.renameGroup(group, to: name, context: modelContext)
+            ToastCenter.shared.show(L("group.renamed"), systemImage: "pencil", tint: .appAccent)
+        }
     }
 
 }
@@ -1222,6 +1323,101 @@ private struct RenameClipSheet: View {
     }
 }
 
+private struct GroupEditorRequest: Identifiable {
+    enum Kind {
+        case create(assigning: [ClipboardItem])
+        case rename(ClipboardGroup)
+    }
+
+    let id = UUID()
+    let kind: Kind
+
+    static func create(assigning item: ClipboardItem? = nil) -> GroupEditorRequest {
+        GroupEditorRequest(kind: .create(assigning: item.map { [$0] } ?? []))
+    }
+
+    static func create(assigning items: [ClipboardItem]) -> GroupEditorRequest {
+        GroupEditorRequest(kind: .create(assigning: items))
+    }
+
+    static func rename(_ group: ClipboardGroup) -> GroupEditorRequest {
+        GroupEditorRequest(kind: .rename(group))
+    }
+
+    var title: String {
+        switch kind {
+        case .create: return L("group.create.title")
+        case .rename: return L("group.rename.title")
+        }
+    }
+
+    var actionTitle: String {
+        switch kind {
+        case .create: return L("common.add")
+        case .rename: return L("common.save")
+        }
+    }
+
+    var initialName: String {
+        switch kind {
+        case .create: return ""
+        case .rename(let group): return group.displayName
+        }
+    }
+}
+
+private struct GroupEditorSheet: View {
+    let title: String
+    let initialName: String
+    let actionTitle: String
+    let onCommit: (String) -> Void
+    let onCancel: () -> Void
+
+    @State private var draft = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Image(systemName: "folder.fill")
+                    .foregroundStyle(Color.appAccent)
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                Spacer()
+            }
+
+            Text(L("group.editor.subtitle"))
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+
+            TextField(L("group.name.placeholder"), text: $draft)
+                .focused($focused)
+                .onSubmit { commit() }
+                .paperTextField(focused: focused)
+
+            HStack {
+                Spacer()
+                Button(L("common.cancel"), action: onCancel)
+                    .buttonStyle(PaperActionButtonStyle(role: .plain))
+                    .keyboardShortcut(.cancelAction)
+                Button(actionTitle) { commit() }
+                    .buttonStyle(PaperActionButtonStyle(role: .primary))
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(18)
+        .frame(width: 360)
+        .onAppear {
+            draft = initialName
+            focused = true
+        }
+    }
+
+    private func commit() {
+        onCommit(draft)
+    }
+}
+
 /// Conditional simultaneous tap gesture used by the row to set keyboard focus
 /// on single click without triggering the double-tap disambiguation delay.
 private struct FocusTapModifier: ViewModifier {
@@ -1267,6 +1463,173 @@ private struct HeaderStatDivider: View {
 }
 
 // MARK: - Toolbar filters
+
+private struct GroupFilterMenu: View {
+    let groups: [ClipboardGroup]
+    @Binding var selection: ClipboardGroupFilter
+    let onCreateGroup: () -> Void
+
+    @State private var hovering = false
+    @StateObject private var controller = PaperDropdownController()
+
+    var body: some View {
+        Button {
+            togglePanel()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: selection.isAll ? "folder" : "folder.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                Text(label)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.tertiary)
+            }
+            .foregroundStyle(selection.isAll ? Color.secondary : Color.appAccent)
+            .padding(.horizontal, 9)
+            .frame(height: 30)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(hovering || controller.isOpen || !selection.isAll ? Color.appChipFill : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(
+                        controller.isOpen || !selection.isAll
+                            ? Color.appCardBorder
+                            : Color.clear,
+                        lineWidth: 0.75
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .hoverTip(L("group.filter.help"))
+        .background(FilterDropdownAnchor(controller: controller))
+        .onHover { hovering = $0 }
+    }
+
+    private func togglePanel() {
+        controller.toggle(width: 240) {
+            GroupFilterPanel(
+                groups: groups,
+                selection: selection,
+                onSelect: { filter in
+                    selection = filter
+                    controller.close()
+                },
+                onCreateGroup: {
+                    controller.close()
+                    onCreateGroup()
+                }
+            )
+        }
+    }
+
+    private var label: String {
+        switch selection {
+        case .all:
+            return L("group.all")
+        case .ungrouped:
+            return L("group.all")
+        case .group(let id):
+            return groups.first { $0.id == id }?.displayName ?? L("group.missing")
+        }
+    }
+}
+
+private struct GroupFilterPanel: View {
+    let groups: [ClipboardGroup]
+    let selection: ClipboardGroupFilter
+    let onSelect: (ClipboardGroupFilter) -> Void
+    let onCreateGroup: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "folder.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.appAccent)
+                Text(L("group.filter.title"))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.appMetal)
+                Spacer()
+            }
+
+            VStack(spacing: 1) {
+                FilterListOption(
+                    title: L("group.all"),
+                    icon: "tray.full",
+                    isSelected: selection == .all
+                ) {
+                    onSelect(.all)
+                }
+                if !groups.isEmpty {
+                    Divider()
+                        .padding(.vertical, 3)
+                    ScrollView {
+                        VStack(spacing: 1) {
+                            ForEach(groups) { group in
+                                FilterListOption(
+                                    title: group.displayName,
+                                    icon: "folder.fill",
+                                    isSelected: selection == .group(group.id)
+                                ) {
+                                    onSelect(.group(group.id))
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 180)
+                }
+            }
+            .padding(4)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.appChipFill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+            )
+
+            Button {
+                onCreateGroup()
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "folder.badge.plus")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(L("group.create"))
+                        .font(.system(size: 12, weight: .semibold))
+                    Spacer()
+                }
+                .foregroundStyle(Color.appAccent)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(Color.appAccent.opacity(0.11))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(Color.appAccent.opacity(0.28), lineWidth: 0.75)
+                )
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(12)
+        .frame(width: 240, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.appPaper)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+}
 
 private struct ToolbarFilterButton: View {
     @Binding var selectedType: ClipboardItemType?
@@ -2385,6 +2748,169 @@ private struct BackgroundHaloView: View, Equatable {
 }
 
 // MARK: - Selection bar button
+
+private struct SelectionMoveGroupButton: View {
+    let groups: [ClipboardGroup]
+    let showsRemoveFromGroup: Bool
+    let isDisabled: Bool
+    let onMove: (ClipboardGroup?) -> Void
+    let onCreateGroup: () -> Void
+
+    @State private var isHovered = false
+    @StateObject private var controller = PaperDropdownController()
+
+    var body: some View {
+        Button {
+            guard !isDisabled else { return }
+            controller.toggle(width: 230) {
+                SelectionMoveGroupPanel(
+                    groups: groups,
+                    showsRemoveFromGroup: showsRemoveFromGroup,
+                    onMove: { group in
+                        controller.close()
+                        onMove(group)
+                    },
+                    onCreateGroup: {
+                        controller.close()
+                        onCreateGroup()
+                    }
+                )
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "folder")
+                    .font(.system(size: 11, weight: .semibold))
+                Text(L("selection.moveToGroup"))
+                    .font(.system(size: 12, weight: .medium))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .foregroundStyle(isDisabled ? Color.secondary.opacity(0.45) : (isHovered || controller.isOpen ? Color.appAccent : Color.secondary))
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(isHovered || controller.isOpen ? Color.appAccent.opacity(0.12) : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(controller.isOpen ? Color.appAccent.opacity(0.30) : Color.clear, lineWidth: 0.75)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .background(FilterDropdownAnchor(controller: controller))
+        .onHover { isHovered = $0 }
+    }
+}
+
+private struct SelectionMoveGroupPanel: View {
+    let groups: [ClipboardGroup]
+    let showsRemoveFromGroup: Bool
+    let onMove: (ClipboardGroup?) -> Void
+    let onCreateGroup: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "folder")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.appAccent)
+                Text(L("selection.moveToGroup"))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.appMetal)
+                Spacer()
+            }
+
+            VStack(spacing: 1) {
+                if showsRemoveFromGroup {
+                    FilterListOption(
+                        title: L("group.removeFromGroup"),
+                        icon: "folder.badge.minus",
+                        isSelected: false
+                    ) {
+                        onMove(nil)
+                    }
+                }
+
+                if groups.isEmpty {
+                    HStack(spacing: 7) {
+                        Image(systemName: "folder.badge.questionmark")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(L("group.emptyForMove"))
+                            .font(.system(size: 12))
+                    }
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 7)
+                } else {
+                    if showsRemoveFromGroup {
+                        Divider()
+                            .padding(.vertical, 3)
+                    }
+                    ScrollView {
+                        VStack(spacing: 1) {
+                            ForEach(groups) { group in
+                                FilterListOption(
+                                    title: group.displayName,
+                                    icon: "folder.fill",
+                                    isSelected: false
+                                ) {
+                                    onMove(group)
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 180)
+                }
+            }
+            .padding(4)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.appChipFill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+            )
+
+            Button(action: onCreateGroup) {
+                HStack(spacing: 7) {
+                    Image(systemName: "folder.badge.plus")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(L("group.newAndMove"))
+                        .font(.system(size: 12, weight: .semibold))
+                    Spacer()
+                }
+                .foregroundStyle(Color.appAccent)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(Color.appAccent.opacity(0.11))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(Color.appAccent.opacity(0.28), lineWidth: 0.75)
+                )
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(12)
+        .frame(width: 230, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.appPaper)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+}
 
 private struct SelectionBarButton: View {
     let systemName: String

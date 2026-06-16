@@ -16,6 +16,15 @@ struct QuickPasteView: View {
     @ObservedObject private var keyStore = QuickPasteKeyStore.shared
 
     private var items: [ClipboardItem] { state.items }
+    private var visualItems: [ClipboardItem] {
+        items
+    }
+    private var sortedGroups: [ClipboardGroup] {
+        state.groups.sortedForDisplay()
+    }
+    private var groupFilters: [ClipboardGroupFilter] {
+        [.all] + sortedGroups.map { .group($0.id) }
+    }
 
     private var selectedItems: [ClipboardItem] {
         selectedIDs.compactMap { id in items.first(where: { $0.id == id }) }
@@ -24,6 +33,9 @@ struct QuickPasteView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            if !sortedGroups.isEmpty {
+                groupStrip
+            }
             Divider().opacity(0.4)
             list
             Divider().opacity(0.4)
@@ -35,6 +47,8 @@ struct QuickPasteView: View {
         )
         .background(
             QuickPasteKeyCatcher(
+                onLeft: { switchGroup(by: -1) },
+                onRight: { switchGroup(by: 1) },
                 onUp: { moveFocus(by: -1) },
                 onDown: { moveFocus(by: 1) },
                 onToggleSelect: { toggleFocusedSelection() },
@@ -49,9 +63,9 @@ struct QuickPasteView: View {
         .onAppear {
             // Pre-focus the first row so the panel is usable with the keyboard
             // alone: open → ↑/↓ → commit key, no mouse required.
-            if focusedID == nil { focusedID = items.first?.id }
+            if focusedID == nil { focusedID = visualItems.first?.id }
         }
-        .onChange(of: items.map(\.id)) { _, ids in
+        .onChange(of: visualItems.map(\.id)) { _, ids in
             // The panel window is now reused across invocations for speed.
             // Reset transient selection/focus whenever the freshly-fetched
             // history snapshot is swapped in, so stale selections from the
@@ -59,6 +73,11 @@ struct QuickPasteView: View {
             selectedIDs.removeAll(keepingCapacity: true)
             hoverID = nil
             focusedID = ids.first
+        }
+        .onChange(of: state.selectedGroupFilter) { _, _ in
+            selectedIDs.removeAll(keepingCapacity: true)
+            hoverID = nil
+            focusedID = visualItems.first?.id
         }
     }
 
@@ -85,18 +104,35 @@ struct QuickPasteView: View {
     /// "↑↓ move · Space select · ↩ paste" — surfaces the keyboard flow and the
     /// (possibly customized) toggle/commit keys right in the panel.
     private var keyboardHint: String {
+        let group = sortedGroups.isEmpty ? nil : "←→ \(L("quickpaste.hint.kbdGroup"))"
         let move = "↑↓ \(L("quickpaste.hint.kbdMove"))"
         let toggle = "\(keyStore.toggleSelectShortcut.description) \(L("quickpaste.hint.kbdToggle"))"
         let paste = "\(keyStore.commitShortcut.description) \(L("quickpaste.hint.kbdPaste"))"
-        return "\(move)  ·  \(toggle)  ·  \(paste)"
+        return [group, move, toggle, paste].compactMap(\.self).joined(separator: "  ·  ")
+    }
+
+    private var groupStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(groupFilters, id: \.id) { filter in
+                    groupChip(filter)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+        }
     }
 
     private var list: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 4) {
-                    ForEach(items, id: \.id) { item in
-                        row(for: item)
+                    if items.isEmpty {
+                        emptyState
+                    } else {
+                        ForEach(items, id: \.id) { item in
+                            row(for: item)
+                        }
                     }
                 }
                 .padding(.horizontal, 8)
@@ -109,6 +145,43 @@ struct QuickPasteView: View {
                 }
             }
         }
+    }
+
+    private func groupChip(_ filter: ClipboardGroupFilter) -> some View {
+        let isSelected = state.selectedGroupFilter == filter
+        return Button {
+            withAnimation(.easeOut(duration: 0.14)) {
+                state.selectGroup(filter)
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: groupIcon(for: filter))
+                    .font(.system(size: 9, weight: .semibold))
+                Text(groupTitle(for: filter))
+                    .lineLimit(1)
+            }
+            .font(.system(size: 10.5, weight: isSelected ? .semibold : .medium))
+            .foregroundStyle(isSelected ? Color.white : Color.secondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4.5)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(isSelected ? Color.appAccent : Color.secondary.opacity(0.12))
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "tray")
+                .font(.system(size: 24, weight: .light))
+            Text(state.selectedGroupFilter.isAll ? L("quickpaste.emptyClipboard") : L("quickpaste.emptyGroup"))
+                .font(.system(size: 12))
+        }
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, minHeight: 260)
+        .padding(20)
     }
 
     private func row(for item: ClipboardItem) -> some View {
@@ -240,11 +313,22 @@ struct QuickPasteView: View {
 
     // MARK: - Keyboard flow
 
+    private func switchGroup(by delta: Int) {
+        let filters = groupFilters
+        guard filters.count > 1,
+              let current = filters.firstIndex(of: state.selectedGroupFilter) else { return }
+        let next = (current + delta + filters.count) % filters.count
+        withAnimation(.easeOut(duration: 0.14)) {
+            state.selectGroup(filters[next])
+        }
+    }
+
     private func moveFocus(by delta: Int) {
-        guard !items.isEmpty else { return }
-        let current = items.firstIndex(where: { $0.id == focusedID }) ?? 0
-        let next = min(max(0, current + delta), items.count - 1)
-        focusedID = items[next].id
+        let ordered = visualItems
+        guard !ordered.isEmpty else { return }
+        let current = ordered.firstIndex(where: { $0.id == focusedID }) ?? 0
+        let next = min(max(0, current + delta), ordered.count - 1)
+        focusedID = ordered[next].id
     }
 
     /// Commit triggered by the commit key or the Paste button. Honors an
@@ -254,16 +338,16 @@ struct QuickPasteView: View {
     private func commitFromKeyboard(plainText: Bool) {
         if !selectedIDs.isEmpty {
             state.onCommit(selectedItems, plainText)
-        } else if let id = focusedID, let item = items.first(where: { $0.id == id }) {
+        } else if let id = focusedID, let item = visualItems.first(where: { $0.id == id }) {
             state.onCommit([item], plainText)
-        } else if let first = items.first {
+        } else if let first = visualItems.first {
             state.onCommit([first], plainText)
         }
     }
 
     /// Add/remove the keyboard-focused row from the multi-selection.
     private func toggleFocusedSelection() {
-        guard let id = focusedID, items.contains(where: { $0.id == id }) else { return }
+        guard let id = focusedID, visualItems.contains(where: { $0.id == id }) else { return }
         toggle(id)
     }
 
@@ -281,6 +365,28 @@ struct QuickPasteView: View {
         if !item.content.isEmpty { return item.content }
         return item.descriptiveTag
     }
+
+    private func groupTitle(for filter: ClipboardGroupFilter) -> String {
+        switch filter {
+        case .all:
+            return L("group.all")
+        case .ungrouped:
+            return L("group.ungrouped")
+        case .group(let id):
+            return sortedGroups.first { $0.id == id }?.displayName ?? L("group.missing")
+        }
+    }
+
+    private func groupIcon(for filter: ClipboardGroupFilter) -> String {
+        switch filter {
+        case .all:
+            return "tray.full"
+        case .ungrouped:
+            return "tray"
+        case .group:
+            return "folder.fill"
+        }
+    }
 }
 
 /// Invisible AppKit view that drives the QuickPaste panel's keyboard flow.
@@ -291,6 +397,8 @@ struct QuickPasteView: View {
 /// (plain keys) and `performKeyEquivalent` (modifier combos) so any recorded
 /// shortcut works regardless of whether AppKit routes it as a key equivalent.
 struct QuickPasteKeyCatcher: NSViewRepresentable {
+    var onLeft: () -> Void
+    var onRight: () -> Void
     var onUp: () -> Void
     var onDown: () -> Void
     var onToggleSelect: () -> Void
@@ -299,6 +407,8 @@ struct QuickPasteKeyCatcher: NSViewRepresentable {
 
     func makeNSView(context: Context) -> KeyView {
         let view = KeyView()
+        view.onLeft = onLeft
+        view.onRight = onRight
         view.onUp = onUp
         view.onDown = onDown
         view.onToggleSelect = onToggleSelect
@@ -307,6 +417,8 @@ struct QuickPasteKeyCatcher: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: KeyView, context: Context) {
+        nsView.onLeft = onLeft
+        nsView.onRight = onRight
         nsView.onUp = onUp
         nsView.onDown = onDown
         nsView.onToggleSelect = onToggleSelect
@@ -314,6 +426,8 @@ struct QuickPasteKeyCatcher: NSViewRepresentable {
     }
 
     final class KeyView: NSView {
+        var onLeft: (() -> Void)?
+        var onRight: (() -> Void)?
         var onUp: (() -> Void)?
         var onDown: (() -> Void)?
         var onToggleSelect: (() -> Void)?
@@ -387,6 +501,8 @@ struct QuickPasteKeyCatcher: NSViewRepresentable {
 
         override func keyDown(with event: NSEvent) {
             switch event.keyCode {
+            case 123: onLeft?(); return  // ←
+            case 124: onRight?(); return // →
             case 126: onUp?(); return   // ↑
             case 125: onDown?(); return // ↓
             default: break

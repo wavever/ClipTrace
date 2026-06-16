@@ -1865,8 +1865,10 @@ private struct MCPToolToggleRow: View {
 private struct DataSection: View {
     @EnvironmentObject var vm: ClipboardViewModel
     @Environment(\.modelContext) private var modelContext
+    @Query private var groups: [ClipboardGroup]
     @ObservedObject private var stats = CopyStatsStore.shared
     @ObservedObject private var filters = FilterSettingsStore.shared
+    @State private var newGroupName = ""
 
     private var retentionOptions: [(value: Int, label: String)] {
         [
@@ -1884,6 +1886,77 @@ private struct DataSection: View {
 
     var body: some View {
         VStack(spacing: 18) {
+            SettingsGroup(icon: "folder.badge.gearshape", title: L("settings.data.groups.title"), tint: .appAccent) {
+                SettingsRow(
+                    icon: "folder.badge.plus",
+                    iconTint: .appAccent,
+                    title: L("settings.data.groups.create"),
+                    subtitle: L("settings.data.groups.subtitle")
+                ) {
+                    HStack(spacing: 8) {
+                        TextField(L("group.name.placeholder"), text: $newGroupName)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 12))
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 7)
+                            .background(
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .fill(Color.appChipFill)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .strokeBorder(Color.appCardBorder, lineWidth: 0.6)
+                            )
+                            .frame(width: 150)
+                            .onSubmit { addGroup() }
+                        Button {
+                            addGroup()
+                        } label: {
+                            Label(L("common.add"), systemImage: "plus")
+                        }
+                        .buttonStyle(PaperActionButtonStyle(role: .primary))
+                    }
+                }
+
+                if groups.isEmpty {
+                    SettingsRow(
+                        icon: "tray",
+                        iconTint: .secondary,
+                        title: L("settings.data.groups.empty"),
+                        subtitle: L("settings.data.groups.empty.subtitle")
+                    ) {
+                        EmptyView()
+                    }
+                } else {
+                    ForEach(groups.sortedForDisplay()) { group in
+                        DataGroupSettingsRow(
+                            group: group,
+                            canMoveUp: groups.sortedForDisplay().first?.id != group.id,
+                            canMoveDown: groups.sortedForDisplay().last?.id != group.id,
+                            onRename: { name in
+                                vm.renameGroup(group, to: name, context: modelContext)
+                            },
+                            onMoveUp: {
+                                vm.moveGroup(group, direction: -1, groups: groups, context: modelContext)
+                            },
+                            onMoveDown: {
+                                vm.moveGroup(group, direction: 1, groups: groups, context: modelContext)
+                            },
+                            onDelete: {
+                                ConfirmationCenter.shared.confirm(
+                                    title: L("confirm.deleteGroup.title"),
+                                    message: L("confirm.deleteGroup.message"),
+                                    confirmLabel: L("common.delete"),
+                                    icon: "folder.badge.minus"
+                                ) {
+                                    vm.deleteGroup(group, context: modelContext)
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+
             SettingsGroup(icon: "trash", title: L("settings.data.trash.title"), tint: .appAccent) {
                 SettingsRow(
                     icon: "trash.circle",
@@ -2020,6 +2093,86 @@ private struct DataSection: View {
             get: { filters.retentionDays(for: type) },
             set: { filters.setRetentionDays($0, for: type) }
         )
+    }
+
+    private func addGroup() {
+        guard vm.createGroup(named: newGroupName, groups: groups, context: modelContext) != nil else { return }
+        newGroupName = ""
+    }
+}
+
+private struct DataGroupSettingsRow: View {
+    let group: ClipboardGroup
+    let canMoveUp: Bool
+    let canMoveDown: Bool
+    let onRename: (String) -> Void
+    let onMoveUp: () -> Void
+    let onMoveDown: () -> Void
+    let onDelete: () -> Void
+
+    @State private var draft = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        SettingsRow(
+            icon: "folder.fill",
+            iconTint: .appAccent,
+            title: L("settings.data.groups.item.title"),
+            subtitle: L("settings.data.groups.item.subtitle")
+        ) {
+            HStack(spacing: 6) {
+                TextField(L("group.name.placeholder"), text: $draft)
+                    .focused($focused)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 7)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(Color.appChipFill)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .strokeBorder(focused ? Color.appAccent.opacity(0.55) : Color.appCardBorder, lineWidth: 0.6)
+                    )
+                    .frame(width: 150)
+                    .onSubmit { commitRename() }
+                    .onChange(of: focused) { _, isFocused in
+                        if !isFocused { commitRename() }
+                    }
+
+                Button(action: onMoveUp) {
+                    Image(systemName: "chevron.up")
+                }
+                .buttonStyle(PaperIconButtonStyle(size: 28))
+                .disabled(!canMoveUp)
+                .help(L("group.moveUp"))
+
+                Button(action: onMoveDown) {
+                    Image(systemName: "chevron.down")
+                }
+                .buttonStyle(PaperIconButtonStyle(size: 28))
+                .disabled(!canMoveDown)
+                .help(L("group.moveDown"))
+
+                Button(action: onDelete) {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(PaperIconButtonStyle(size: 28))
+                .help(L("common.delete"))
+            }
+        }
+        .onAppear { draft = group.displayName }
+        .onChange(of: group.name) { _, newValue in
+            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !focused { draft = trimmed.isEmpty ? L("group.untitled") : trimmed }
+        }
+    }
+
+    private func commitRename() {
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed != group.displayName else { return }
+        onRename(trimmed)
     }
 }
 

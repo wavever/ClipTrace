@@ -112,6 +112,7 @@ class ClipboardViewModel: ObservableObject {
     }
     @Published var selectedType: ClipboardItemType? = nil
     @Published var selectedSourceApp: String? = nil
+    @Published var selectedGroupFilter: ClipboardGroupFilter = .all
     @Published var selectedScope: ListScope = .all
     /// Sort order for the favorites scope. Persisted so the choice survives
     /// relaunches.
@@ -179,6 +180,7 @@ class ClipboardViewModel: ObservableObject {
     @Published var tagCatalogVersion: Int = 0
     @Published var favoritesVersion: Int = 0
     @Published var pinsVersion: Int = 0
+    @Published var groupsVersion: Int = 0
 
     func setSemanticFeatureEnabled(_ enabled: Bool) {
         UserDefaults.standard.set(enabled, forKey: Self.semanticFeatureEnabledKey)
@@ -650,6 +652,77 @@ class ClipboardViewModel: ObservableObject {
         try? context.save()
     }
 
+    @discardableResult
+    func createGroup(named name: String, groups: [ClipboardGroup], context: ModelContext) -> ClipboardGroup? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedName = trimmed.isEmpty ? L("group.untitled") : String(trimmed.prefix(40))
+        let nextOrder = (groups.map(\.sortOrder).max() ?? -1) + 1
+        let group = ClipboardGroup(name: resolvedName, sortOrder: nextOrder)
+        context.insert(group)
+        do {
+            try context.save()
+            groupsVersion &+= 1
+            return group
+        } catch {
+            context.delete(group)
+            return nil
+        }
+    }
+
+    func renameGroup(_ group: ClipboardGroup, to newName: String, context: ModelContext) {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        group.name = trimmed.isEmpty ? L("group.untitled") : String(trimmed.prefix(40))
+        try? context.save()
+        groupsVersion &+= 1
+    }
+
+    func moveGroup(_ group: ClipboardGroup, direction: Int, groups: [ClipboardGroup], context: ModelContext) {
+        let sorted = groups.sortedForDisplay()
+        guard let index = sorted.firstIndex(where: { $0.id == group.id }) else { return }
+        let destination = index + direction
+        guard sorted.indices.contains(destination) else { return }
+
+        var reordered = sorted
+        reordered.swapAt(index, destination)
+        for (idx, item) in reordered.enumerated() {
+            item.sortOrder = idx
+        }
+        try? context.save()
+        groupsVersion &+= 1
+    }
+
+    func deleteGroup(_ group: ClipboardGroup, context: ModelContext) {
+        let groupID = group.id
+        if let items = try? context.fetch(FetchDescriptor<ClipboardItem>()) {
+            for item in items where item.groupID == groupID {
+                item.groupID = nil
+            }
+        }
+        context.delete(group)
+        if selectedGroupFilter == .group(groupID) {
+            selectedGroupFilter = .all
+        }
+        try? context.save()
+        groupsVersion &+= 1
+    }
+
+    func assign(_ item: ClipboardItem, to group: ClipboardGroup?, context: ModelContext) {
+        item.groupID = group?.id
+        try? context.save()
+        groupsVersion &+= 1
+    }
+
+    func assign(_ items: [ClipboardItem], to group: ClipboardGroup?, context: ModelContext) {
+        guard !items.isEmpty else { return }
+        let groupID = group?.id
+        for item in items {
+            item.groupID = groupID
+        }
+        try? context.save()
+        groupsVersion &+= 1
+        exitSelectionMode()
+    }
+
     /// Soft- (or hard-) delete every active clip created in the last
     /// `minutes` minutes. Pinned and favorited entries are preserved on the
     /// theory that the user marked them on purpose; returns the affected count.
@@ -970,6 +1043,15 @@ class ClipboardViewModel: ObservableObject {
 
         if let app = selectedSourceApp {
             result = result.filter { $0.sourceApp == app }
+        }
+
+        switch selectedGroupFilter {
+        case .all:
+            break
+        case .ungrouped:
+            result = result.filter { $0.groupID == nil && !$0.isPinned }
+        case .group(let groupID):
+            result = result.filter { $0.groupID == groupID && !$0.isPinned }
         }
 
         if !activeTags.isEmpty {

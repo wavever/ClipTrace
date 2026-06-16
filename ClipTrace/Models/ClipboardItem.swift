@@ -33,6 +33,60 @@ enum ClipboardItemType: String, Codable, CaseIterable {
     }
 }
 
+/// User-created buckets for clipboard history. Items reference groups by UUID
+/// instead of a SwiftData relationship so moving/deleting a group never faults
+/// a large slice of history just to keep a relationship graph consistent.
+@Model
+final class ClipboardGroup {
+    var id: UUID
+    var name: String
+    /// User-controlled display order. Settings edits normalize this to
+    /// 0...n, but keeping it as a simple Int makes lightweight migrations and
+    /// menu/query sorting straightforward.
+    var sortOrder: Int
+    var createdAt: Date
+
+    init(name: String, sortOrder: Int) {
+        self.id = UUID()
+        self.name = name
+        self.sortOrder = sortOrder
+        self.createdAt = Date()
+    }
+
+    var displayName: String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? L("group.untitled") : trimmed
+    }
+}
+
+enum ClipboardGroupFilter: Equatable, Identifiable {
+    case all
+    case ungrouped
+    case group(UUID)
+
+    var id: String {
+        switch self {
+        case .all: return "all"
+        case .ungrouped: return "ungrouped"
+        case .group(let id): return "group-\(id.uuidString)"
+        }
+    }
+
+    var isAll: Bool {
+        if case .all = self { return true }
+        return false
+    }
+}
+
+extension Array where Element == ClipboardGroup {
+    func sortedForDisplay() -> [ClipboardGroup] {
+        sorted {
+            if $0.sortOrder != $1.sortOrder { return $0.sortOrder < $1.sortOrder }
+            return $0.createdAt < $1.createdAt
+        }
+    }
+}
+
 @Model
 final class ClipboardItem {
     var id: UUID
@@ -61,6 +115,8 @@ final class ClipboardItem {
     /// the clip is inserted. Nil for non-image clips or while recognition is
     /// still pending; an empty string means OCR ran but found nothing.
     var ocrText: String?
+    /// Optional user data group. Nil means the item is not assigned to a group.
+    var groupID: UUID?
 
     init(type: ClipboardItemType, content: String, imageData: Data? = nil, fileURL: String? = nil, sourceApp: String = "", preview: String? = nil) {
         self.id = UUID()
@@ -79,6 +135,7 @@ final class ClipboardItem {
         self.tagsRaw = nil
         self.customTitle = nil
         self.ocrText = nil
+        self.groupID = nil
     }
 
     /// Trimmed custom title, or nil if the user hasn't set one. Used by row

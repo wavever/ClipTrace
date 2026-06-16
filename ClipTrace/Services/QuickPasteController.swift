@@ -61,21 +61,35 @@ final class KeyablePanel: NSPanel {
 @MainActor
 final class QuickPastePanelState: ObservableObject {
     @Published var items: [ClipboardItem] = []
+    @Published var groups: [ClipboardGroup] = []
+    @Published var selectedGroupFilter: ClipboardGroupFilter = .all
 
     var onCommit: (_ items: [ClipboardItem], _ plainText: Bool) -> Void = { _, _ in }
     var onTogglePin: (_ item: ClipboardItem) -> Void = { _ in }
+    var onSelectGroup: (_ filter: ClipboardGroupFilter) -> [ClipboardItem] = { _ in [] }
     var onCancel: () -> Void = {}
 
     func configure(
         items: [ClipboardItem],
+        groups: [ClipboardGroup],
         onCommit: @escaping (_ items: [ClipboardItem], _ plainText: Bool) -> Void,
         onTogglePin: @escaping (_ item: ClipboardItem) -> Void,
+        onSelectGroup: @escaping (_ filter: ClipboardGroupFilter) -> [ClipboardItem],
         onCancel: @escaping () -> Void
     ) {
         self.onCommit = onCommit
         self.onTogglePin = onTogglePin
+        self.onSelectGroup = onSelectGroup
         self.onCancel = onCancel
+        self.selectedGroupFilter = .all
+        self.groups = groups
         self.items = items
+    }
+
+    func selectGroup(_ filter: ClipboardGroupFilter) {
+        guard selectedGroupFilter != filter else { return }
+        selectedGroupFilter = filter
+        items = onSelectGroup(filter)
     }
 }
 
@@ -117,7 +131,8 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
     private func show(topCenterAnchor: NSPoint? = nil) {
         previousApp = NSWorkspace.shared.frontmostApplication
 
-        let items = fetchRecentItems()
+        let groups = fetchGroups()
+        let items = fetchRecentItems(groupFilter: .all)
         guard !items.isEmpty else {
             ToastCenter.shared.show(
                 L("quickpaste.emptyClipboard"),
@@ -129,11 +144,15 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
 
         panelState.configure(
             items: items,
+            groups: groups,
             onCommit: { [weak self] selected, plainText in
                 self?.commit(selected, plainText: plainText)
             },
             onTogglePin: { [weak self] item in
                 self?.togglePin(item)
+            },
+            onSelectGroup: { [weak self] filter in
+                self?.fetchRecentItems(groupFilter: filter) ?? []
             },
             onCancel: { [weak self] in self?.cancel() }
         )
@@ -219,33 +238,55 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
         panel.setFrameOrigin(origin)
     }
 
-    private func fetchRecentItems() -> [ClipboardItem] {
-        let pinnedDescriptor = FetchDescriptor<ClipboardItem>(
-            predicate: #Predicate { $0.deletedAt == nil && $0.isPinned },
-            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
-        )
-        let pinned = (try? context.fetch(pinnedDescriptor)) ?? []
+    private func fetchRecentItems(groupFilter: ClipboardGroupFilter) -> [ClipboardItem] {
+        switch groupFilter {
+        case .all:
+            let pinnedDescriptor = FetchDescriptor<ClipboardItem>(
+                predicate: #Predicate { $0.deletedAt == nil && $0.isPinned },
+                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+            )
+            let pinned = (try? context.fetch(pinnedDescriptor)) ?? []
 
-        var recentDescriptor = FetchDescriptor<ClipboardItem>(
-            predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false },
-            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
-        )
-        recentDescriptor.fetchLimit = 60
-        let recent = (try? context.fetch(recentDescriptor)) ?? []
+            var recentDescriptor = FetchDescriptor<ClipboardItem>(
+                predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false },
+                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+            )
+            recentDescriptor.fetchLimit = 60
+            let recent = (try? context.fetch(recentDescriptor)) ?? []
 
-        return pinned + recent
+            return pinned + recent
+
+        case .ungrouped:
+            var descriptor = FetchDescriptor<ClipboardItem>(
+                predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false && $0.groupID == nil },
+                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+            )
+            descriptor.fetchLimit = 60
+            return (try? context.fetch(descriptor)) ?? []
+
+        case .group(let groupID):
+            var descriptor = FetchDescriptor<ClipboardItem>(
+                predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false && $0.groupID == groupID },
+                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+            )
+            descriptor.fetchLimit = 60
+            return (try? context.fetch(descriptor)) ?? []
+        }
     }
 
-    private func sortPinnedFirst(_ items: [ClipboardItem]) -> [ClipboardItem] {
-        items.sorted { lhs, rhs in
-            if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
-            return lhs.createdAt > rhs.createdAt
-        }
+    private func fetchGroups() -> [ClipboardGroup] {
+        let descriptor = FetchDescriptor<ClipboardGroup>(
+            sortBy: [
+                SortDescriptor(\.sortOrder),
+                SortDescriptor(\.createdAt)
+            ]
+        )
+        return (try? context.fetch(descriptor)) ?? []
     }
 
     private func togglePin(_ item: ClipboardItem) {
         ClipboardRuntime.shared.viewModel.togglePin(item)
-        panelState.items = sortPinnedFirst(panelState.items)
+        panelState.items = fetchRecentItems(groupFilter: panelState.selectedGroupFilter)
     }
 
     // MARK: - Close

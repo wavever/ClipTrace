@@ -105,6 +105,7 @@ struct MenuBarView: View {
     @State private var totalActiveRecords = 0
     @State private var isLoadingMore = false
     @State private var paginationGeneration = 0
+    @State private var selectedGroupFilter: ClipboardGroupFilter = .all
 
     private let onRequestClose: (() -> Void)?
     private let onOpenMain: (() -> Void)?
@@ -136,6 +137,7 @@ struct MenuBarView: View {
         MenuBarContent(
             searchText: $searchText,
             isSearchEnabled: Self.isSearchEnabled,
+            selectedGroupFilter: $selectedGroupFilter,
             fetchLimit: searching ? max(totalActiveRecords, Self.pageSize) : fetchLimit,
             totalActiveRecords: $totalActiveRecords,
             isLoadingMore: isLoadingMore,
@@ -146,6 +148,9 @@ struct MenuBarView: View {
             onOpenSettings: onOpenSettings
         )
         .onChange(of: searchText) { _, _ in
+            resetPagination()
+        }
+        .onChange(of: selectedGroupFilter) { _, _ in
             resetPagination()
         }
         .onChange(of: totalActiveRecords) { _, _ in
@@ -189,6 +194,7 @@ struct MenuBarContent: View {
 
     @Binding var searchText: String
     let isSearchEnabled: Bool
+    @Binding var selectedGroupFilter: ClipboardGroupFilter
     let fetchLimit: Int
     @Binding var totalActiveRecords: Int
     let isLoadingMore: Bool
@@ -201,6 +207,7 @@ struct MenuBarContent: View {
     init(
         searchText: Binding<String>,
         isSearchEnabled: Bool,
+        selectedGroupFilter: Binding<ClipboardGroupFilter>,
         fetchLimit: Int,
         totalActiveRecords: Binding<Int>,
         isLoadingMore: Bool,
@@ -212,6 +219,7 @@ struct MenuBarContent: View {
     ) {
         _searchText = searchText
         self.isSearchEnabled = isSearchEnabled
+        _selectedGroupFilter = selectedGroupFilter
         self.fetchLimit = fetchLimit
         _totalActiveRecords = totalActiveRecords
         self.isLoadingMore = isLoadingMore
@@ -247,6 +255,7 @@ struct MenuBarContent: View {
 
         return VStack(spacing: 0) {
             header
+            groupStrip
             if isSearchEnabled {
                 searchField
             }
@@ -276,7 +285,15 @@ struct MenuBarContent: View {
         .onChange(of: fetchLimit) { _, _ in
             reloadHistory()
         }
+        .onChange(of: selectedGroupFilter) { _, _ in
+            reloadHistory()
+        }
         .onChange(of: vm.pinsVersion) { _, _ in
+            withAnimation(.easeOut(duration: 0.16)) {
+                reloadHistory()
+            }
+        }
+        .onChange(of: vm.groupsVersion) { _, _ in
             withAnimation(.easeOut(duration: 0.16)) {
                 reloadHistory()
             }
@@ -393,6 +410,43 @@ struct MenuBarContent: View {
         .padding(.bottom, 10)
     }
 
+    private var groupStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                groupChip(title: L("group.all"), icon: "tray.full", filter: .all)
+                ForEach(historyStore.groups.sortedForDisplay()) { group in
+                    groupChip(title: group.displayName, icon: "folder.fill", filter: .group(group.id))
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, isSearchEnabled ? 8 : 10)
+        }
+    }
+
+    private func groupChip(title: String, icon: String, filter: ClipboardGroupFilter) -> some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.16)) {
+                selectedGroupFilter = filter
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 9, weight: .semibold))
+                Text(title)
+                    .lineLimit(1)
+            }
+            .font(.system(size: 10.5, weight: selectedGroupFilter == filter ? .semibold : .medium))
+            .foregroundStyle(selectedGroupFilter == filter ? Color.white : surfaceStyle.secondaryText)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4.5)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(selectedGroupFilter == filter ? Color.appAccent : surfaceStyle.controlFill)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
     private var emptyState: some View {
         VStack(spacing: 8) {
             Image(systemName: "tray")
@@ -411,15 +465,7 @@ struct MenuBarContent: View {
     private func itemList(items: [ClipboardItem], canLoadMore: Bool) -> some View {
         ScrollView {
             LazyVStack(spacing: 2) {
-                ForEach(items) { item in
-                    MenuBarRow(
-                        item: item,
-                        surfaceStyle: surfaceStyle,
-                        onCopy: { vm.copyToClipboard(item) },
-                        onCopyPlainText: { vm.copyAsPlainText(item) },
-                        onTogglePin: { togglePin(item) }
-                    )
-                }
+                menuRows(items: items)
 
                 if canLoadMore {
                     loadMoreTrigger
@@ -430,6 +476,24 @@ struct MenuBarContent: View {
         // Use a fixed height, not just `maxHeight`: the menu panel must grow
         // even when the current history has fewer rows than the visible area.
         .frame(height: Self.listHeight)
+    }
+
+    @ViewBuilder
+    private func menuRows(items: [ClipboardItem]) -> some View {
+        ForEach(items) { item in
+            menuRow(item)
+        }
+    }
+
+    private func menuRow(_ item: ClipboardItem) -> some View {
+        MenuBarRow(
+            item: item,
+            groupName: nil,
+            surfaceStyle: surfaceStyle,
+            onCopy: { vm.copyToClipboard(item) },
+            onCopyPlainText: { vm.copyAsPlainText(item) },
+            onTogglePin: { togglePin(item) }
+        )
     }
 
     private var loadMoreTrigger: some View {
@@ -488,7 +552,7 @@ struct MenuBarContent: View {
     }
 
     private func reloadHistory() {
-        historyStore.reload(fetchLimit: fetchLimit)
+        historyStore.reload(fetchLimit: fetchLimit, groupFilter: selectedGroupFilter)
         totalActiveRecords = historyStore.totalActiveRecords
     }
 
@@ -522,15 +586,14 @@ struct MenuBarContent: View {
 @MainActor
 private final class MenuBarHistoryStore: ObservableObject {
     @Published private(set) var items: [ClipboardItem] = []
+    @Published private(set) var groups: [ClipboardGroup] = []
     @Published private(set) var totalActiveRecords = 0
 
     private let context = ModelContext(AppContainer.shared)
 
-    func reload(fetchLimit: Int) {
-        var pinnedDescriptor = FetchDescriptor<ClipboardItem>(
-            predicate: #Predicate { $0.deletedAt == nil && $0.isPinned },
-            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
-        )
+    func reload(fetchLimit: Int, groupFilter: ClipboardGroupFilter) {
+        reloadGroups()
+        var pinnedDescriptor = Self.itemDescriptor(pinned: true, groupFilter: groupFilter)
         // Keep large blobs faulted while the menu bar page is built. The store
         // keeps its ModelContext alive, so visible rows can fault thumbnails in
         // lazily just like the main window list.
@@ -547,31 +610,78 @@ private final class MenuBarHistoryStore: ObservableObject {
             \.deletedAt,
             \.tagsRaw,
             \.customTitle,
+            \.groupID,
         ]
 
-        var recentDescriptor = FetchDescriptor<ClipboardItem>(
-            predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false },
-            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
-        )
+        var recentDescriptor = Self.itemDescriptor(pinned: false, groupFilter: groupFilter)
         recentDescriptor.fetchLimit = max(fetchLimit, 1)
         recentDescriptor.propertiesToFetch = pinnedDescriptor.propertiesToFetch
 
-        let pinned = (try? context.fetch(pinnedDescriptor)) ?? []
+        let pinned = groupFilter.isAll ? ((try? context.fetch(pinnedDescriptor)) ?? []) : []
         let recent = (try? context.fetch(recentDescriptor)) ?? []
         items = pinned + recent
-        refreshRecordCount()
+        refreshRecordCount(groupFilter: groupFilter)
     }
 
-    func refreshRecordCount() {
-        let descriptor = FetchDescriptor<ClipboardItem>(
-            predicate: #Predicate { $0.deletedAt == nil }
-        )
+    func refreshRecordCount(groupFilter: ClipboardGroupFilter = .all) {
+        let descriptor = Self.countDescriptor(groupFilter: groupFilter)
         totalActiveRecords = (try? context.fetchCount(descriptor)) ?? items.count
+    }
+
+    private func reloadGroups() {
+        let descriptor = FetchDescriptor<ClipboardGroup>(
+            sortBy: [
+                SortDescriptor(\.sortOrder),
+                SortDescriptor(\.createdAt)
+            ]
+        )
+        groups = (try? context.fetch(descriptor)) ?? []
+    }
+
+    private static func itemDescriptor(
+        pinned: Bool,
+        groupFilter: ClipboardGroupFilter
+    ) -> FetchDescriptor<ClipboardItem> {
+        switch groupFilter {
+        case .all:
+            return FetchDescriptor<ClipboardItem>(
+                predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == pinned },
+                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+            )
+        case .ungrouped:
+            return FetchDescriptor<ClipboardItem>(
+                predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false && $0.groupID == nil },
+                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+            )
+        case .group(let groupID):
+            return FetchDescriptor<ClipboardItem>(
+                predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false && $0.groupID == groupID },
+                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+            )
+        }
+    }
+
+    private static func countDescriptor(groupFilter: ClipboardGroupFilter) -> FetchDescriptor<ClipboardItem> {
+        switch groupFilter {
+        case .all:
+            return FetchDescriptor<ClipboardItem>(
+                predicate: #Predicate { $0.deletedAt == nil }
+            )
+        case .ungrouped:
+            return FetchDescriptor<ClipboardItem>(
+                predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false && $0.groupID == nil }
+            )
+        case .group(let groupID):
+            return FetchDescriptor<ClipboardItem>(
+                predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false && $0.groupID == groupID }
+            )
+        }
     }
 }
 
 struct MenuBarRow: View {
     let item: ClipboardItem
+    var groupName: String? = nil
     var surfaceStyle: MenuBarSurfaceStyle = .paper
     let onCopy: () -> Void
     var onCopyPlainText: (() -> Void)? = nil
@@ -612,6 +722,19 @@ struct MenuBarRow: View {
                         .font(.system(size: 10))
                         .foregroundStyle(surfaceStyle.secondaryText)
                         .lineLimit(1)
+                    if let groupName {
+                        Text("·")
+                            .font(.system(size: 10))
+                            .foregroundStyle(surfaceStyle.tertiaryText)
+                        HStack(spacing: 2) {
+                            Image(systemName: "folder.fill")
+                                .font(.system(size: 8, weight: .semibold))
+                            Text(groupName)
+                        }
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.appAccent)
+                        .lineLimit(1)
+                    }
                 }
             }
 
