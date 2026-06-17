@@ -14,7 +14,7 @@ This lives as a script (rather than inline in release.yml) so it can be run and
 eyeballed locally before cutting a release.
 
 Env inputs:
-  VERSION, TAG, REPO (owner/repo), DMG_URL, ED_SIG, LENGTH
+  VERSION, BUILD_VERSION, TAG, REPO (owner/repo), DMG_URL, ED_SIG, LENGTH
   PREV_TAG       previous git tag (may be empty → no history/diff)
   PREV_APPCAST   path to the previous appcast.xml (may be missing → no history)
   NOTES_DIR      dir holding <version>.md (default: docs/release-notes)
@@ -29,7 +29,10 @@ import re
 import subprocess
 import sys
 
+from version_build_number import build_number
+
 VERSION = os.environ["VERSION"]
+BUILD_VERSION = os.environ.get("BUILD_VERSION", "").strip()
 TAG = os.environ["TAG"]
 REPO = os.environ["REPO"]
 DMG_URL = os.environ["DMG_URL"]
@@ -41,6 +44,10 @@ NOTES_DIR = os.environ.get("NOTES_DIR", "docs/release-notes")
 OUT_APPCAST = os.environ.get("OUT_APPCAST", "appcast.xml")
 OUT_BODY = os.environ.get("OUT_BODY", "")
 PUBDATE = os.environ.get("PUBDATE", "")
+
+
+if not BUILD_VERSION:
+    BUILD_VERSION = str(build_number(VERSION))
 
 REPO_URL = f"https://github.com/{REPO}"
 RELEASE_URL = f"{REPO_URL}/releases/tag/{TAG}"
@@ -209,12 +216,14 @@ def previous_items() -> str:
         return ""
     xml = open(PREV_APPCAST).read()
     items = re.findall(r"<item>.*?</item>", xml, flags=re.S)
-    seen = {VERSION}
+    seen = {VERSION, BUILD_VERSION}
     kept = []
     for item in items:
         m = re.search(r"<sparkle:version>(.*?)</sparkle:version>", item)
         v = m.group(1).strip() if m else ""
-        if v in seen:
+        short = re.search(r"<sparkle:shortVersionString>(.*?)</sparkle:shortVersionString>", item)
+        short_v = short.group(1).strip() if short else ""
+        if v in seen or short_v == VERSION:
             continue
         if v:
             seen.add(v)
@@ -253,7 +262,7 @@ def main() -> None:
             "        <item>",
             f"            <title>Version {VERSION}</title>",
             f"            <link>{RELEASE_URL}</link>",
-            f"            <sparkle:version>{VERSION}</sparkle:version>",
+            f"            <sparkle:version>{BUILD_VERSION}</sparkle:version>",
             f"            <sparkle:shortVersionString>{VERSION}</sparkle:shortVersionString>",
             "            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>",
             *descriptions,

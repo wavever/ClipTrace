@@ -75,11 +75,12 @@ jobs:
         run: |
           # The project sets GENERATE_INFOPLIST_FILE=YES, so Xcode synthesises
           # CFBundleShortVersionString from MARKETING_VERSION and CFBundleVersion
-          # from CURRENT_PROJECT_VERSION at build time — overwriting anything
-          # poked into Info.plist directly. Drive both from the tag here.
-          # CFBundleVersion must track the release too: otherwise Sparkle sees
-          # the running app as version "1" (> every 0.9.x) and never updates.
+          # from CURRENT_PROJECT_VERSION at build time. Sparkle compares
+          # appcast sparkle:version with CFBundleVersion, so use a monotonic
+          # machine-readable build number that is greater than the legacy
+          # CFBundleVersion=1 shipped in early 0.9.x releases.
           VERSION="${GITHUB_REF_NAME#v}"
+          BUILD_VERSION="$(python3 scripts/version_build_number.py "$VERSION")"
           xcodebuild \
             -project ClipTrace.xcodeproj \
             -scheme ClipTrace \
@@ -90,16 +91,16 @@ jobs:
             CODE_SIGN_IDENTITY="ClipTrace Self-Signed" \
             DEVELOPMENT_TEAM="" \
             MARKETING_VERSION="$VERSION" \
-            CURRENT_PROJECT_VERSION="$VERSION" \
+            CURRENT_PROJECT_VERSION="$BUILD_VERSION" \
             build
           APP="build/Build/Products/Release/ClipTrace.app"
           # Fail the release if the version didn't actually bake in — otherwise
           # we ship a bundle that shows the wrong version and breaks auto-update.
           BUILT_SHORT=$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")
           BUILT_BUILD=$(plutil -extract CFBundleVersion raw -o - "$APP/Contents/Info.plist")
-          echo "Baked version: short=$BUILT_SHORT build=$BUILT_BUILD (tag=$VERSION)"
-          if [ "$BUILT_SHORT" != "$VERSION" ] || [ "$BUILT_BUILD" != "$VERSION" ]; then
-            echo "::error::Bundle version ($BUILT_SHORT / $BUILT_BUILD) does not match tag ($VERSION)."
+          echo "Baked version: short=$BUILT_SHORT build=$BUILT_BUILD (tag=$VERSION build=$BUILD_VERSION)"
+          if [ "$BUILT_SHORT" != "$VERSION" ] || [ "$BUILT_BUILD" != "$BUILD_VERSION" ]; then
+            echo "::error::Bundle version ($BUILT_SHORT / $BUILT_BUILD) does not match tag/build ($VERSION / $BUILD_VERSION)."
             exit 1
           fi
           # Guard against silently shipping an ad-hoc build (which would
@@ -182,6 +183,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${{ steps.package.outputs.version }}"
+          BUILD_VERSION="$(python3 scripts/version_build_number.py "$VERSION")"
           TAG="${GITHUB_REF_NAME}"
           DMG="${{ steps.package.outputs.dmg }}"
           PREV_TAG=$(git tag --sort=-v:refname --merged "${TAG}^" 2>/dev/null | head -n 1 || true)
@@ -198,6 +200,7 @@ jobs:
 
           NOTES_FILE="${RUNNER_TEMP}/release-notes.md"
           VERSION="$VERSION" \
+          BUILD_VERSION="$BUILD_VERSION" \
           TAG="$TAG" \
           REPO="${{ github.repository }}" \
           DMG_URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/${DMG}" \
