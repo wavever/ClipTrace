@@ -3,7 +3,7 @@ import AppKit
 
 struct ClipboardItemRow: View, Equatable {
     let item: ClipboardItem
-    var groupName: String? = nil
+    var groupNames: [String] = []
     var isSelectionMode: Bool = false
     var isSelected: Bool = false
     var onCopy: () -> Void = {}
@@ -39,7 +39,7 @@ struct ClipboardItemRow: View, Equatable {
     // rebuilt all ~12 visible rows and stole frames from the scroll animation.
     static func == (lhs: ClipboardItemRow, rhs: ClipboardItemRow) -> Bool {
         lhs.item.id == rhs.item.id
-            && lhs.groupName == rhs.groupName
+            && lhs.groupNames == rhs.groupNames
             && lhs.isSelected == rhs.isSelected
             && lhs.isSelectionMode == rhs.isSelectionMode
     }
@@ -109,11 +109,11 @@ struct ClipboardItemRow: View, Equatable {
                         Capsule(style: .continuous)
                             .strokeBorder(.secondary.opacity(0.18), lineWidth: 0.5)
                     )
-                    if let groupName {
+                    ForEach(groupNames, id: \.self) { name in
                         HStack(spacing: 3) {
                             Image(systemName: "folder.fill")
                                 .font(.system(size: 9, weight: .semibold))
-                            Text(groupName)
+                            Text(name)
                                 .font(.system(size: 10, weight: .medium))
                         }
                         .foregroundStyle(Color.appAccent)

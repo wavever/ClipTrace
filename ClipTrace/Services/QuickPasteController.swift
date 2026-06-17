@@ -258,7 +258,7 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
 
         case .ungrouped:
             var descriptor = FetchDescriptor<ClipboardItem>(
-                predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false && $0.groupID == nil },
+                predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false && $0.groupIDsRaw == nil },
                 sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
             )
             descriptor.fetchLimit = 60
@@ -266,11 +266,11 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
 
         case .group(let groupID):
             var descriptor = FetchDescriptor<ClipboardItem>(
-                predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false && $0.groupID == groupID },
+                predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false && $0.groupIDsRaw != nil },
                 sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
             )
-            descriptor.fetchLimit = 60
-            return (try? context.fetch(descriptor)) ?? []
+            let candidates = (try? context.fetch(descriptor)) ?? []
+            return Array(candidates.lazy.filter { $0.isInGroup(groupID) }.prefix(60))
         }
     }
 

@@ -669,3 +669,438 @@ extension View {
         modifier(PaperTextFieldBackground(cornerRadius: cornerRadius, focused: focused))
     }
 }
+
+// MARK: - Paper context menu
+
+/// Hosts a borderless child `NSPanel` for a right-click menu, opened *at the
+/// cursor* rather than below a fixed trigger. Mirrors `PaperDropdownController`,
+/// but the menu drives its own dismissal (outside click, Esc, window resign)
+/// since a context menu has no persistent toggle button to bounce off of.
+///
+/// The native `.contextMenu` renders a cold AppKit `NSMenu` that clashes with
+/// the warm paper UI and can't show a custom selected state; this lets the row
+/// menu be drawn entirely in SwiftUI with paper tokens.
+@MainActor
+final class PaperContextMenuController: ObservableObject {
+    @Published private(set) var isOpen = false
+
+    private var panel: NSPanel?
+    private var submenuPanel: NSPanel?
+    private var monitor: Any?
+    private var resignObserver: NSObjectProtocol?
+
+    func open<Content: View>(
+        at screenPoint: CGPoint,
+        in parentWindow: NSWindow,
+        width: CGFloat,
+        @ViewBuilder content: () -> Content
+    ) {
+        close()
+
+        let hosting = NSHostingView(rootView: content())
+        hosting.layoutSubtreeIfNeeded()
+        let height = hosting.fittingSize.height
+        hosting.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        hosting.autoresizingMask = [.width, .height]
+
+        // The menu's top-left should sit at the cursor (AppKit is y-up, so the
+        // panel's bottom-left origin is the cursor minus the menu height).
+        var originX = screenPoint.x
+        var originY = screenPoint.y - height
+        if let screen = parentWindow.screen ?? NSScreen.main {
+            let visible = screen.visibleFrame
+            originX = min(max(originX, visible.minX + 4), visible.maxX - width - 4)
+            // Flip above the cursor if it would spill off the bottom edge.
+            if originY < visible.minY + 4 { originY = min(screenPoint.y, visible.maxY - height - 4) }
+            originY = min(max(originY, visible.minY + 4), visible.maxY - height - 4)
+        }
+
+        let panel = NSPanel(
+            contentRect: NSRect(x: originX, y: originY, width: width, height: height),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.level = .popUpMenu
+        panel.animationBehavior = .utilityWindow
+        panel.contentView = hosting
+
+        parentWindow.addChildWindow(panel, ordered: .above)
+        self.panel = panel
+        isOpen = true
+
+        // Dismiss on any click outside the menu, and on Esc.
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
+            guard let self, let panel = self.panel else { return event }
+            if event.type == .keyDown {
+                if event.keyCode == 53 { self.close(); return nil }   // Esc
+                return event
+            }
+            // Clicks inside the root menu or its open submenu keep the menu up.
+            if event.window == panel || event.window == self.submenuPanel { return event }
+            self.close()
+            return event
+        }
+
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification,
+            object: parentWindow,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.close() }
+        }
+    }
+
+    /// Open a second-level menu flying out beside `rowFrame` (in screen
+    /// coordinates). Hosted as a child of the root menu panel so it layers
+    /// above and tears down with it.
+    func openSubmenu<Content: View>(
+        besideRowAt rowFrame: CGRect,
+        width: CGFloat,
+        @ViewBuilder content: () -> Content
+    ) {
+        guard let rootPanel = panel else { return }
+        closeSubmenu()
+
+        let hosting = NSHostingView(rootView: content())
+        hosting.layoutSubtreeIfNeeded()
+        let height = hosting.fittingSize.height
+        hosting.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        hosting.autoresizingMask = [.width, .height]
+
+        // Tuck under the root panel's edge so there's no dead gap for the
+        // cursor to cross on its way into the submenu.
+        let overlap: CGFloat = 6
+        var originX = rowFrame.maxX - overlap
+        var originY = rowFrame.maxY - height        // align submenu top with the row top
+        if let screen = rootPanel.screen ?? NSScreen.main {
+            let visible = screen.visibleFrame
+            if originX + width > visible.maxX - 4 {
+                originX = rowFrame.minX - width + overlap    // flip to the left
+            }
+            originX = min(max(originX, visible.minX + 4), visible.maxX - width - 4)
+            originY = min(max(originY, visible.minY + 4), visible.maxY - height - 4)
+        }
+
+        let sub = NSPanel(
+            contentRect: NSRect(x: originX, y: originY, width: width, height: height),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        sub.isOpaque = false
+        sub.backgroundColor = .clear
+        sub.hasShadow = true
+        sub.level = .popUpMenu
+        sub.animationBehavior = .none
+        sub.contentView = hosting
+        rootPanel.addChildWindow(sub, ordered: .above)
+        self.submenuPanel = sub
+    }
+
+    func closeSubmenu() {
+        if let submenuPanel {
+            submenuPanel.parent?.removeChildWindow(submenuPanel)
+            submenuPanel.orderOut(nil)
+        }
+        submenuPanel = nil
+    }
+
+    func close() {
+        closeSubmenu()
+        if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
+        if let resignObserver {
+            NotificationCenter.default.removeObserver(resignObserver)
+            self.resignObserver = nil
+        }
+        if let panel {
+            panel.parent?.removeChildWindow(panel)
+            panel.orderOut(nil)
+        }
+        panel = nil
+        isOpen = false
+    }
+}
+
+/// Transparent AppKit overlay that reports right-clicks (and control-clicks)
+/// with the cursor's screen location, while letting every other event fall
+/// through to the SwiftUI content beneath it — so hover, single- and
+/// double-tap on the row keep working untouched. Passthrough is achieved by
+/// only returning `self` from `hitTest` when the live event is a right/control
+/// click; otherwise the hit lands on the view below.
+struct RightClickCatcher: NSViewRepresentable {
+    let onRightClick: (CGPoint, NSWindow) -> Void
+
+    func makeNSView(context: Context) -> CatcherView {
+        let view = CatcherView()
+        view.onRightClick = onRightClick
+        return view
+    }
+
+    func updateNSView(_ nsView: CatcherView, context: Context) {
+        nsView.onRightClick = onRightClick
+    }
+
+    final class CatcherView: NSView {
+        var onRightClick: ((CGPoint, NSWindow) -> Void)?
+
+        private func isContextClick(_ event: NSEvent?) -> Bool {
+            guard let event else { return false }
+            switch event.type {
+            case .rightMouseDown, .rightMouseUp, .rightMouseDragged:
+                return true
+            case .leftMouseDown, .leftMouseUp:
+                return event.modifierFlags.contains(.control)
+            default:
+                return false
+            }
+        }
+
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            isContextClick(NSApp.currentEvent) ? self : nil
+        }
+
+        override func menu(for event: NSEvent) -> NSMenu? { nil }
+
+        override func rightMouseDown(with event: NSEvent) {
+            report(event)
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            if event.modifierFlags.contains(.control) {
+                report(event)
+            } else {
+                super.mouseDown(with: event)
+            }
+        }
+
+        private func report(_ event: NSEvent) {
+            guard let window else { return }
+            let screenPoint = window.convertPoint(toScreen: event.locationInWindow)
+            onRightClick?(screenPoint, window)
+        }
+    }
+}
+
+/// Drives the open/close timing of a paper flyout submenu with native-feeling
+/// hover intent: a short delay before opening, a longer grace before closing so
+/// the cursor can travel from the parent row into the submenu without it
+/// vanishing. The parent row and the submenu panel both report their hover
+/// state here; the submenu stays up while either is hovered.
+@MainActor
+final class PaperSubmenuCoordinator: ObservableObject {
+    @Published private(set) var isOpen = false
+    weak var anchorView: NSView?
+    /// Set by the menu view: actually present / dismiss the submenu panel.
+    var present: (() -> Void)?
+    var dismiss: (() -> Void)?
+
+    private var rowHovered = false
+    private var submenuHovered = false
+    private var task: Task<Void, Never>?
+
+    /// The parent row's frame in screen coordinates, for positioning the flyout.
+    func rowScreenFrame() -> CGRect? {
+        guard let view = anchorView, let window = view.window else { return nil }
+        return window.convertToScreen(view.convert(view.bounds, to: nil))
+    }
+
+    func rowHover(_ hovered: Bool) { rowHovered = hovered; reconcile() }
+    func submenuHover(_ hovered: Bool) { submenuHovered = hovered; reconcile() }
+
+    /// Click-to-open: bypass the hover delay entirely.
+    func openNow() {
+        task?.cancel()
+        if !isOpen { isOpen = true; present?() }
+    }
+
+    private func reconcile() {
+        task?.cancel()
+        let shouldOpen = rowHovered || submenuHovered
+        task = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: shouldOpen ? 110_000_000 : 230_000_000)
+            guard !Task.isCancelled else { return }
+            if shouldOpen, !isOpen {
+                isOpen = true; present?()
+            } else if !shouldOpen, isOpen {
+                isOpen = false; dismiss?()
+            }
+        }
+    }
+}
+
+/// Zero-size companion that hands the coordinator the parent row's backing
+/// `NSView`, so the flyout can be positioned next to it.
+struct PaperSubmenuAnchor: NSViewRepresentable {
+    let coordinator: PaperSubmenuCoordinator
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        MainActor.assumeIsolated { coordinator.anchorView = view }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        MainActor.assumeIsolated { coordinator.anchorView = nsView }
+    }
+}
+
+/// Parent row that reveals a second-level paper menu: hover (or click) opens
+/// the flyout, with a trailing chevron and an active highlight while open.
+struct PaperSubmenuRow: View {
+    let icon: String
+    let title: String
+    @ObservedObject var coordinator: PaperSubmenuCoordinator
+
+    @State private var hovering = false
+
+    private var active: Bool { coordinator.isOpen }
+
+    var body: some View {
+        Button(action: { coordinator.openNow() }) {
+            HStack(spacing: 9) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(active ? Color.appAccent : Color.appMetal)
+                    .frame(width: 16)
+                Text(title)
+                    .font(.system(size: 12, weight: active ? .semibold : .regular))
+                    .foregroundStyle(active ? Color.appAccent : Color.appMetal)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(active ? Color.appAccent : .secondary)
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(hovering || active ? Color.appAccent.opacity(0.14) : Color.clear)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .background(PaperSubmenuAnchor(coordinator: coordinator))
+        .onHover { h in
+            hovering = h
+            coordinator.rowHover(h)
+        }
+    }
+}
+
+/// One row of a paper context menu: leading icon, title, optional trailing
+/// accessory. `role: .destructive` tints it terracotta. Matches the row metrics
+/// of `PaperMenuItem` / `FilterListOption` so every paper menu reads the same.
+struct PaperMenuActionRow: View {
+    enum Role { case normal, destructive }
+
+    let icon: String
+    let title: String
+    var role: Role = .normal
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    private var tint: Color {
+        role == .destructive ? Color.appDanger : Color.appMetal
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 9) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 16)
+                Text(title)
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(tint)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(hovering
+                          ? (role == .destructive ? Color.appDanger.opacity(0.14) : Color.appAccent.opacity(0.14))
+                          : Color.clear)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
+
+/// Group-membership row: a leading check slot makes current membership legible
+/// at a glance (the whole reason this menu exists), with a hover wash to read
+/// as actionable.
+struct PaperMenuCheckRow: View {
+    let title: String
+    let isMember: Bool
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 9) {
+                Image(systemName: isMember ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(isMember ? Color.appAccent : Color.secondary.opacity(0.5))
+                    .frame(width: 16)
+                Text(title)
+                    .font(.system(size: 12, weight: isMember ? .semibold : .regular))
+                    .foregroundStyle(isMember ? Color.appAccent : Color.appMetal)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(isMember
+                          ? Color.appAccent.opacity(hovering ? 0.18 : 0.10)
+                          : (hovering ? Color.appAccent.opacity(0.14) : Color.clear))
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
+
+/// Small uppercase section caption inside a paper menu.
+struct PaperMenuSectionLabel: View {
+    let text: String
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .textCase(.uppercase)
+            .kerning(0.4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 9)
+            .padding(.top, 4)
+            .padding(.bottom, 1)
+    }
+}
+
+/// Hairline divider tuned for the paper menu surface.
+struct PaperMenuDivider: View {
+    var body: some View {
+        Rectangle()
+            .fill(Color.appPaperDivider)
+            .frame(height: 1)
+            .padding(.vertical, 3)
+            .padding(.horizontal, 4)
+    }
+}

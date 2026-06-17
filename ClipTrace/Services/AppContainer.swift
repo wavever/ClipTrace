@@ -36,7 +36,27 @@ enum AppContainer {
         )
         let container = try ModelContainer(for: schema, configurations: [configuration])
         mergeLegacyStoresIfNeeded(into: container)
+        migrateLegacyGroupAssignments(in: container)
         return container
+    }
+
+    /// One-time fold of the pre-multi-group `groupID` field into the
+    /// newline-joined `groupIDsRaw`. Runs on every launch but matches only
+    /// rows that still carry a legacy single-group id, so it's a no-op once
+    /// the store has been converted.
+    private static func migrateLegacyGroupAssignments(in container: ModelContainer) {
+        let context = ModelContext(container)
+        let descriptor = FetchDescriptor<ClipboardItem>(
+            predicate: #Predicate { $0.groupID != nil && $0.groupIDsRaw == nil }
+        )
+        guard let pending = try? context.fetch(descriptor), !pending.isEmpty else { return }
+        for item in pending {
+            if let gid = item.groupID {
+                item.setGroupIDs([gid])
+            }
+            item.groupID = nil
+        }
+        try? context.save()
     }
 
     static var storeURL: URL {
@@ -328,7 +348,9 @@ enum AppContainer {
             item.tagsRaw = legacy.tagsRaw
             item.customTitle = legacy.customTitle
             item.ocrText = legacy.ocrText
-            item.groupID = legacy.groupID
+            // Old stores carry a single group id; fold it into the new
+            // multi-group field directly so it needs no later backfill.
+            if let gid = legacy.groupID { item.setGroupIDs([gid]) }
 
             context.insert(item)
             knownIDs.insert(legacy.id)

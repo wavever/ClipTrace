@@ -83,7 +83,7 @@ struct MainWindowContent: View {
             \.deletedAt,
             \.tagsRaw,
             \.customTitle,
-            \.groupID,
+            \.groupIDsRaw,
         ]
         _allItems = Query(descriptor)
 
@@ -108,6 +108,10 @@ struct MainWindowContent: View {
     /// drives the rename sheet at the root level so it survives row-view churn.
     @State private var renameTarget: ClipboardItem?
     @State private var groupEditorRequest: GroupEditorRequest?
+    /// Paper-styled right-click menu for list rows, hosted in a borderless
+    /// child panel so it can show a custom group-membership state and match the
+    /// warm paper UI instead of the cold system `NSMenu`.
+    @StateObject private var rowContextMenu = PaperContextMenuController()
 
     /// Header-stat caches. With pagination, `allItems` only contains the
     /// current page so these come from dedicated `fetchCount` / tag queries
@@ -495,7 +499,7 @@ struct MainWindowContent: View {
             }
             SelectionMoveGroupButton(
                 groups: groups.sortedForDisplay(),
-                showsRemoveFromGroup: selected.contains { $0.groupID != nil },
+                showsRemoveFromGroup: selected.contains { $0.isGrouped },
                 isDisabled: selected.isEmpty || isMergingSelection,
                 onMove: { group in
                     performMoveSelected(selected, to: group)
@@ -998,11 +1002,25 @@ struct MainWindowContent: View {
         .allowsHitTesting(false)
     }
 
+    /// Resolves the display names of the groups an item belongs to, in
+    /// assignment order. Items reference groups by UUID, so we look them up
+    /// against the live `groups` query; ids whose group has since been
+    /// deleted are dropped so the row shows only live chips.
+    private func groupNames(for item: ClipboardItem) -> [String] {
+        let ids = item.groupIDs
+        guard !ids.isEmpty else { return [] }
+        let namesByID = Dictionary(
+            groups.map { ($0.id, $0.displayName) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        return ids.compactMap { namesByID[$0] }
+    }
+
     @ViewBuilder
     private func cardRow(for item: ClipboardItem) -> some View {
         ClipboardItemRow(
             item: item,
-            groupName: nil,
+            groupNames: groupNames(for: item),
             isSelectionMode: vm.isSelectionMode,
             // In normal browsing mode the same "selected" affordance doubles
             // as the keyboard-focus marker for arrow-nav + Space preview.
@@ -1063,7 +1081,15 @@ struct MainWindowContent: View {
         // every visible row. Keeps arrow-key scrolling smooth — see the
         // `==` on ClipboardItemRow.
         .equatable()
-        .contextMenu { contextMenu(for: item) }
+        // Custom paper-styled right-click menu (see `openRowContextMenu`) in
+        // place of the cold system `NSMenu`. The catcher only intercepts
+        // right/control-clicks; every other event falls through so hover and
+        // the tap gestures below stay intact.
+        .overlay(
+            RightClickCatcher { screenPoint, window in
+                openRowContextMenu(for: item, at: screenPoint, in: window)
+            }
+        )
         // Mount only one tap gesture at a time. Having both a single- and a
         // double-tap on the same view makes SwiftUI delay the single tap
         // until it can rule out a second click — that's the lag we were
@@ -1127,98 +1153,78 @@ struct MainWindowContent: View {
         .buttonStyle(.plain)
     }
 
-    @ViewBuilder
-    private func contextMenu(for item: ClipboardItem) -> some View {
-        Button(L("action.copy"), systemImage: "doc.on.doc") {
-            vm.copyToClipboard(item)
-            ToastCenter.shared.show(L("common.copied"))
+    /// Open the paper-styled right-click menu for `item` at the cursor. Every
+    /// terminal action closes the menu first; group toggles deliberately keep
+    /// it open so the membership checkmarks update live as the user assigns
+    /// several groups in one pass.
+    private func openRowContextMenu(for item: ClipboardItem, at screenPoint: CGPoint, in window: NSWindow) {
+        let dismissThen: (@escaping () -> Void) -> () -> Void = { action in
+            { rowContextMenu.close(); action() }
         }
-        Button(L("action.copyAsPlainText"), systemImage: "textformat") {
-            vm.copyAsPlainText(item)
-            ToastCenter.shared.show(L("common.copiedPlainText"))
-        }
-        .keyboardShortcut("c", modifiers: [.command, .option])
-        Divider()
-        Button(L("action.rename"), systemImage: "pencil") {
-            renameTarget = item
-        }
-        Menu(L("group.moveTo"), systemImage: "folder") {
-            if item.groupID != nil {
-                Button(L("group.removeFromGroup"), systemImage: "folder.badge.minus") {
-                    vm.assign(item, to: nil, context: modelContext)
+
+        rowContextMenu.open(at: screenPoint, in: window, width: 232) {
+            ClipboardRowContextMenu(
+                controller: rowContextMenu,
+                item: item,
+                groups: groups.sortedForDisplay(),
+                onCopy: dismissThen {
+                    vm.copyToClipboard(item)
+                    ToastCenter.shared.show(L("common.copied"))
+                },
+                onCopyPlainText: dismissThen {
+                    vm.copyAsPlainText(item)
+                    ToastCenter.shared.show(L("common.copiedPlainText"))
+                },
+                onRename: dismissThen { renameTarget = item },
+                onToggleGroup: { group in
+                    let wasMember = item.isInGroup(group.id)
+                    vm.toggleGroup(item, group: group, context: modelContext)
+                    ToastCenter.shared.show(
+                        wasMember
+                            ? L("group.removedFromFormat", group.displayName)
+                            : L("group.addedToFormat", group.displayName),
+                        systemImage: wasMember ? "folder.badge.minus" : "folder.fill",
+                        tint: .appAccent
+                    )
+                },
+                onClearGroups: {
+                    vm.clearGroups(item, context: modelContext)
                     ToastCenter.shared.show(L("group.removedFromGroup"), systemImage: "folder.badge.minus")
-                }
-                if !groups.isEmpty {
-                    Divider()
-                }
-            }
-            if !groups.isEmpty {
-                ForEach(groups.sortedForDisplay()) { group in
-                    Button(group.displayName, systemImage: item.groupID == group.id ? "checkmark" : "folder") {
-                        vm.assign(item, to: group, context: modelContext)
-                        ToastCenter.shared.show(L("group.movedToFormat", group.displayName), systemImage: "folder.fill", tint: .appAccent)
+                },
+                onNewGroup: dismissThen { groupEditorRequest = .create(assigning: item) },
+                onOpenInBrowser: dismissThen { openInBrowser(item.content) },
+                onReveal: dismissThen {
+                    if let url = item.resolvedFileURL {
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
                     }
-                }
-            }
-            if item.groupID != nil || !groups.isEmpty {
-                Divider()
-            }
-            Button(L("group.newAndMove"), systemImage: "folder.badge.plus") {
-                groupEditorRequest = .create(assigning: item)
-            }
-        }
-        if item.itemType == .url {
-            Divider()
-            Button(L("action.openInBrowser"), systemImage: "safari") {
-                openInBrowser(item.content)
-            }
-        }
-        if item.resolvedFileURL != nil {
-            Divider()
-            Button(L("action.revealInFinder"), systemImage: "folder") {
-                if let url = item.resolvedFileURL {
-                    NSWorkspace.shared.activateFileViewerSelecting([url])
-                }
-            }
-            Button(L("action.openFile"), systemImage: "arrow.up.forward.app") {
-                if let url = item.resolvedFileURL {
-                    NSWorkspace.shared.open(url)
-                }
-            }
-            Button(L("action.openWith"), systemImage: "app.badge") {
-                if let url = item.resolvedFileURL {
-                    FileOpener.openWithChooser(url: url)
-                }
-            }
-        }
-        Divider()
-        Button(item.isFavorite ? L("action.unfavorite") : L("action.favorite"),
-               systemImage: item.isFavorite ? "star.slash" : "star") {
-            let willFavorite = !item.isFavorite
-            vm.toggleFavorite(item)
-            ToastCenter.shared.show(
-                willFavorite ? L("action.favorited") : L("action.unfavorited"),
-                systemImage: "star.fill",
-                tint: .yellow
+                },
+                onOpenFile: dismissThen {
+                    if let url = item.resolvedFileURL { NSWorkspace.shared.open(url) }
+                },
+                onOpenWith: dismissThen {
+                    if let url = item.resolvedFileURL { FileOpener.openWithChooser(url: url) }
+                },
+                onToggleFavorite: dismissThen {
+                    let willFavorite = !item.isFavorite
+                    vm.toggleFavorite(item)
+                    ToastCenter.shared.show(
+                        willFavorite ? L("action.favorited") : L("action.unfavorited"),
+                        systemImage: "star.fill",
+                        tint: .yellow
+                    )
+                },
+                onTogglePin: dismissThen {
+                    let willPin = !item.isPinned
+                    vm.togglePin(item)
+                    ToastCenter.shared.show(
+                        willPin ? L("action.pinned") : L("action.unpinned"),
+                        systemImage: "pin.fill",
+                        tint: .orange
+                    )
+                },
+                onExport: dismissThen { ExportService.shared.exportItem(item) },
+                onDelete: dismissThen { requestDeleteItem(item) }
             )
-        }
-        Button(item.isPinned ? L("action.unpin") : L("action.pin"),
-               systemImage: item.isPinned ? "pin.slash" : "pin") {
-            let willPin = !item.isPinned
-            vm.togglePin(item)
-            ToastCenter.shared.show(
-                willPin ? L("action.pinned") : L("action.unpinned"),
-                systemImage: "pin.fill",
-                tint: .orange
-            )
-        }
-        Divider()
-        Button(L("action.exportOne"), systemImage: "square.and.arrow.up") {
-            ExportService.shared.exportItem(item)
-        }
-        Divider()
-        Button(L("action.delete"), systemImage: "trash", role: .destructive) {
-            requestDeleteItem(item)
         }
     }
 
@@ -1270,6 +1276,236 @@ struct MainWindowContent: View {
         }
     }
 
+}
+
+// MARK: - Row context menu
+
+/// Shared, observable group-membership set so the root menu and the flyout
+/// submenu stay in lockstep: toggling a group in the submenu flips its check
+/// instantly, even though the two live in separate hosted view trees.
+@MainActor
+final class PaperGroupMembership: ObservableObject {
+    @Published var ids: Set<UUID>
+    init(ids: Set<UUID>) { self.ids = ids }
+    func toggle(_ id: UUID) {
+        if ids.contains(id) { ids.remove(id) } else { ids.insert(id) }
+    }
+    func clear() { ids.removeAll() }
+}
+
+/// Paper-styled replacement for the list row's right-click `NSMenu`. Hosted in
+/// a borderless child panel by `PaperContextMenuController`, so it lives in its
+/// own SwiftUI tree — every dependency arrives as a value or closure rather
+/// than through the environment.
+///
+/// Group assignment lives in a flyout secondary menu (`ClipboardGroupSubmenu`),
+/// where each group carries a leading selected-state so "which groups is this
+/// clip in" is legible at a glance — the gap the old system menu left.
+private struct ClipboardRowContextMenu: View {
+    let controller: PaperContextMenuController
+    let item: ClipboardItem
+    let groups: [ClipboardGroup]
+    let onCopy: () -> Void
+    let onCopyPlainText: () -> Void
+    let onRename: () -> Void
+    let onToggleGroup: (ClipboardGroup) -> Void
+    let onClearGroups: () -> Void
+    let onNewGroup: () -> Void
+    let onOpenInBrowser: () -> Void
+    let onReveal: () -> Void
+    let onOpenFile: () -> Void
+    let onOpenWith: () -> Void
+    let onToggleFavorite: () -> Void
+    let onTogglePin: () -> Void
+    let onExport: () -> Void
+    let onDelete: () -> Void
+
+    @StateObject private var membership: PaperGroupMembership
+    @StateObject private var submenu = PaperSubmenuCoordinator()
+
+    init(
+        controller: PaperContextMenuController,
+        item: ClipboardItem,
+        groups: [ClipboardGroup],
+        onCopy: @escaping () -> Void,
+        onCopyPlainText: @escaping () -> Void,
+        onRename: @escaping () -> Void,
+        onToggleGroup: @escaping (ClipboardGroup) -> Void,
+        onClearGroups: @escaping () -> Void,
+        onNewGroup: @escaping () -> Void,
+        onOpenInBrowser: @escaping () -> Void,
+        onReveal: @escaping () -> Void,
+        onOpenFile: @escaping () -> Void,
+        onOpenWith: @escaping () -> Void,
+        onToggleFavorite: @escaping () -> Void,
+        onTogglePin: @escaping () -> Void,
+        onExport: @escaping () -> Void,
+        onDelete: @escaping () -> Void
+    ) {
+        self.controller = controller
+        self.item = item
+        self.groups = groups
+        self.onCopy = onCopy
+        self.onCopyPlainText = onCopyPlainText
+        self.onRename = onRename
+        self.onToggleGroup = onToggleGroup
+        self.onClearGroups = onClearGroups
+        self.onNewGroup = onNewGroup
+        self.onOpenInBrowser = onOpenInBrowser
+        self.onReveal = onReveal
+        self.onOpenFile = onOpenFile
+        self.onOpenWith = onOpenWith
+        self.onToggleFavorite = onToggleFavorite
+        self.onTogglePin = onTogglePin
+        self.onExport = onExport
+        self.onDelete = onDelete
+        _membership = StateObject(
+            wrappedValue: PaperGroupMembership(ids: Set(groups.map(\.id).filter(item.isInGroup)))
+        )
+    }
+
+    private var hasFile: Bool { item.resolvedFileURL != nil }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            PaperMenuActionRow(icon: "doc.on.doc", title: L("action.copy"), action: onCopy)
+            PaperMenuActionRow(icon: "doc.plaintext", title: L("action.copyAsPlainText"), action: onCopyPlainText)
+
+            PaperMenuDivider()
+            PaperMenuActionRow(icon: "pencil", title: L("action.rename"), action: onRename)
+            // Group assignment opens a flyout secondary menu when groups exist;
+            // with none yet, jump straight to creating one.
+            if groups.isEmpty {
+                PaperMenuActionRow(icon: "folder.badge.plus", title: L("group.newAndMove"), action: onNewGroup)
+            } else {
+                PaperSubmenuRow(icon: "folder", title: L("group.moveTo"), coordinator: submenu)
+            }
+
+            if item.itemType == .url {
+                PaperMenuDivider()
+                PaperMenuActionRow(icon: "safari", title: L("action.openInBrowser"), action: onOpenInBrowser)
+            }
+
+            if hasFile {
+                PaperMenuDivider()
+                PaperMenuActionRow(icon: "folder", title: L("action.revealInFinder"), action: onReveal)
+                PaperMenuActionRow(icon: "arrow.up.forward.app", title: L("action.openFile"), action: onOpenFile)
+                PaperMenuActionRow(icon: "app.badge", title: L("action.openWith"), action: onOpenWith)
+            }
+
+            PaperMenuDivider()
+            PaperMenuActionRow(
+                icon: item.isFavorite ? "star.slash" : "star",
+                title: item.isFavorite ? L("action.unfavorite") : L("action.favorite"),
+                action: onToggleFavorite
+            )
+            PaperMenuActionRow(
+                icon: item.isPinned ? "pin.slash" : "pin",
+                title: item.isPinned ? L("action.unpin") : L("action.pin"),
+                action: onTogglePin
+            )
+
+            PaperMenuDivider()
+            PaperMenuActionRow(icon: "square.and.arrow.up", title: L("action.exportOne"), action: onExport)
+
+            PaperMenuDivider()
+            PaperMenuActionRow(icon: "trash", title: L("action.delete"), role: .destructive, action: onDelete)
+        }
+        .padding(5)
+        .frame(width: 232, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.appPaper)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .onAppear {
+            // Wire the flyout into the controller. Set here (not in `init`)
+            // because it captures `@StateObject`s; the root menu always appears
+            // before the user can hover the submenu row, so there's no race.
+            submenu.present = {
+                guard let frame = submenu.rowScreenFrame() else { return }
+                controller.openSubmenu(besideRowAt: frame, width: 222) {
+                    ClipboardGroupSubmenu(
+                        membership: membership,
+                        groups: groups,
+                        coordinator: submenu,
+                        onToggleGroup: onToggleGroup,
+                        onClearGroups: onClearGroups,
+                        onNewGroup: onNewGroup
+                    )
+                }
+            }
+            submenu.dismiss = { controller.closeSubmenu() }
+        }
+    }
+}
+
+/// Second-level paper menu listing every group with a leading selected-state,
+/// plus "remove from all" and "new group". Lives in its own child panel; hover
+/// over it keeps the flyout alive via the shared coordinator.
+private struct ClipboardGroupSubmenu: View {
+    @ObservedObject var membership: PaperGroupMembership
+    let groups: [ClipboardGroup]
+    @ObservedObject var coordinator: PaperSubmenuCoordinator
+    let onToggleGroup: (ClipboardGroup) -> Void
+    let onClearGroups: () -> Void
+    let onNewGroup: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            groupRows
+
+            if !membership.ids.isEmpty {
+                PaperMenuActionRow(
+                    icon: "folder.badge.minus",
+                    title: L("group.removeFromGroup"),
+                    action: {
+                        membership.clear()
+                        onClearGroups()
+                    }
+                )
+            }
+            PaperMenuDivider()
+            PaperMenuActionRow(icon: "folder.badge.plus", title: L("group.newAndMove"), action: onNewGroup)
+        }
+        .padding(5)
+        .frame(width: 222, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.appPaper)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .onHover { coordinator.submenuHover($0) }
+    }
+
+    /// Group rows, scroll-capped so a large catalog stays a usable height.
+    @ViewBuilder
+    private var groupRows: some View {
+        let rows = ForEach(groups) { group in
+            PaperMenuCheckRow(
+                title: group.displayName,
+                isMember: membership.ids.contains(group.id),
+                action: {
+                    membership.toggle(group.id)
+                    onToggleGroup(group)
+                }
+            )
+        }
+        if groups.count > 7 {
+            ScrollView { VStack(spacing: 1) { rows } }
+                .frame(height: 232)
+        } else {
+            rows
+        }
+    }
 }
 
 // MARK: - Rename sheet

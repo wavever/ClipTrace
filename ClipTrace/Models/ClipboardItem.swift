@@ -115,7 +115,18 @@ final class ClipboardItem {
     /// the clip is inserted. Nil for non-image clips or while recognition is
     /// still pending; an empty string means OCR ran but found nothing.
     var ocrText: String?
-    /// Optional user data group. Nil means the item is not assigned to a group.
+    /// Groups this item belongs to. An item can live in several groups at
+    /// once; membership is stored as newline-joined UUID strings (mirrors
+    /// `tagsRaw`) instead of a SwiftData relationship, so moving/deleting a
+    /// group never faults a large slice of history. Exact membership checks
+    /// should use `isInGroup(_:)` after fetching a stable candidate set; this
+    /// avoids relying on SwiftData's SQL translation for string matching,
+    /// which differs across macOS releases.
+    var groupIDsRaw: String?
+    /// Legacy single-group field. Retained only so the one-time launch
+    /// backfill (`AppContainer.migrateLegacyGroupAssignments`) can fold
+    /// pre-existing assignments into `groupIDsRaw`. Always nil for items
+    /// created since multi-group support landed.
     var groupID: UUID?
 
     init(type: ClipboardItemType, content: String, imageData: Data? = nil, fileURL: String? = nil, sourceApp: String = "", preview: String? = nil) {
@@ -135,6 +146,7 @@ final class ClipboardItem {
         self.tagsRaw = nil
         self.customTitle = nil
         self.ocrText = nil
+        self.groupIDsRaw = nil
         self.groupID = nil
     }
 
@@ -183,7 +195,41 @@ final class ClipboardItem {
         }
         tagsRaw = cleaned.isEmpty ? nil : cleaned.joined(separator: "\n")
     }
-    
+
+    /// Groups this item belongs to, decoded from `groupIDsRaw`. Empty when the
+    /// item is ungrouped; assignment order is preserved.
+    var groupIDs: [UUID] {
+        guard let raw = groupIDsRaw, !raw.isEmpty else { return [] }
+        return raw.split(separator: "\n").compactMap { UUID(uuidString: String($0)) }
+    }
+
+    /// True when the item belongs to at least one group.
+    var isGrouped: Bool {
+        !(groupIDsRaw?.isEmpty ?? true)
+    }
+
+    func isInGroup(_ id: UUID) -> Bool {
+        guard let raw = groupIDsRaw, !raw.isEmpty else { return false }
+        return raw.split(separator: "\n").contains { $0 == id.uuidString }
+    }
+
+    /// Replace the full membership set. Dedupes preserving first occurrence and
+    /// stores nil when empty so "ungrouped" stays a clean `groupIDsRaw == nil`.
+    func setGroupIDs(_ ids: [UUID]) {
+        var seen = Set<UUID>()
+        let cleaned = ids.filter { seen.insert($0).inserted }
+        groupIDsRaw = cleaned.isEmpty ? nil : cleaned.map(\.uuidString).joined(separator: "\n")
+    }
+
+    func addToGroup(_ id: UUID) {
+        guard !isInGroup(id) else { return }
+        setGroupIDs(groupIDs + [id])
+    }
+
+    func removeFromGroup(_ id: UUID) {
+        setGroupIDs(groupIDs.filter { $0 != id })
+    }
+
     var itemType: ClipboardItemType {
         ClipboardItemType(rawValue: type) ?? .text
     }

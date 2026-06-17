@@ -278,6 +278,7 @@ struct MenuBarContent: View {
         .background {
             panelBackground
         }
+        .menuBarWindowContainerBackground(surfaceStyle)
         .preferredColorScheme(surfaceStyle.isIsland ? .dark : nil)
         .onAppear {
             reloadHistory()
@@ -302,38 +303,8 @@ struct MenuBarContent: View {
 
     @ViewBuilder
     private var panelBackground: some View {
-        switch surfaceStyle {
-        case .paper:
-            Color.appPaper
-                .ignoresSafeArea()
-        case .dynamicIsland:
-            ZStack(alignment: .top) {
-                Color.black
-                LinearGradient(
-                    colors: [
-                        Color.white.opacity(0.12),
-                        Color.white.opacity(0.03),
-                        Color.clear
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .frame(height: 180)
-
-                RadialGradient(
-                    colors: [
-                        Color.appAccent.opacity(0.22),
-                        Color.clear
-                    ],
-                    center: .top,
-                    startRadius: 10,
-                    endRadius: 210
-                )
-                .frame(height: 260)
-                .blendMode(.screen)
-            }
+        MenuBarPanelBackground(surfaceStyle: surfaceStyle)
             .ignoresSafeArea()
-        }
     }
 
     private var header: some View {
@@ -583,6 +554,60 @@ struct MenuBarContent: View {
     }
 }
 
+private struct MenuBarPanelBackground: View {
+    let surfaceStyle: MenuBarSurfaceStyle
+
+    var body: some View {
+        switch surfaceStyle {
+        case .paper:
+            Color.appPaper
+        case .dynamicIsland:
+            ZStack(alignment: .top) {
+                Color.black
+                LinearGradient(
+                    colors: [
+                        Color.white.opacity(0.12),
+                        Color.white.opacity(0.03),
+                        Color.clear
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 180)
+
+                RadialGradient(
+                    colors: [
+                        Color.appAccent.opacity(0.22),
+                        Color.clear
+                    ],
+                    center: .top,
+                    startRadius: 10,
+                    endRadius: 210
+                )
+                .frame(height: 260)
+                .blendMode(.screen)
+            }
+        }
+    }
+}
+
+private extension View {
+    /// On macOS 26 the SwiftUI `MenuBarExtra` window can reserve translucent
+    /// safe-area bands above/below the content. Painting the window container,
+    /// not just the content background, keeps the paper surface continuous.
+    @ViewBuilder
+    func menuBarWindowContainerBackground(_ surfaceStyle: MenuBarSurfaceStyle) -> some View {
+        if #available(macOS 15.0, *) {
+            containerBackground(for: .window) {
+                MenuBarPanelBackground(surfaceStyle: surfaceStyle)
+                    .ignoresSafeArea()
+            }
+        } else {
+            self
+        }
+    }
+}
+
 @MainActor
 private final class MenuBarHistoryStore: ObservableObject {
     @Published private(set) var items: [ClipboardItem] = []
@@ -593,37 +618,48 @@ private final class MenuBarHistoryStore: ObservableObject {
 
     func reload(fetchLimit: Int, groupFilter: ClipboardGroupFilter) {
         reloadGroups()
-        var pinnedDescriptor = Self.itemDescriptor(pinned: true, groupFilter: groupFilter)
-        // Keep large blobs faulted while the menu bar page is built. The store
-        // keeps its ModelContext alive, so visible rows can fault thumbnails in
-        // lazily just like the main window list.
-        pinnedDescriptor.propertiesToFetch = [
-            \.id,
-            \.type,
-            \.content,
-            \.fileURL,
-            \.sourceApp,
-            \.createdAt,
-            \.isFavorite,
-            \.isPinned,
-            \.preview,
-            \.deletedAt,
-            \.tagsRaw,
-            \.customTitle,
-            \.groupID,
-        ]
+        let limit = max(fetchLimit, 1)
 
-        var recentDescriptor = Self.itemDescriptor(pinned: false, groupFilter: groupFilter)
-        recentDescriptor.fetchLimit = max(fetchLimit, 1)
-        recentDescriptor.propertiesToFetch = pinnedDescriptor.propertiesToFetch
+        switch groupFilter {
+        case .all:
+            var pinnedDescriptor = Self.itemDescriptor(pinned: true, groupFilter: .all)
+            Self.keepRowPropertiesFaulted(in: &pinnedDescriptor)
 
-        let pinned = groupFilter.isAll ? ((try? context.fetch(pinnedDescriptor)) ?? []) : []
-        let recent = (try? context.fetch(recentDescriptor)) ?? []
-        items = pinned + recent
-        refreshRecordCount(groupFilter: groupFilter)
+            var recentDescriptor = Self.itemDescriptor(pinned: false, groupFilter: .all)
+            recentDescriptor.fetchLimit = limit
+            Self.keepRowPropertiesFaulted(in: &recentDescriptor)
+
+            let pinned = (try? context.fetch(pinnedDescriptor)) ?? []
+            let recent = (try? context.fetch(recentDescriptor)) ?? []
+            items = pinned + recent
+            refreshRecordCount(groupFilter: groupFilter)
+
+        case .ungrouped:
+            var descriptor = Self.itemDescriptor(pinned: false, groupFilter: .ungrouped)
+            descriptor.fetchLimit = limit
+            Self.keepRowPropertiesFaulted(in: &descriptor)
+
+            items = (try? context.fetch(descriptor)) ?? []
+            refreshRecordCount(groupFilter: groupFilter)
+
+        case .group(let groupID):
+            var descriptor = Self.groupedCandidateDescriptor()
+            Self.keepRowPropertiesFaulted(in: &descriptor)
+
+            let candidates = (try? context.fetch(descriptor)) ?? []
+            let matching = candidates.filter { $0.isInGroup(groupID) }
+            items = Array(matching.prefix(limit))
+            totalActiveRecords = matching.count
+        }
     }
 
     func refreshRecordCount(groupFilter: ClipboardGroupFilter = .all) {
+        if case .group(let groupID) = groupFilter {
+            let candidates = (try? context.fetch(Self.groupedCandidateDescriptor())) ?? []
+            totalActiveRecords = candidates.filter { $0.isInGroup(groupID) }.count
+            return
+        }
+
         let descriptor = Self.countDescriptor(groupFilter: groupFilter)
         totalActiveRecords = (try? context.fetchCount(descriptor)) ?? items.count
     }
@@ -650,12 +686,12 @@ private final class MenuBarHistoryStore: ObservableObject {
             )
         case .ungrouped:
             return FetchDescriptor<ClipboardItem>(
-                predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false && $0.groupID == nil },
+                predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false && $0.groupIDsRaw == nil },
                 sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
             )
-        case .group(let groupID):
+        case .group:
             return FetchDescriptor<ClipboardItem>(
-                predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false && $0.groupID == groupID },
+                predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false && $0.groupIDsRaw != nil },
                 sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
             )
         }
@@ -669,13 +705,41 @@ private final class MenuBarHistoryStore: ObservableObject {
             )
         case .ungrouped:
             return FetchDescriptor<ClipboardItem>(
-                predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false && $0.groupID == nil }
+                predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false && $0.groupIDsRaw == nil }
             )
-        case .group(let groupID):
+        case .group:
             return FetchDescriptor<ClipboardItem>(
-                predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false && $0.groupID == groupID }
+                predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false && $0.groupIDsRaw != nil }
             )
         }
+    }
+
+    private static func groupedCandidateDescriptor() -> FetchDescriptor<ClipboardItem> {
+        FetchDescriptor<ClipboardItem>(
+            predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false && $0.groupIDsRaw != nil },
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+    }
+
+    private static func keepRowPropertiesFaulted(in descriptor: inout FetchDescriptor<ClipboardItem>) {
+        // Keep large blobs faulted while the menu bar page is built. The store
+        // keeps its ModelContext alive, so visible rows can fault thumbnails in
+        // lazily just like the main window list.
+        descriptor.propertiesToFetch = [
+            \.id,
+            \.type,
+            \.content,
+            \.fileURL,
+            \.sourceApp,
+            \.createdAt,
+            \.isFavorite,
+            \.isPinned,
+            \.preview,
+            \.deletedAt,
+            \.tagsRaw,
+            \.customTitle,
+            \.groupIDsRaw,
+        ]
     }
 }
 
@@ -771,7 +835,7 @@ struct MenuBarRow: View {
         .contextMenu {
             Button(L("action.copy"), systemImage: "doc.on.doc") { triggerCopy() }
             if let onCopyPlainText {
-                Button(L("action.copyAsPlainText"), systemImage: "textformat") {
+                Button(L("action.copyAsPlainText"), systemImage: "doc.plaintext") {
                     onCopyPlainText()
                     triggerCopySuccessFlash()
                 }

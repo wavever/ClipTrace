@@ -694,8 +694,8 @@ class ClipboardViewModel: ObservableObject {
     func deleteGroup(_ group: ClipboardGroup, context: ModelContext) {
         let groupID = group.id
         if let items = try? context.fetch(FetchDescriptor<ClipboardItem>()) {
-            for item in items where item.groupID == groupID {
-                item.groupID = nil
+            for item in items where item.isInGroup(groupID) {
+                item.removeFromGroup(groupID)
             }
         }
         context.delete(group)
@@ -706,17 +706,37 @@ class ClipboardViewModel: ObservableObject {
         groupsVersion &+= 1
     }
 
-    func assign(_ item: ClipboardItem, to group: ClipboardGroup?, context: ModelContext) {
-        item.groupID = group?.id
+    /// Toggle a single group's membership for one item. An item can belong to
+    /// several groups, so this adds the group when absent and removes it when
+    /// already present rather than replacing the whole assignment.
+    func toggleGroup(_ item: ClipboardItem, group: ClipboardGroup, context: ModelContext) {
+        if item.isInGroup(group.id) {
+            item.removeFromGroup(group.id)
+        } else {
+            item.addToGroup(group.id)
+        }
         try? context.save()
         groupsVersion &+= 1
     }
 
+    /// Drop an item from every group it belongs to.
+    func clearGroups(_ item: ClipboardItem, context: ModelContext) {
+        item.setGroupIDs([])
+        try? context.save()
+        groupsVersion &+= 1
+    }
+
+    /// Batch group edit for the selection bar. A non-nil group is *added* to
+    /// every selected item (existing memberships are kept); nil clears all
+    /// group membership.
     func assign(_ items: [ClipboardItem], to group: ClipboardGroup?, context: ModelContext) {
         guard !items.isEmpty else { return }
-        let groupID = group?.id
         for item in items {
-            item.groupID = groupID
+            if let group {
+                item.addToGroup(group.id)
+            } else {
+                item.setGroupIDs([])
+            }
         }
         try? context.save()
         groupsVersion &+= 1
@@ -1049,9 +1069,9 @@ class ClipboardViewModel: ObservableObject {
         case .all:
             break
         case .ungrouped:
-            result = result.filter { $0.groupID == nil && !$0.isPinned }
+            result = result.filter { !$0.isGrouped && !$0.isPinned }
         case .group(let groupID):
-            result = result.filter { $0.groupID == groupID && !$0.isPinned }
+            result = result.filter { $0.isInGroup(groupID) && !$0.isPinned }
         }
 
         if !activeTags.isEmpty {
