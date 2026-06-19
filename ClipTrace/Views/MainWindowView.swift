@@ -718,9 +718,7 @@ struct MainWindowContent: View {
             GroupFilterMenu(
                 groups: groups.sortedForDisplay(),
                 selection: $vm.selectedGroupFilter,
-                onCreateGroup: {
-                    groupEditorRequest = .create()
-                }
+                onManageGroups: { showGroupManager = true }
             )
 
             // Sort control — only meaningful inside 收藏, where the list no
@@ -1654,6 +1652,237 @@ private struct GroupEditorSheet: View {
     }
 }
 
+@MainActor
+private struct GroupManagementSheet: View {
+    @EnvironmentObject var vm: ClipboardViewModel
+    @Environment(\.modelContext) private var modelContext
+    @Query private var groups: [ClipboardGroup]
+
+    let onClose: () -> Void
+
+    @State private var newGroupName = ""
+    @State private var deleteTarget: ClipboardGroup?
+    @State private var showDeleteAlert = false
+    @FocusState private var newGroupFocused: Bool
+
+    private var sortedGroups: [ClipboardGroup] {
+        groups.sortedForDisplay()
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            content
+            Divider()
+            footer
+        }
+        .frame(width: 520, height: 500)
+        .background(Color.appPaper)
+        .alert(L("confirm.deleteGroup.title"), isPresented: $showDeleteAlert) {
+            Button(L("common.cancel"), role: .cancel) {
+                deleteTarget = nil
+            }
+            Button(L("common.delete"), role: .destructive) {
+                confirmDelete()
+            }
+        } message: {
+            Text(L("confirm.deleteGroup.message"))
+        }
+        .onChange(of: showDeleteAlert) { _, showing in
+            if !showing { deleteTarget = nil }
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "folder.badge.gearshape")
+                .foregroundStyle(Color.appAccent)
+            Text(L("group.manage.title"))
+                .font(.system(size: 14, weight: .semibold))
+            Spacer()
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .bold))
+            }
+            .buttonStyle(PaperIconButtonStyle(size: 28))
+            .help(L("common.close"))
+            .keyboardShortcut(.cancelAction)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(L("group.manage.subtitle"))
+                .font(.system(size: 11.5))
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 8) {
+                TextField(L("group.name.placeholder"), text: $newGroupName)
+                    .focused($newGroupFocused)
+                    .onSubmit { addGroup() }
+                    .paperTextField(focused: newGroupFocused)
+
+                Button {
+                    addGroup()
+                } label: {
+                    Label(L("common.add"), systemImage: "plus")
+                }
+                .buttonStyle(PaperActionButtonStyle(role: .primary))
+            }
+
+            if sortedGroups.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "tray")
+                        .font(.system(size: 28, weight: .light))
+                    Text(L("group.manage.empty"))
+                        .font(.system(size: 13, weight: .medium))
+                    Text(L("group.manage.empty.subtitle"))
+                        .font(.system(size: 11))
+                }
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.vertical, 32)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(sortedGroups) { group in
+                            GroupManagementRow(
+                                group: group,
+                                onRename: { name in
+                                    vm.renameGroup(group, to: name, context: modelContext)
+                                    ToastCenter.shared.show(
+                                        L("group.renamed"),
+                                        systemImage: "pencil",
+                                        tint: .appAccent
+                                    )
+                                },
+                                onDelete: {
+                                    deleteTarget = group
+                                    showDeleteAlert = true
+                                }
+                            )
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
+        .padding(16)
+    }
+
+    private var footer: some View {
+        HStack {
+            Text(L("settings.data.groups.item.subtitle"))
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button(L("common.done"), action: onClose)
+                .buttonStyle(PaperActionButtonStyle(role: .primary))
+                .keyboardShortcut(.defaultAction)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    private func addGroup() {
+        guard let group = vm.createGroup(named: newGroupName, groups: groups, context: modelContext) else { return }
+        newGroupName = ""
+        newGroupFocused = true
+        ToastCenter.shared.show(
+            L("group.createdFormat", group.displayName),
+            systemImage: "folder.badge.plus",
+            tint: .appAccent
+        )
+    }
+
+    private func confirmDelete() {
+        guard let deleteTarget else { return }
+        let name = deleteTarget.displayName
+        vm.deleteGroup(deleteTarget, context: modelContext)
+        ToastCenter.shared.show(
+            L("group.deletedFormat", name),
+            systemImage: "folder.badge.minus",
+            tint: .red
+        )
+        self.deleteTarget = nil
+    }
+}
+
+private struct GroupManagementRow: View {
+    let group: ClipboardGroup
+    let onRename: (String) -> Void
+    let onDelete: () -> Void
+
+    @State private var draft = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "folder.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.appAccent)
+                .frame(width: 22)
+
+            TextField(L("group.name.placeholder"), text: $draft)
+                .focused($focused)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12.5))
+                .padding(.horizontal, 9)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(Color.appChipFill)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(
+                            focused ? Color.appAccent.opacity(0.55) : Color.appCardBorder,
+                            lineWidth: 0.6
+                        )
+                )
+                .onSubmit { commitRename() }
+                .onChange(of: focused) { _, isFocused in
+                    if !isFocused { commitRename() }
+                }
+
+            Button(action: commitRename) {
+                Image(systemName: "checkmark")
+            }
+            .buttonStyle(PaperIconButtonStyle(size: 28))
+            .help(L("common.save"))
+
+            Button(action: onDelete) {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(PaperIconButtonStyle(size: 28))
+            .help(L("group.delete"))
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.appCard.opacity(0.82))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+        )
+        .onAppear { draft = group.displayName }
+        .onChange(of: group.name) { _, newValue in
+            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !focused { draft = trimmed.isEmpty ? L("group.untitled") : trimmed }
+        }
+    }
+
+    private func commitRename() {
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed != group.displayName else { return }
+        onRename(trimmed)
+    }
+}
+
 /// Conditional simultaneous tap gesture used by the row to set keyboard focus
 /// on single click without triggering the double-tap disambiguation delay.
 private struct FocusTapModifier: ViewModifier {
@@ -1703,7 +1932,7 @@ private struct HeaderStatDivider: View {
 private struct GroupFilterMenu: View {
     let groups: [ClipboardGroup]
     @Binding var selection: ClipboardGroupFilter
-    let onCreateGroup: () -> Void
+    let onManageGroups: () -> Void
 
     @State private var hovering = false
     @StateObject private var controller = PaperDropdownController()
@@ -1754,9 +1983,9 @@ private struct GroupFilterMenu: View {
                     selection = filter
                     controller.close()
                 },
-                onCreateGroup: {
+                onManageGroups: {
                     controller.close()
-                    onCreateGroup()
+                    onManageGroups()
                 }
             )
         }
@@ -1778,7 +2007,7 @@ private struct GroupFilterPanel: View {
     let groups: [ClipboardGroup]
     let selection: ClipboardGroupFilter
     let onSelect: (ClipboardGroupFilter) -> Void
-    let onCreateGroup: () -> Void
+    let onManageGroups: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -1809,7 +2038,7 @@ private struct GroupFilterPanel: View {
                                 FilterListOption(
                                     title: group.displayName,
                                     icon: "folder.fill",
-                                    isSelected: selection == .group(group.id)
+                                    isSelected: selection == .group(group.id),
                                 ) {
                                     onSelect(.group(group.id))
                                 }
@@ -1830,12 +2059,12 @@ private struct GroupFilterPanel: View {
             )
 
             Button {
-                onCreateGroup()
+                onManageGroups()
             } label: {
                 HStack(spacing: 7) {
-                    Image(systemName: "folder.badge.plus")
+                    Image(systemName: "folder.badge.gearshape")
                         .font(.system(size: 11, weight: .semibold))
-                    Text(L("group.create"))
+                    Text(L("group.manage"))
                         .font(.system(size: 12, weight: .semibold))
                     Spacer()
                 }
