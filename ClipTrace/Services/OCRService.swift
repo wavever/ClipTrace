@@ -96,3 +96,108 @@ final class OCRService {
         }
     }
 }
+
+/// A QR code / barcode recognized in an image, with the payload and Vision
+/// bounding box kept together so the UI can highlight the exact source area.
+struct BarcodeDetection: Identifiable, Hashable {
+    let id = UUID()
+    let payload: String
+    let symbology: String
+    /// Normalized bounding box from Vision (origin = bottom-left of image).
+    let boundingBox: CGRect
+    /// Confidence from Vision (0–1).
+    let confidence: Float
+
+    var displaySymbology: String {
+        switch symbology.uppercased() {
+        case "QR": return "QR Code"
+        case "AZTEC": return "Aztec"
+        case "CODABAR": return "Codabar"
+        case "CODE39": return "Code 39"
+        case "CODE39CHECKSUM": return "Code 39 Checksum"
+        case "CODE39FULLASCII": return "Code 39 Full ASCII"
+        case "CODE39FULLASCIICHECKSUM": return "Code 39 Full ASCII Checksum"
+        case "CODE93": return "Code 93"
+        case "CODE93I": return "Code 93i"
+        case "CODE128": return "Code 128"
+        case "DATAMATRIX": return "Data Matrix"
+        case "EAN8": return "EAN-8"
+        case "EAN13": return "EAN-13"
+        case "GS1DATABAR": return "GS1 DataBar"
+        case "GS1DATABAREXPANDED": return "GS1 DataBar Expanded"
+        case "GS1DATABARLIMITED": return "GS1 DataBar Limited"
+        case "I2OF5": return "Interleaved 2 of 5"
+        case "I2OF5CHECKSUM": return "Interleaved 2 of 5 Checksum"
+        case "ITF14": return "ITF-14"
+        case "MICROPDF417": return "MicroPDF417"
+        case "MICROQR": return "Micro QR"
+        case "PDF417": return "PDF417"
+        case "UPCE": return "UPC-E"
+        default:
+            return symbology
+                .replacingOccurrences(of: "VNBarcodeSymbology", with: "")
+                .replacingOccurrences(of: "_", with: " ")
+        }
+    }
+}
+
+/// Offline QR code / barcode decoding for clipboard images using Vision.
+/// Supports QR plus the 1D/2D barcode formats available on the current macOS
+/// release (EAN/UPC, Code 39/93/128, Data Matrix, PDF417, Aztec, etc.).
+final class BarcodeService {
+    static let shared = BarcodeService()
+
+    private init() {}
+
+    func detect(item: ClipboardItem) async -> [BarcodeDetection] {
+        if let data = item.imageData {
+            return await detect(imageData: data)
+        }
+        if let url = item.resolvedFileURL,
+           let data = try? Data(contentsOf: url) {
+            return await detect(imageData: data)
+        }
+        return []
+    }
+
+    func detect(imageData: Data) async -> [BarcodeDetection] {
+        await Task.detached(priority: .userInitiated) { () -> [BarcodeDetection] in
+            guard let image = NSImage(data: imageData),
+                  let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+                return []
+            }
+            return Self.performBarcodeDetection(cgImage: cgImage)
+        }.value
+    }
+
+    private static func performBarcodeDetection(cgImage: CGImage) -> [BarcodeDetection] {
+        let request = VNDetectBarcodesRequest()
+        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        do {
+            try handler.perform([request])
+        } catch {
+            return []
+        }
+        guard let observations = request.results else { return [] }
+
+        return observations
+            .compactMap { obs -> BarcodeDetection? in
+                guard let payload = obs.payloadStringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !payload.isEmpty else {
+                    return nil
+                }
+                return BarcodeDetection(
+                    payload: payload,
+                    symbology: obs.symbology.rawValue,
+                    boundingBox: obs.boundingBox,
+                    confidence: obs.confidence
+                )
+            }
+            .sorted { lhs, rhs in
+                let lhsTop = lhs.boundingBox.maxY
+                let rhsTop = rhs.boundingBox.maxY
+                if abs(lhsTop - rhsTop) > 0.01 { return lhsTop > rhsTop }
+                return lhs.boundingBox.minX < rhs.boundingBox.minX
+            }
+    }
+}

@@ -106,6 +106,9 @@ struct MainWindowContent: View {
     /// Non-nil when the user picked "Rename" from a row's context menu —
     /// drives the rename sheet at the root level so it survives row-view churn.
     @State private var renameTarget: ClipboardItem?
+    @State private var barcodeScanTarget: ClipboardItem?
+    @State private var qrPreviewTarget: ClipboardItem?
+    @State private var showGroupManager = false
     @State private var groupEditorRequest: GroupEditorRequest?
     /// Paper-styled right-click menu for list rows, hosted in a borderless
     /// child panel so it can show a custom group-membership state and match the
@@ -232,6 +235,15 @@ struct MainWindowContent: View {
                 },
                 onCancel: { renameTarget = nil }
             )
+        }
+        .sheet(item: $barcodeScanTarget) { item in
+            BarcodeResultView(item: item, onClose: { barcodeScanTarget = nil })
+        }
+        .sheet(item: $qrPreviewTarget) { item in
+            TextQRCodePreviewView(item: item, onClose: { qrPreviewTarget = nil })
+        }
+        .sheet(isPresented: $showGroupManager) {
+            GroupManagementSheet(onClose: { showGroupManager = false })
         }
         .sheet(item: $groupEditorRequest) { request in
             GroupEditorSheet(
@@ -1164,6 +1176,8 @@ struct MainWindowContent: View {
                     vm.copyAsPlainText(item)
                     ToastCenter.shared.show(L("common.copiedPlainText"))
                 },
+                onPreviewQRCode: dismissThen { qrPreviewTarget = item },
+                onScanCodes: dismissThen { barcodeScanTarget = item },
                 onRename: dismissThen { renameTarget = item },
                 onToggleGroup: { group in
                     let wasMember = item.isInGroup(group.id)
@@ -1296,6 +1310,8 @@ private struct ClipboardRowContextMenu: View {
     let groups: [ClipboardGroup]
     let onCopy: () -> Void
     let onCopyPlainText: () -> Void
+    let onPreviewQRCode: () -> Void
+    let onScanCodes: () -> Void
     let onRename: () -> Void
     let onToggleGroup: (ClipboardGroup) -> Void
     let onClearGroups: () -> Void
@@ -1318,6 +1334,8 @@ private struct ClipboardRowContextMenu: View {
         groups: [ClipboardGroup],
         onCopy: @escaping () -> Void,
         onCopyPlainText: @escaping () -> Void,
+        onPreviewQRCode: @escaping () -> Void,
+        onScanCodes: @escaping () -> Void,
         onRename: @escaping () -> Void,
         onToggleGroup: @escaping (ClipboardGroup) -> Void,
         onClearGroups: @escaping () -> Void,
@@ -1336,6 +1354,8 @@ private struct ClipboardRowContextMenu: View {
         self.groups = groups
         self.onCopy = onCopy
         self.onCopyPlainText = onCopyPlainText
+        self.onPreviewQRCode = onPreviewQRCode
+        self.onScanCodes = onScanCodes
         self.onRename = onRename
         self.onToggleGroup = onToggleGroup
         self.onClearGroups = onClearGroups
@@ -1354,11 +1374,24 @@ private struct ClipboardRowContextMenu: View {
     }
 
     private var hasFile: Bool { item.resolvedFileURL != nil }
+    private var canScanCodes: Bool {
+        item.itemType == .image && (item.imageData != nil || item.resolvedFileURL != nil)
+    }
+    private var canPreviewQRCode: Bool {
+        item.itemType == .text &&
+        !item.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             PaperMenuActionRow(icon: "doc.on.doc", title: L("action.copy"), action: onCopy)
             PaperMenuActionRow(icon: "doc.plaintext", title: L("action.copyAsPlainText"), action: onCopyPlainText)
+            if canPreviewQRCode {
+                PaperMenuActionRow(icon: "qrcode", title: L("action.qrPreview"), action: onPreviewQRCode)
+            }
+            if canScanCodes {
+                PaperMenuActionRow(icon: "qrcode.viewfinder", title: L("action.scanCodes"), action: onScanCodes)
+            }
 
             PaperMenuDivider()
             PaperMenuActionRow(icon: "pencil", title: L("action.rename"), action: onRename)

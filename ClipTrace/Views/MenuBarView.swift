@@ -753,6 +753,7 @@ struct MenuBarRow: View {
 
     @State private var isHovered = false
     @State private var copySucceeded = false
+    @State private var showQRCodePreview = false
     @State private var resetTask: Task<Void, Never>?
 
     var body: some View {
@@ -832,6 +833,9 @@ struct MenuBarRow: View {
         .onTapGesture(count: 2) { triggerCopy() }
         .onHover { isHovered = $0 }
         .onDisappear { resetTask?.cancel() }
+        .sheet(isPresented: $showQRCodePreview) {
+            TextQRCodePreviewView(item: item, onClose: { showQRCodePreview = false })
+        }
         .contextMenu {
             Button(L("action.copy"), systemImage: "doc.on.doc") { triggerCopy() }
             if let onCopyPlainText {
@@ -841,12 +845,22 @@ struct MenuBarRow: View {
                 }
                 .keyboardShortcut("c", modifiers: [.command, .option])
             }
+            if canPreviewQRCode {
+                Button(L("action.qrPreview"), systemImage: "qrcode") {
+                    showQRCodePreview = true
+                }
+            }
             Divider()
             Button(item.isPinned ? L("action.unpin") : L("action.pin"),
                    systemImage: item.isPinned ? "pin.slash" : "pin") {
                 onTogglePin()
             }
         }
+    }
+
+    private var canPreviewQRCode: Bool {
+        item.itemType == .text &&
+        !item.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// Flash the "copied" check without re-issuing the underlying copy — the

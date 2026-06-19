@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import CoreText
+import CoreImage
 
 // MARK: - Continuous live-text selection layer
 
@@ -575,5 +576,574 @@ struct OCRResultView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+}
+
+// MARK: - QR / Barcode Result View
+
+/// Image modal for QR code and barcode decoding. The left side keeps the
+/// original image visible with Vision bounding boxes; the right side lists
+/// every decoded payload with one-click copy controls.
+@MainActor
+struct BarcodeResultView: View {
+    let item: ClipboardItem
+    let onClose: () -> Void
+
+    @State private var detections: [BarcodeDetection] = []
+    @State private var isScanning: Bool = true
+    @State private var image: NSImage?
+    @State private var selectedID: BarcodeDetection.ID?
+
+    // Zoom / pan state
+    @State private var scale: CGFloat = 1
+    @State private var lastScale: CGFloat = 1
+    @State private var offset: CGSize = .zero
+    @State private var lastOffset: CGSize = .zero
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            HStack(spacing: 0) {
+                imageArea
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Divider()
+                resultList
+                    .frame(width: 330)
+            }
+            Divider()
+            footer
+        }
+        .frame(width: 980, height: 640)
+        .task {
+            if let data = item.imageData, let img = NSImage(data: data) {
+                image = img
+            } else if let url = item.resolvedFileURL, let img = NSImage(contentsOf: url) {
+                image = img
+            }
+
+            detections = await BarcodeService.shared.detect(item: item)
+            selectedID = detections.first?.id
+            isScanning = false
+        }
+    }
+
+    // MARK: - Header
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "qrcode.viewfinder")
+                .foregroundStyle(Color.appAccent)
+            Text(L("barcode.title"))
+                .font(.system(size: 14, weight: .semibold))
+
+            if !isScanning, detections.isEmpty {
+                Label(L("barcode.empty"), systemImage: "qrcode")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 4)
+            }
+
+            Spacer()
+
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .bold))
+            }
+            .buttonStyle(PaperIconButtonStyle(size: 28))
+            .help(L("common.close"))
+            .keyboardShortcut(.cancelAction)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    // MARK: - Image + bounding boxes
+
+    private var imageArea: some View {
+        GeometryReader { geo in
+            if let image {
+                let displaySize = fittedSize(image: image, in: geo.size)
+
+                ZStack(alignment: .topLeading) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: displaySize.width, height: displaySize.height)
+
+                    ForEach(Array(detections.enumerated()), id: \.element.id) { index, detection in
+                        let rect = visionToDisplay(detection.boundingBox, displaySize: displaySize)
+                        let selected = detection.id == selectedID
+
+                        ZStack(alignment: .topLeading) {
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .strokeBorder(
+                                    selected ? Color.appAccent : Color.appAccent.opacity(0.55),
+                                    lineWidth: selected ? 2 : 1
+                                )
+                                .background(
+                                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                        .fill(Color.appAccent.opacity(selected ? 0.12 : 0.06))
+                                )
+
+                            Text("\(index + 1)")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(
+                                    Capsule(style: .continuous)
+                                        .fill(Color.appAccent)
+                                )
+                                .offset(x: 4, y: 4)
+                        }
+                        .frame(width: max(rect.width, 16), height: max(rect.height, 16))
+                        .offset(x: rect.origin.x, y: rect.origin.y)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            selectedID = detection.id
+                        }
+                    }
+                }
+                .frame(width: displaySize.width, height: displaySize.height)
+                .scaleEffect(scale)
+                .offset(offset)
+                .gesture(zoomGesture)
+                .gesture(panGesture)
+                .frame(width: geo.size.width, height: geo.size.height)
+                .clipped()
+            } else {
+                Color.appPaper
+                    .overlay {
+                        VStack(spacing: 8) {
+                            Image(systemName: "photo")
+                                .font(.system(size: 36, weight: .light))
+                            Text(L("barcode.noImage"))
+                                .font(.system(size: 12))
+                        }
+                        .foregroundStyle(.secondary)
+                    }
+            }
+
+            if isScanning {
+                VStack(spacing: 10) {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .controlSize(.small)
+                    Text(L("barcode.scanning"))
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.appPaper.opacity(0.35))
+            }
+        }
+    }
+
+    // MARK: - Results
+
+    private var resultList: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label(L("barcode.results"), systemImage: "list.bullet.rectangle")
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+                if !detections.isEmpty {
+                    Text("\(detections.count)")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.appAccent)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(Color.appAccent.opacity(0.12))
+                        )
+                }
+            }
+
+            if isScanning {
+                Spacer()
+            } else if detections.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "qrcode")
+                        .font(.system(size: 30, weight: .light))
+                    Text(L("barcode.empty"))
+                        .font(.system(size: 12))
+                }
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    VStack(spacing: 8) {
+                        ForEach(Array(detections.enumerated()), id: \.element.id) { index, detection in
+                            BarcodeDetectionRow(
+                                index: index + 1,
+                                detection: detection,
+                                isSelected: detection.id == selectedID,
+                                onSelect: { selectedID = detection.id },
+                                onCopy: { copy(detection.payload) }
+                            )
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
+        .padding(14)
+        .background(Color.appPaper)
+    }
+
+    // MARK: - Gestures / Geometry
+
+    private var zoomGesture: some Gesture {
+        MagnificationGesture()
+            .onChanged { value in
+                scale = lastScale * value
+            }
+            .onEnded { _ in
+                lastScale = scale
+            }
+    }
+
+    private var panGesture: some Gesture {
+        DragGesture(minimumDistance: 1)
+            .onChanged { value in
+                offset = CGSize(
+                    width: lastOffset.width + value.translation.width,
+                    height: lastOffset.height + value.translation.height
+                )
+            }
+            .onEnded { _ in
+                lastOffset = offset
+            }
+    }
+
+    private func resetTransform() {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            scale = 1; lastScale = 1
+            offset = .zero; lastOffset = .zero
+        }
+    }
+
+    private func fittedSize(image: NSImage, in container: CGSize) -> CGSize {
+        let iw = image.size.width
+        let ih = image.size.height
+        guard iw > 0, ih > 0 else { return .zero }
+        let scale = min(container.width / iw, container.height / ih)
+        return CGSize(width: iw * scale, height: ih * scale)
+    }
+
+    private func visionToDisplay(_ box: CGRect, displaySize: CGSize) -> CGRect {
+        let x = box.origin.x * displaySize.width
+        let y = (1 - box.origin.y - box.height) * displaySize.height
+        let w = box.width * displaySize.width
+        let h = box.height * displaySize.height
+        return CGRect(x: x, y: y, width: w, height: h)
+    }
+
+    // MARK: - Footer / Copy
+
+    private var footer: some View {
+        HStack(spacing: 10) {
+            if !isScanning, !detections.isEmpty {
+                Button {
+                    copy(detections.map(\.payload).joined(separator: "\n"))
+                } label: {
+                    Label(L("barcode.copyAll"), systemImage: "doc.on.doc")
+                }
+                .buttonStyle(PaperActionButtonStyle(role: .plain))
+            }
+
+            Spacer()
+
+            Button(action: resetTransform) {
+                Image(systemName: "arrow.counterclockwise")
+                    .font(.system(size: 12))
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(PaperActionButtonStyle(role: .plain))
+            .help(L("ocr.resetView"))
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    private func copy(_ text: String) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        ClipboardMonitor.markInternalWrite()
+        ToastCenter.shared.show(
+            L("common.copied"),
+            systemImage: "doc.on.doc",
+            tint: .appAccent
+        )
+    }
+}
+
+private struct BarcodeDetectionRow: View {
+    let index: Int
+    let detection: BarcodeDetection
+    let isSelected: Bool
+    let onSelect: () -> Void
+    let onCopy: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text("\(index)")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 22, height: 22)
+                    .background(Circle().fill(Color.appAccent))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(detection.displaySymbology)
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(L("barcode.confidenceFormat", Double(detection.confidence * 100)))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Button(action: onCopy) {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 12, weight: .medium))
+                        .frame(width: 26, height: 26)
+                }
+                .buttonStyle(PaperActionButtonStyle(role: .plain))
+                .help(L("barcode.copyValue"))
+            }
+
+            Text(detection.payload)
+                .font(.system(size: 12, design: .monospaced))
+                .textSelection(.enabled)
+                .lineLimit(4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.appCard.opacity(0.82))
+                )
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(isSelected ? Color.appAccent.opacity(0.12) : Color.appCard.opacity(0.55))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(
+                    isSelected ? Color.appAccent.opacity(0.65) : Color.appCardBorder,
+                    lineWidth: isSelected ? 1 : 0.5
+                )
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .onTapGesture(perform: onSelect)
+    }
+}
+
+// MARK: - Text QR Code Preview
+
+/// Generates crisp QR code images from text clips. Kept small and local to the
+/// preview UI so the feature stays offline and dependency-free.
+private enum QRCodeImageFactory {
+    private static let context = CIContext(options: nil)
+
+    static func makeImage(from text: String, sideLength: CGFloat = 360) -> NSImage? {
+        guard let data = text.data(using: .utf8), !data.isEmpty else { return nil }
+
+        guard let qrFilter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
+        qrFilter.setValue(data, forKey: "inputMessage")
+        qrFilter.setValue("M", forKey: "inputCorrectionLevel")
+
+        guard let qrImage = qrFilter.outputImage else { return nil }
+        let outputImage: CIImage
+        if let colorFilter = CIFilter(name: "CIFalseColor") {
+            colorFilter.setValue(qrImage, forKey: kCIInputImageKey)
+            colorFilter.setValue(CIColor.black, forKey: "inputColor0")
+            colorFilter.setValue(CIColor.white, forKey: "inputColor1")
+            outputImage = colorFilter.outputImage ?? qrImage
+        } else {
+            outputImage = qrImage
+        }
+
+        let extent = outputImage.extent.integral
+        guard extent.width > 0, extent.height > 0 else { return nil }
+        let scale = sideLength / max(extent.width, extent.height)
+        let scaled = outputImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+
+        guard let cgImage = context.createCGImage(scaled, from: scaled.extent.integral) else {
+            return nil
+        }
+        return NSImage(cgImage: cgImage, size: scaled.extent.size)
+    }
+}
+
+@MainActor
+struct TextQRCodePreviewView: View {
+    let item: ClipboardItem
+    let onClose: () -> Void
+
+    @State private var qrImage: NSImage?
+    @State private var didGenerate = false
+
+    private var text: String { item.content }
+    private var byteCount: Int { text.data(using: .utf8)?.count ?? 0 }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            HStack(spacing: 0) {
+                qrPanel
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Divider()
+                contentPanel
+                    .frame(width: 320)
+            }
+        }
+        .frame(width: 760, height: 500)
+        .task(id: item.id) {
+            qrImage = QRCodeImageFactory.makeImage(from: text)
+            didGenerate = true
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "qrcode")
+                .foregroundStyle(Color.appAccent)
+            Text(L("qr.title"))
+                .font(.system(size: 14, weight: .semibold))
+
+            if didGenerate, qrImage == nil {
+                Label(L("qr.unableToGenerate"), systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 4)
+            }
+
+            Spacer()
+
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .bold))
+            }
+            .buttonStyle(PaperIconButtonStyle(size: 28))
+            .help(L("common.close"))
+            .keyboardShortcut(.cancelAction)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    private var qrPanel: some View {
+        ZStack {
+            Color.appPaper
+            if let qrImage {
+                Image(nsImage: qrImage)
+                    .resizable()
+                    .interpolation(.none)
+                    .scaledToFit()
+                    .frame(width: 360, height: 360)
+                    .padding(18)
+                    .background(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .strokeBorder(Color.appCardBorder, lineWidth: 1)
+                    )
+                    .shadow(color: .black.opacity(0.10), radius: 14, y: 4)
+                .padding(24)
+            } else {
+                VStack(spacing: 10) {
+                    if didGenerate {
+                        Image(systemName: "qrcode")
+                            .font(.system(size: 36, weight: .light))
+                        Text(L("qr.unableToGenerate"))
+                            .font(.system(size: 12))
+                    } else {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(L("qr.generating"))
+                            .font(.system(size: 12))
+                    }
+                }
+                .foregroundStyle(.secondary)
+            }
+
+            if qrImage != nil {
+                Button(action: copyQRCodeImage) {
+                    Image(systemName: "doc.on.doc")
+                }
+                .buttonStyle(PaperIconButtonStyle(size: 28))
+                .help(L("qr.copyImage"))
+                .padding(14)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+            }
+        }
+    }
+
+    private var contentPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label(L("qr.sourceText"), systemImage: "doc.text")
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+                Text(L("qr.byteCountFormat", byteCount))
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                Button(action: copyText) {
+                    Image(systemName: "doc.on.doc")
+                }
+                .buttonStyle(PaperIconButtonStyle(size: 28))
+                .help(L("qr.copyText"))
+            }
+
+            ScrollView {
+                Text(text)
+                    .font(.system(size: 12))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.appCard.opacity(0.82))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+            )
+        }
+        .padding(14)
+        .background(Color.appPaper)
+    }
+
+    private func copyText() {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        ClipboardMonitor.markInternalWrite()
+        ToastCenter.shared.show(
+            L("common.copied"),
+            systemImage: "doc.on.doc",
+            tint: .appAccent
+        )
+    }
+
+    private func copyQRCodeImage() {
+        guard let qrImage else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.writeObjects([qrImage])
+        ClipboardMonitor.markInternalWrite()
+        ToastCenter.shared.show(
+            L("qr.copiedImage"),
+            systemImage: "qrcode",
+            tint: .appAccent
+        )
     }
 }

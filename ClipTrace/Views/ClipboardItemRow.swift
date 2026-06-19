@@ -21,6 +21,8 @@ struct ClipboardItemRow: View, Equatable {
     @State private var isHovered = false
     @State private var showTagEditor = false
     @State private var showOCR = false
+    @State private var showBarcodeScan = false
+    @State private var showQRCodePreview = false
     /// Result of the `FileManager.fileExists` probe for this item's URL,
     /// populated once asynchronously after the row appears. Keeping this out
     /// of the synchronous body avoids a disk hit on every scroll/hover frame.
@@ -237,6 +239,12 @@ struct ClipboardItemRow: View, Equatable {
             // button in the footer can close this.
             OCRResultView(item: item, onClose: { showOCR = false })
         }
+        .sheet(isPresented: $showBarcodeScan) {
+            BarcodeResultView(item: item, onClose: { showBarcodeScan = false })
+        }
+        .sheet(isPresented: $showQRCodePreview) {
+            TextQRCodePreviewView(item: item, onClose: { showQRCodePreview = false })
+        }
     }
 
     /// Selected *and* painted in place. Only selection/merge mode does this —
@@ -252,6 +260,11 @@ struct ClipboardItemRow: View, Equatable {
         if staticSelected { return Color.appAccent }
         if isHovered  { return Color.appAccent.opacity(0.55) }
         return Color.secondary.opacity(0.15)
+    }
+
+    private var canPreviewQRCode: Bool {
+        item.itemType == .text &&
+        !item.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var rowDot: some View {
@@ -291,6 +304,13 @@ struct ClipboardItemRow: View, Equatable {
                 help: L("action.preview"),
                 action: onPreview
             )
+            if canPreviewQRCode {
+                HoverIconButton(
+                    systemName: "qrcode",
+                    help: L("action.qrPreview"),
+                    action: { showQRCodePreview = true }
+                )
+            }
             HoverIconButton(
                 systemName: item.isPinned ? "pin.fill" : "pin",
                 help: item.isPinned ? L("action.unpin") : L("action.pin"),
@@ -322,6 +342,11 @@ struct ClipboardItemRow: View, Equatable {
                     systemName: "text.viewfinder",
                     help: L("action.ocr"),
                     action: { showOCR = true }
+                )
+                HoverIconButton(
+                    systemName: "qrcode.viewfinder",
+                    help: L("action.scanCodes"),
+                    action: { showBarcodeScan = true }
                 )
             }
             if item.itemType == .image, item.imageData != nil {
