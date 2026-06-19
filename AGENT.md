@@ -38,8 +38,16 @@ xcodebuild -project ClipTrace.xcodeproj -scheme ClipTrace -configuration Debug \
 open build/Build/Products/Debug/ClipTrace.app
 ```
 
-**每次改完代码都要重新构建并启动**，在真实 App 里验证，而不是只看编译通过。先杀掉旧
-实例：`pkill -f "ClipTrace.app/Contents/MacOS/ClipTrace"`。
+**准则：每次构建成功后都必须把 App 运行起来。** 不要只报告编译通过；构建失败就先修复，
+不算“完成”。构建成功后先杀掉旧实例，再启动刚生成的 `.app`，在真实 App 里验证：
+
+```bash
+pkill -f "ClipTrace.app/Contents/MacOS/ClipTrace" || true
+open build/Build/Products/Debug/ClipTrace.app
+```
+
+若本次构建使用了不同的 `-derivedDataPath` 或 Xcode 默认 DerivedData，必须启动对应路径下
+最新生成的 `ClipTrace.app`，不要启动旧产物。
 
 本地构建会自动用 `ClipTrace Self-Signed` 身份签名（见下）。若该身份不在钥匙串里，构建会
 失败——要么运行一次 `scripts/generate-signing-cert.sh`，要么用 `CODE_SIGNING_ALLOWED=NO`
