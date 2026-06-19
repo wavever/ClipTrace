@@ -54,3 +54,6 @@ website/
 
 # Local Claude Code state (machine-local settings + agent worktrees)
 .claude/
+
+# Codegraph local index/cache
+.codegraph/
