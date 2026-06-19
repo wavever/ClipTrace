@@ -97,7 +97,6 @@ struct MainWindowContent: View {
     }
 
     @ObservedObject private var nav = AppNavigation.shared
-    @ObservedObject private var toasts = ToastCenter.shared
     @ObservedObject private var stats = CopyStatsStore.shared
     @ObservedObject private var confirm = ConfirmationCenter.shared
 
@@ -152,14 +151,6 @@ struct MainWindowContent: View {
             if nav.screen != .list {
                 secondaryScreen
                     .transition(.opacity)
-            }
-
-            if let toast = toasts.current {
-                ToastView(toast: toast) { toasts.dismiss() }
-                    .padding(.top, 14)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .zIndex(1)
-                    .id(toast.id)
             }
 
             if !fdaOnboardingDismissed {

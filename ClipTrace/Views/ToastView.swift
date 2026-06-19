@@ -48,5 +48,7 @@ struct ToastView: View {
         // Warm-olive lift instead of the cool default black, with a touch more
         // radius than a resting card so the toast clearly floats above content.
         .shadow(color: Color.appCardShadow, radius: 10, x: 0, y: 4)
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .onTapGesture(perform: onDismiss)
     }
 }
