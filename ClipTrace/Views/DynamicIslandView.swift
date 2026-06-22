@@ -1,118 +1,201 @@
 import SwiftUI
 
+// MARK: - Shared notch motion
+
+/// Centralized spring curves for the island. `close` is critically damped so the
+/// surface never overshoots upward and exposes the camera cutout on collapse.
+enum NotchAnimation {
+    private static var reduceMotion: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
+
+    /// Expand: lightly under-damped for a responsive, slightly bouncy growth.
+    static var open: Animation {
+        reduceMotion ? .easeOut(duration: 0.18)
+                     : .spring(response: 0.42, dampingFraction: 0.82)
+    }
+
+    /// Collapse: critically damped (no rebound) so the bottom edge settles
+    /// cleanly without lifting above the notch height.
+    static var close: Animation {
+        reduceMotion ? .easeOut(duration: 0.18)
+                     : .spring(response: 0.38, dampingFraction: 1.0)
+    }
+
+    /// Notification pop — a touch bouncier for the copy toast.
+    static var pop: Animation {
+        reduceMotion ? .easeOut(duration: 0.18)
+                     : .spring(response: 0.32, dampingFraction: 0.74)
+    }
+}
+
+// MARK: - Surface state
+
+/// The single morphing surface only ever lives in one of these states. The copy
+/// notification and the expanded clipboard menu are states of the *same* surface,
+/// not separate windows.
 enum DynamicIslandState: Equatable {
-    case idle
-    case toast(itemTypeIcon: String, preview: String)
+    case collapsed
+    case notification(itemTypeIcon: String, preview: String)
+    case expanded
 
     static func == (lhs: DynamicIslandState, rhs: DynamicIslandState) -> Bool {
         switch (lhs, rhs) {
-        case (.idle, .idle): return true
-        case let (.toast(li, lp), .toast(ri, rp)): return li == ri && lp == rp
+        case (.collapsed, .collapsed): return true
+        case (.expanded, .expanded): return true
+        case let (.notification(li, lp), .notification(ri, rp)): return li == ri && lp == rp
         default: return false
         }
     }
+
+    var isExpanded: Bool { self == .expanded }
 }
+
+/// Observable so the controller can drive transitions with `withAnimation`,
+/// letting SwiftUI interpolate the surface geometry instead of swapping panels.
+@MainActor
+final class IslandModel: ObservableObject {
+    @Published var state: DynamicIslandState = .collapsed
+}
+
+// MARK: - The island surface
 
 struct DynamicIslandView: View {
-    let state: DynamicIslandState
-    var onTap: () -> Void
+    @ObservedObject var model: IslandModel
+
+    /// Physical notch geometry, resolved from the target screen.
+    let notchWidth: CGFloat
+    let notchHeight: CGFloat
+    /// Width / body height the surface grows to when the menu is open.
+    let expandedWidth: CGFloat
+    let expandedBodyHeight: CGFloat
+
+    /// Tapping the notch band toggles expand/collapse.
+    var onBandTap: () -> Void
+    /// The expanded clipboard menu, built once by the controller with its
+    /// environment wired up, so its internal `@State` survives re-renders.
+    let menu: AnyView
+
+    private let notificationBodyHeight: CGFloat = 58
+    private let dividerHeight: CGFloat = 1
 
     var body: some View {
-        ZStack {
-            background
-            content
-                .padding(.horizontal, state.horizontalPadding)
-                .padding(.vertical, state.verticalPadding)
+        surface
+            // Centered horizontally (panel is screen-centered ⇒ notch-centered),
+            // pinned to the top edge so it grows *down* from the notch. The empty
+            // surrounding area carries no view, so clicks fall through to apps below.
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private var surface: some View {
+        VStack(spacing: 0) {
+            // Camera-safe band: an empty region exactly as tall as the notch.
+            // Nothing is ever drawn here, so content can never sit under the camera.
+            Color.clear
+                .frame(width: surfaceWidth, height: notchHeight)
+                .contentShape(Rectangle())
+                .onTapGesture { onBandTap() }
+
+            bodyContent
         }
-        .frame(width: state.size.width, height: state.size.height)
-        .contentShape(RoundedRectangle(cornerRadius: state.cornerRadius, style: .continuous))
-        .onTapGesture { onTap() }
-        .animation(.spring(response: 0.32, dampingFraction: 0.78), value: state)
+        .frame(width: surfaceWidth, height: surfaceHeight, alignment: .top)
+        .background(Color.black)
+        // Square top (flush with the screen edge, merging into the notch),
+        // rounded bottom — the Dynamic Island silhouette. Overflow during the
+        // collapse animation is clipped, giving a clean "curtain" close.
+        .clipShape(islandShape)
+        .overlay(
+            islandShape
+                .strokeBorder(Color.white.opacity(0.06), lineWidth: 0.5)
+        )
+        .shadow(color: .black.opacity(model.state == .collapsed ? 0 : 0.35), radius: 16, y: 8)
     }
 
     @ViewBuilder
-    private var background: some View {
-        switch state {
-        case .idle:
-            Capsule()
-                .fill(Color.black)
-        case .toast:
-            RoundedRectangle(cornerRadius: state.cornerRadius, style: .continuous)
-                .fill(Color.appPaper.opacity(0.97))
-                .overlay(
-                    RoundedRectangle(cornerRadius: state.cornerRadius, style: .continuous)
-                        .strokeBorder(Color.appCardBorder, lineWidth: 0.8)
-                )
-                .shadow(color: Color.appCardShadow.opacity(0.34), radius: 18, y: 10)
-        }
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        switch state {
-        case .idle:
-            Image(systemName: "doc.on.clipboard")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white)
-        case let .toast(icon, preview):
-            HStack(spacing: 12) {
-                Image(systemName: icon)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Color.appAccent)
-                    .frame(width: 34, height: 34)
-                    .background(
-                        Circle()
-                            .fill(Color.appAccent.opacity(0.14))
-                    )
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(L("dynamicIsland.copied"))
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundStyle(Color.appMetal)
-                    Text(preview)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Color.appMetal.opacity(0.72))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-
-                Spacer(minLength: 0)
-
-                Text(L("dynamicIsland.openHint"))
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.appAccent)
+    private var bodyContent: some View {
+        switch model.state {
+        case .collapsed:
+            EmptyView()
+        case let .notification(icon, preview):
+            notificationRow(icon: icon, preview: preview)
+                .frame(width: surfaceWidth, height: notificationBodyHeight)
+                .contentShape(Rectangle())
+                .onTapGesture { onBandTap() }
+                .transition(.opacity)
+        case .expanded:
+            VStack(spacing: 0) {
+                Rectangle()
+                    .fill(Color.white.opacity(0.10))
+                    .frame(height: dividerHeight)
+                menu
+                    .frame(width: surfaceWidth, height: expandedBodyHeight, alignment: .top)
             }
-            .transition(.opacity.combined(with: .move(edge: .top)))
-        }
-    }
-}
-
-extension DynamicIslandState {
-    var size: CGSize {
-        switch self {
-        case .idle:  return CGSize(width: 60, height: 26)
-        case .toast: return CGSize(width: 360, height: 70)
+            .transition(.opacity)
         }
     }
 
-    var horizontalPadding: CGFloat {
-        switch self {
-        case .idle:  return 0
-        case .toast: return 16
+    private func notificationRow(icon: String, preview: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Color.appAccent)
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(Color.appAccent.opacity(0.18)))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(L("dynamicIsland.copied"))
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(Color.white.opacity(0.95))
+                Text(preview)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.6))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+
+            Spacer(minLength: 0)
+
+            Text(L("dynamicIsland.openHint"))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Color.appAccent)
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 6)
+    }
+
+    // MARK: - Per-state geometry (animated via the model)
+
+    private var surfaceWidth: CGFloat {
+        switch model.state {
+        case .collapsed:     return min(notchWidth + 18, expandedWidth)
+        case .notification:  return min(max(notchWidth + 250, 360), expandedWidth)
+        case .expanded:      return expandedWidth
         }
     }
 
-    var verticalPadding: CGFloat {
-        switch self {
-        case .idle:  return 0
-        case .toast: return 12
+    private var surfaceHeight: CGFloat {
+        switch model.state {
+        case .collapsed:     return notchHeight
+        case .notification:  return notchHeight + notificationBodyHeight
+        case .expanded:      return notchHeight + dividerHeight + expandedBodyHeight
         }
     }
 
-    var cornerRadius: CGFloat {
-        switch self {
-        case .idle:  return size.height / 2
-        case .toast: return 22
+    private var bottomRadius: CGFloat {
+        switch model.state {
+        case .collapsed:     return 10
+        case .notification:  return 18
+        case .expanded:      return 22
         }
+    }
+
+    private var islandShape: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(
+            topLeadingRadius: 0,
+            bottomLeadingRadius: bottomRadius,
+            bottomTrailingRadius: bottomRadius,
+            topTrailingRadius: 0,
+            style: .continuous
+        )
     }
 }

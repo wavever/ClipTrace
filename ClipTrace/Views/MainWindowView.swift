@@ -1775,6 +1775,8 @@ private struct GroupManagementSheet: View {
                         ForEach(sortedGroups) { group in
                             GroupManagementRow(
                                 group: group,
+                                canMoveUp: sortedGroups.first?.id != group.id,
+                                canMoveDown: sortedGroups.last?.id != group.id,
                                 onRename: { name in
                                     vm.renameGroup(group, to: name, context: modelContext)
                                     ToastCenter.shared.show(
@@ -1782,6 +1784,16 @@ private struct GroupManagementSheet: View {
                                         systemImage: "pencil",
                                         tint: .appAccent
                                     )
+                                },
+                                onMoveUp: {
+                                    withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                                        vm.moveGroup(group, direction: -1, groups: groups, context: modelContext)
+                                    }
+                                },
+                                onMoveDown: {
+                                    withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                                        vm.moveGroup(group, direction: 1, groups: groups, context: modelContext)
+                                    }
                                 },
                                 onDelete: {
                                     deleteTarget = group
@@ -1837,7 +1849,11 @@ private struct GroupManagementSheet: View {
 
 private struct GroupManagementRow: View {
     let group: ClipboardGroup
+    let canMoveUp: Bool
+    let canMoveDown: Bool
     let onRename: (String) -> Void
+    let onMoveUp: () -> Void
+    let onMoveDown: () -> Void
     let onDelete: () -> Void
 
     @State private var draft = ""
@@ -1877,6 +1893,20 @@ private struct GroupManagementRow: View {
             }
             .buttonStyle(PaperIconButtonStyle(size: 28))
             .help(L("common.save"))
+
+            Button(action: onMoveUp) {
+                Image(systemName: "chevron.up")
+            }
+            .buttonStyle(PaperIconButtonStyle(size: 28))
+            .disabled(!canMoveUp)
+            .help(L("group.moveUp"))
+
+            Button(action: onMoveDown) {
+                Image(systemName: "chevron.down")
+            }
+            .buttonStyle(PaperIconButtonStyle(size: 28))
+            .disabled(!canMoveDown)
+            .help(L("group.moveDown"))
 
             Button(action: onDelete) {
                 Image(systemName: "trash")

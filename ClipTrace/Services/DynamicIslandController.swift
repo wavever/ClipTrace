@@ -4,19 +4,69 @@ import QuartzCore
 import SwiftUI
 import SwiftData
 
+// MARK: - Notch geometry
+
+/// Resolves the physical notch geometry of the built-in display. The island is
+/// only ever shown on the built-in notched screen; external displays that own
+/// the menu bar must not pull it onto themselves.
+enum NotchGeometry {
+    /// The built-in display that currently reports a notch, if any.
+    static var preferredScreen: NSScreen? {
+        NSScreen.screens.first { isBuiltIn($0) && hasNotch($0) }
+    }
+
+    static func hasNotch(_ screen: NSScreen) -> Bool {
+        screen.auxiliaryTopLeftArea != nil || screen.auxiliaryTopRightArea != nil
+    }
+
+    /// Notch width = screen width minus the two menu-bar areas flanking the
+    /// cutout. Falls back to a bounded simulated width when the display reports
+    /// no auxiliary areas (e.g. a non-notched built-in panel under existing gating).
+    static func notchWidth(for screen: NSScreen) -> CGFloat {
+        let left = screen.auxiliaryTopLeftArea?.width ?? 0
+        let right = screen.auxiliaryTopRightArea?.width ?? 0
+        if left > 0 || right > 0 {
+            return screen.frame.width - left - right
+        }
+        return min(max(screen.frame.width * 0.14, 160), 220)
+    }
+
+    /// Notch height from the top safe-area inset, falling back to the menu-bar
+    /// height so geometry is always well-defined.
+    static func notchHeight(for screen: NSScreen) -> CGFloat {
+        let inset = screen.safeAreaInsets.top
+        if inset > 0 { return inset }
+        let menuBar = screen.frame.maxY - screen.visibleFrame.maxY
+        return menuBar > 5 ? menuBar : 32
+    }
+
+    static func isBuiltIn(_ screen: NSScreen) -> Bool {
+        guard let displayID = displayID(for: screen) else { return false }
+        return CGDisplayIsBuiltin(displayID) != 0
+    }
+
+    private static func displayID(for screen: NSScreen) -> CGDirectDisplayID? {
+        let key = NSDeviceDescriptionKey("NSScreenNumber")
+        guard let number = screen.deviceDescription[key] as? NSNumber else { return nil }
+        return CGDirectDisplayID(number.uint32Value)
+    }
+}
+
+// MARK: - Controller
+
 @MainActor
 final class DynamicIslandController: NSObject {
     static let shared = DynamicIslandController()
 
-    private var panel: NSPanel?
-    private var hostingController: NSHostingController<DynamicIslandView>?
-    private var menuPanel: NSPanel?
-    private var menuHostingController: NSHostingController<AnyView>?
-    private var menuLocalMonitor: Any?
-    private var menuGlobalMonitor: Any?
-    private var menuResignObserver: NSObjectProtocol?
-    private var state: DynamicIslandState = .idle
+    private let model = IslandModel()
+    private var panel: NotchPanel?
+    private var hostingView: NotchHostingView<DynamicIslandView>?
     private var toastTimer: Timer?
+
+    // Outside-interaction dismissal, installed only while expanded.
+    private var localMonitor: Any?
+    private var globalMonitor: Any?
+    private var resignObserver: NSObjectProtocol?
 
     private override init() {
         super.init()
@@ -33,11 +83,10 @@ final class DynamicIslandController: NSObject {
         UserDefaults.standard.bool(forKey: "dynamicIslandEnabled")
     }
 
-    /// True when the built-in display has a notch. External displays can become
-    /// `NSScreen.main` when they own the menu bar; anchoring to the physical
-    /// built-in notched panel keeps the island off those displays.
+    /// True when the built-in display has a notch. Anchoring to the physical
+    /// built-in notched screen keeps the island off external displays.
     static var hasNotchedDisplay: Bool {
-        notchedBuiltInScreen != nil
+        NotchGeometry.preferredScreen != nil
     }
 
     /// Called on app launch and whenever the setting toggles.
@@ -49,18 +98,26 @@ final class DynamicIslandController: NSObject {
         }
     }
 
-    /// Call after a new clipboard item has been recorded. Briefly expands the
-    /// pill into a toast that shows the item's type + preview, then collapses.
+    /// Call after a new clipboard item has been recorded. Briefly grows the
+    /// surface into a copy notification, then collapses back to the pill. Skipped
+    /// while the menu is open so a copy doesn't interrupt browsing.
     func flash(itemIcon: String, preview: String) {
         guard isEnabled else { return }
         if panel == nil { show() }
         guard panel != nil else { return }
+        guard model.state != .expanded else { return }
+
         toastTimer?.invalidate()
-        applyState(.toast(itemTypeIcon: itemIcon, preview: preview))
+        withAnimation(NotchAnimation.pop) {
+            model.state = .notification(itemTypeIcon: itemIcon, preview: preview)
+        }
         toastTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { [weak self] _ in
-            guard let self = self else { return }
             Task { @MainActor in
-                self.applyState(.idle)
+                guard let self else { return }
+                guard self.model.state != .expanded else { return }
+                withAnimation(NotchAnimation.close) {
+                    self.model.state = .collapsed
+                }
             }
         }
     }
@@ -68,103 +125,102 @@ final class DynamicIslandController: NSObject {
     // MARK: - Panel lifecycle
 
     private func show() {
-        guard Self.notchedBuiltInScreen != nil else {
+        guard let screen = NotchGeometry.preferredScreen else {
             hide()
             return
         }
         guard panel == nil else {
-            positionPanel(for: state, animated: false)
+            reposition(on: screen)
             panel?.orderFrontRegardless()
             return
         }
 
-        let initialState: DynamicIslandState = .idle
-        let view = DynamicIslandView(state: initialState) { [weak self] in
-            self?.handleClick()
-        }
-        let hosting = NSHostingController(rootView: view)
-        hosting.view.wantsLayer = true
-        hosting.view.layer?.backgroundColor = .clear
+        model.state = .collapsed
+        let metrics = Metrics(screen: screen)
+        let hosting = NotchHostingView(rootView: makeRootView(metrics: metrics))
+        hosting.translatesAutoresizingMaskIntoConstraints = true
 
-        let panel = NSPanel(
-            contentRect: NSRect(origin: .zero, size: initialState.size),
-            styleMask: [.nonactivatingPanel, .borderless],
+        let panel = NotchPanel(
+            contentRect: NSRect(origin: .zero, size: metrics.panelSize),
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
         panel.isFloatingPanel = true
-        // statusBar level keeps the pill above ordinary windows but below
-        // system overlays; we live alongside the menu bar.
-        panel.level = .statusBar
-        panel.hidesOnDeactivate = false
+        panel.acceptsMouseMovedEvents = true
+        // Above the menu-bar window so the surface visually merges with the notch.
+        panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.mainMenuWindow)) + 2)
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
+        panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
-        // Travel to all spaces (including fullscreen apps) so the pill is
-        // always reachable without switching desktops.
-        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
-        panel.contentViewController = hosting
+        panel.isMovableByWindowBackground = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        panel.sharingType = UserDefaults.standard.bool(forKey: "hideFromCapture") ? .none : .readOnly
+        panel.contentView = hosting
 
         self.panel = panel
-        self.hostingController = hosting
-        self.state = initialState
+        self.hostingView = hosting
 
-        positionPanel(for: initialState, animated: false)
+        panel.setFrame(metrics.panelFrame, display: true)
         panel.orderFrontRegardless()
     }
 
     private func hide() {
         toastTimer?.invalidate()
         toastTimer = nil
-        closeMenuPanel()
+        removeDismissHandlers()
         panel?.orderOut(nil)
         panel = nil
-        hostingController = nil
-        state = .idle
+        hostingView = nil
+        model.state = .collapsed
     }
 
-    private func applyState(_ newState: DynamicIslandState) {
-        guard newState != state else { return }
-        state = newState
-        hostingController?.rootView = DynamicIslandView(state: newState) { [weak self] in
-            self?.handleClick()
-        }
-        positionPanel(for: newState, animated: true)
+    private func makeRootView(metrics: Metrics) -> DynamicIslandView {
+        DynamicIslandView(
+            model: model,
+            notchWidth: metrics.notchWidth,
+            notchHeight: metrics.notchHeight,
+            expandedWidth: metrics.expandedWidth,
+            expandedBodyHeight: metrics.expandedBodyHeight,
+            onBandTap: { [weak self] in self?.handleBandTap() },
+            menu: makeMenu()
+        )
     }
 
-    /// Anchor every visible state below the menu-bar / camera safe area. Keeping
-    /// the same top edge lets the toast feel like it expands downward from the
-    /// compact island instead of rendering text behind the hardware cutout.
-    private func positionPanel(for state: DynamicIslandState, animated: Bool) {
-        guard let panel else { return }
-        let screen = Self.notchedBuiltInScreen
-        guard let screen else { return }
+    private func reposition(on screen: NSScreen) {
+        guard let panel, let hostingView else { return }
+        let metrics = Metrics(screen: screen)
+        hostingView.rootView = makeRootView(metrics: metrics)
+        panel.setFrame(metrics.panelFrame, display: true)
+    }
 
-        let frame = islandFrame(for: state, on: screen)
-        if animated {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.28
-                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                panel.animator().setFrame(frame, display: true)
-            }
+    // MARK: - Interaction
+
+    private func handleBandTap() {
+        if model.state == .expanded {
+            collapse()
         } else {
-            panel.setFrame(frame, display: true)
+            expand()
         }
     }
 
-    // MARK: - Click handling
-
-    private func handleClick() {
-        if menuPanel?.isVisible == true {
-            closeMenuPanel()
-            return
-        }
-
+    private func expand() {
         toastTimer?.invalidate()
         toastTimer = nil
-        applyState(.idle)
-        showMenuPanel()
+        withAnimation(NotchAnimation.open) {
+            model.state = .expanded
+        }
+        panel?.makeKey()
+        installDismissHandlers()
+    }
+
+    private func collapse() {
+        removeDismissHandlers()
+        withAnimation(NotchAnimation.close) {
+            model.state = .collapsed
+        }
     }
 
     @objc private func screenParametersDidChange(_ notification: Notification) {
@@ -172,107 +228,61 @@ final class DynamicIslandController: NSObject {
             hide()
             return
         }
-        if Self.notchedBuiltInScreen == nil {
+        guard let screen = NotchGeometry.preferredScreen else {
             hide()
-        } else if panel == nil {
-            show()
-        } else {
-            positionPanel(for: state, animated: false)
-            positionMenuPanel(animated: false)
-        }
-    }
-
-    // MARK: - Menu replacement panel
-
-    private func showMenuPanel() {
-        guard menuPanel == nil else {
-            positionMenuPanel(animated: false)
-            menuPanel?.orderFrontRegardless()
             return
         }
-        guard let screen = Self.notchedBuiltInScreen else { return }
-
-        let size = menuPanelSize(on: screen)
-        let root = menuPanelRootView(size: size)
-        let hosting = NSHostingController(rootView: root)
-        hosting.view.frame = NSRect(origin: .zero, size: size)
-        hosting.view.autoresizingMask = [.width, .height]
-
-        let panel = DynamicIslandMenuPanel(
-            contentRect: NSRect(origin: .zero, size: size),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        panel.isFloatingPanel = true
-        panel.level = .statusBar
-        panel.hidesOnDeactivate = false
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.isReleasedWhenClosed = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
-        panel.sharingType = UserDefaults.standard.bool(forKey: "hideFromCapture") ? .none : .readOnly
-        panel.contentViewController = hosting
-
-        menuPanel = panel
-        menuHostingController = hosting
-        installMenuPanelDismissHandlers()
-        positionMenuPanel(animated: false)
-        panel.orderFrontRegardless()
-        panel.makeKey()
-    }
-
-    private func closeMenuPanel() {
-        if let menuLocalMonitor {
-            NSEvent.removeMonitor(menuLocalMonitor)
-            self.menuLocalMonitor = nil
-        }
-        if let menuGlobalMonitor {
-            NSEvent.removeMonitor(menuGlobalMonitor)
-            self.menuGlobalMonitor = nil
-        }
-        if let menuResignObserver {
-            NotificationCenter.default.removeObserver(menuResignObserver)
-            self.menuResignObserver = nil
-        }
-        menuPanel?.orderOut(nil)
-        menuPanel = nil
-        menuHostingController = nil
-    }
-
-    private func positionMenuPanel(animated: Bool) {
-        guard let menuPanel, let screen = Self.notchedBuiltInScreen else { return }
-        let size = menuPanel.frame.size
-        let anchor = islandFrame(for: .idle, on: screen)
-        let visible = screen.visibleFrame
-        let gap: CGFloat = 8
-
-        var originX = anchor.midX - size.width / 2
-        var originY = anchor.minY - gap - size.height
-        originX = min(max(originX, visible.minX + 8), visible.maxX - size.width - 8)
-        originY = max(originY, visible.minY + 8)
-
-        let frame = NSRect(origin: NSPoint(x: originX, y: originY), size: size)
-        if animated {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.22
-                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                menuPanel.animator().setFrame(frame, display: true)
-            }
+        if panel == nil {
+            show()
         } else {
-            menuPanel.setFrame(frame, display: true)
+            reposition(on: screen)
         }
     }
 
-    private func menuPanelSize(on screen: NSScreen) -> NSSize {
-        NSSize(
-            width: 340,
-            height: min(780, max(630, screen.visibleFrame.height - 48))
-        )
+    // MARK: - Dismiss handlers (expanded only)
+
+    private func installDismissHandlers() {
+        guard localMonitor == nil else { return }
+        let hosted = panel
+
+        localMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .keyDown]
+        ) { [weak self] event in
+            if event.type == .keyDown, event.charactersIgnoringModifiers == "\u{1b}" {
+                Task { @MainActor in self?.collapse() }
+                return nil
+            }
+            if event.window == hosted { return event }
+            Task { @MainActor in self?.collapse() }
+            return event
+        }
+
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] _ in
+            Task { @MainActor in self?.collapse() }
+        }
+
+        if let panel {
+            resignObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didResignKeyNotification,
+                object: panel,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in self?.collapse() }
+            }
+        }
     }
 
-    private func menuPanelRootView(size: NSSize) -> AnyView {
+    private func removeDismissHandlers() {
+        if let localMonitor { NSEvent.removeMonitor(localMonitor); self.localMonitor = nil }
+        if let globalMonitor { NSEvent.removeMonitor(globalMonitor); self.globalMonitor = nil }
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver); self.resignObserver = nil }
+    }
+
+    // MARK: - Expanded menu
+
+    private func makeMenu() -> AnyView {
         let language = Self.currentAppLanguage
         let accent = Self.currentAccentPalette
 
@@ -280,7 +290,7 @@ final class DynamicIslandController: NSObject {
             MenuBarView(
                 surfaceStyle: .dynamicIsland,
                 onRequestClose: { [weak self] in
-                    self?.closeMenuPanel()
+                    self?.collapse()
                 },
                 onOpenMain: {
                     AppNavigation.shared.showList()
@@ -295,100 +305,92 @@ final class DynamicIslandController: NSObject {
             .modelContainer(AppContainer.shared)
             .environment(\.locale, language.locale ?? Locale.current)
             .tint(accent.color)
-            .frame(width: size.width, height: size.height, alignment: .top)
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.14), lineWidth: 0.9)
-            )
         )
     }
 
-    private func installMenuPanelDismissHandlers() {
-        let hostedMenuPanel = menuPanel
-        let hostedIslandPanel = panel
-
-        menuLocalMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.leftMouseDown, .rightMouseDown, .keyDown]
-        ) { [weak self] event in
-            if event.type == .keyDown,
-               event.charactersIgnoringModifiers == "\u{1b}" {
-                Task { @MainActor in self?.closeMenuPanel() }
-                return nil
-            }
-            if event.window == hostedMenuPanel || event.window == hostedIslandPanel {
-                return event
-            }
-            Task { @MainActor in self?.closeMenuPanel() }
-            return event
-        }
-
-        menuGlobalMonitor = NSEvent.addGlobalMonitorForEvents(
-            matching: [.leftMouseDown, .rightMouseDown]
-        ) { [weak self] _ in
-            Task { @MainActor in self?.closeMenuPanel() }
-        }
-
-        if let menuPanel {
-            menuResignObserver = NotificationCenter.default.addObserver(
-                forName: NSWindow.didResignKeyNotification,
-                object: menuPanel,
-                queue: .main
-            ) { [weak self] _ in
-                Task { @MainActor in self?.closeMenuPanel() }
-            }
-        }
-    }
-
     private static var currentAppLanguage: AppLanguage {
-        let raw = UserDefaults.standard.string(forKey: "appLanguage")
-            ?? AppLanguage.system.rawValue
+        let raw = UserDefaults.standard.string(forKey: "appLanguage") ?? AppLanguage.system.rawValue
         return AppLanguage(rawValue: raw) ?? .system
     }
 
     private static var currentAccentPalette: AccentPalette {
-        let raw = UserDefaults.standard.string(forKey: "accentPalette")
-            ?? AccentPalette.sage.rawValue
+        let raw = UserDefaults.standard.string(forKey: "accentPalette") ?? AccentPalette.sage.rawValue
         return AccentPalette(rawValue: raw) ?? .sage
-    }
-
-    private static var notchedBuiltInScreen: NSScreen? {
-        NSScreen.screens.first { screen in
-            isBuiltIn(screen) && screen.safeAreaInsets.top > 0
-        }
-    }
-
-    private static func isBuiltIn(_ screen: NSScreen) -> Bool {
-        guard let displayID = displayID(for: screen) else { return false }
-        return CGDisplayIsBuiltin(displayID) != 0
-    }
-
-    private static func displayID(for screen: NSScreen) -> CGDirectDisplayID? {
-        let key = NSDeviceDescriptionKey("NSScreenNumber")
-        guard let number = screen.deviceDescription[key] as? NSNumber else {
-            return nil
-        }
-        return CGDirectDisplayID(number.uint32Value)
-    }
-
-    private func safeTopY(on screen: NSScreen) -> CGFloat {
-        // `visibleFrame.maxY` sits below the menu bar; `safeAreaInsets.top`
-        // accounts for the notch/camera housing. Use the lower of both top
-        // edges so the expanded toast never renders under either region.
-        let safeAreaTopY = screen.frame.maxY - screen.safeAreaInsets.top
-        return min(screen.visibleFrame.maxY, safeAreaTopY)
-    }
-
-    private func islandFrame(for state: DynamicIslandState, on screen: NSScreen) -> NSRect {
-        let size = state.size
-        let originX = screen.frame.midX - size.width / 2
-        let topGap: CGFloat = state == .idle ? 4 : 8
-        let originY = safeTopY(on: screen) - size.height - topGap
-        return NSRect(x: originX, y: originY, width: size.width, height: size.height)
     }
 }
 
-private final class DynamicIslandMenuPanel: NSPanel {
+// MARK: - Panel sizing
+
+private struct Metrics {
+    let notchWidth: CGFloat
+    let notchHeight: CGFloat
+    let expandedWidth: CGFloat
+    let expandedBodyHeight: CGFloat
+    let panelFrame: NSRect
+
+    var panelSize: NSSize { panelFrame.size }
+
+    init(screen: NSScreen) {
+        let nw = NotchGeometry.notchWidth(for: screen)
+        let nh = NotchGeometry.notchHeight(for: screen)
+        let bodyH = min(720, max(380, screen.visibleFrame.height - nh - 80))
+        let expW: CGFloat = 380
+
+        notchWidth = nw
+        notchHeight = nh
+        expandedWidth = expW
+        expandedBodyHeight = bodyH
+
+        let panelWidth = expW + 24
+        let panelHeight = nh + 1 + bodyH + 16
+        let originX = screen.frame.midX - panelWidth / 2
+        let originY = screen.frame.maxY - panelHeight
+        panelFrame = NSRect(x: originX, y: originY, width: panelWidth, height: panelHeight)
+    }
+}
+
+// MARK: - AppKit hosting
+
+/// Non-activating panel that can still become key so the expanded menu's controls
+/// (search field, buttons) respond.
+private final class NotchPanel: NSPanel {
     override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { true }
+    override var canBecomeMain: Bool { false }
+}
+
+/// Hosting view that (a) takes key on first click so a single click on the
+/// non-activating panel reaches SwiftUI actions, and (b) defers AppKit
+/// constraint/layout invalidation to the next run-loop turn — calling it
+/// synchronously during the display cycle re-enters AppKit and crashes.
+private final class NotchHostingView<Content: View>: NSHostingView<Content> {
+    private var applyingDeferred = false
+
+    override func mouseDown(with event: NSEvent) {
+        window?.makeKey()
+        super.mouseDown(with: event)
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override var needsUpdateConstraints: Bool {
+        get { super.needsUpdateConstraints }
+        set {
+            if applyingDeferred { super.needsUpdateConstraints = newValue; return }
+            DispatchQueue.main.async { [weak self] in self?.applyDeferred { $0.needsUpdateConstraints = newValue } }
+        }
+    }
+
+    override var needsLayout: Bool {
+        get { super.needsLayout }
+        set {
+            if applyingDeferred { super.needsLayout = newValue; return }
+            DispatchQueue.main.async { [weak self] in self?.applyDeferred { $0.needsLayout = newValue } }
+        }
+    }
+
+    private func applyDeferred(_ body: (NotchHostingView) -> Void) {
+        applyingDeferred = true
+        body(self)
+        applyingDeferred = false
+    }
 }

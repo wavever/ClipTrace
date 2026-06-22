@@ -13,6 +13,12 @@ struct TrashPanelView: View {
     @ObservedObject private var nav = AppNavigation.shared
     @ObservedObject private var filters = FilterSettingsStore.shared
 
+    // Custom quick-clear: a modal dialog picks an explicit [start, end] window
+    // down to the second, defaulting to the current day's bounds.
+    @State private var showCustomClear = false
+    @State private var customStart = TrashClearRange.startOfToday()
+    @State private var customEnd = TrashClearRange.endOfToday()
+
     init() {
         // Fetch only the soft-deleted rows. The previous query had no predicate,
         // so it pulled the *entire* history — every active clip plus its image
@@ -86,6 +92,18 @@ struct TrashPanelView: View {
             .allowsHitTesting(false)
             .ignoresSafeArea(edges: .top)
         )
+        .overlay {
+            if showCustomClear {
+                CustomRangeClearDialog(
+                    start: $customStart,
+                    end: $customEnd,
+                    trashEnabled: filters.trashEnabled,
+                    onCancel: { dismissCustomClear() },
+                    onClear: { performCustomRangeClear() }
+                )
+                .transition(.opacity)
+            }
+        }
     }
 
     private var header: some View {
@@ -95,7 +113,9 @@ struct TrashPanelView: View {
             }
             .buttonStyle(PaperIconButtonStyle(size: 34))
             .help(L("common.back"))
-            .keyboardShortcut(.escape, modifiers: [])
+            // Suppressed while the custom-range modal is up so Escape cancels the
+            // dialog instead of navigating the whole panel away.
+            .escapeShortcut(enabled: !showCustomClear)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(L("trash.title"))
@@ -306,6 +326,10 @@ struct TrashPanelView: View {
                         performClearToday()
                     }
                 }
+                BulkClearChip(label: L("trash.clearLast.custom"),
+                              systemImage: "calendar.badge.clock") {
+                    openCustomClear()
+                }
                 Spacer(minLength: 0)
             }
         }
@@ -319,6 +343,38 @@ struct TrashPanelView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .strokeBorder(.separator.opacity(0.25), lineWidth: 0.5)
+        )
+    }
+
+    /// Opens the custom-range dialog, resetting the window to the current day's
+    /// bounds (00:00:00 → 23:59:59) each time so it always starts from "today".
+    private func openCustomClear() {
+        customStart = TrashClearRange.startOfToday()
+        customEnd = TrashClearRange.endOfToday()
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.84)) {
+            showCustomClear = true
+        }
+    }
+
+    private func dismissCustomClear() {
+        withAnimation(.easeIn(duration: 0.18)) { showCustomClear = false }
+    }
+
+    private func performCustomRangeClear() {
+        let count = vm.clearRange(from: customStart, to: customEnd, context: modelContext)
+        dismissCustomClear()
+        guard count > 0 else {
+            ToastCenter.shared.show(
+                L("trash.clearLast.empty"),
+                systemImage: "tray",
+                tint: .secondary
+            )
+            return
+        }
+        ToastCenter.shared.show(
+            L("trash.clearLast.doneFormat", count),
+            systemImage: "trash.fill",
+            tint: .appAccent
         )
     }
 
@@ -387,9 +443,12 @@ struct TrashPanelView: View {
 private struct BulkClearChip: View {
     let label: String
     let systemImage: String
+    var isActive: Bool = false
     let action: () -> Void
 
     @State private var hovering = false
+
+    private var filled: Bool { hovering || isActive }
 
     var body: some View {
         Button(action: action) {
@@ -401,17 +460,302 @@ private struct BulkClearChip: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .foregroundStyle(hovering ? Color.white : Color.appAccent)
+            .foregroundStyle(filled ? Color.white : Color.appAccent)
             .background(
                 Capsule(style: .continuous)
-                    .fill(hovering ? Color.appAccent : Color.appAccent.opacity(0.14))
+                    .fill(filled ? Color.appAccent : Color.appAccent.opacity(0.14))
             )
             .overlay(
                 Capsule(style: .continuous)
-                    .strokeBorder(Color.appAccent.opacity(hovering ? 0 : 0.35), lineWidth: 0.5)
+                    .strokeBorder(Color.appAccent.opacity(filled ? 0 : 0.35), lineWidth: 0.5)
             )
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+    }
+}
+
+// MARK: - Custom range clear
+
+private enum TrashClearRange {
+    static func startOfToday() -> Date {
+        Calendar.current.startOfDay(for: Date())
+    }
+
+    static func endOfToday() -> Date {
+        let cal = Calendar.current
+        let start = cal.startOfDay(for: Date())
+        return cal.date(byAdding: DateComponents(day: 1, second: -1), to: start) ?? Date()
+    }
+}
+
+/// Modal that picks an explicit `[start, end]` window (down to the second) to
+/// purge. Mirrors `ConfirmationDialogView`'s paper card so it reads as part of
+/// the same dialog family; the action button turns red when the trash is off
+/// (permanent delete) exactly like the shared confirm dialog.
+private struct CustomRangeClearDialog: View {
+    @Binding var start: Date
+    @Binding var end: Date
+    let trashEnabled: Bool
+    let onCancel: () -> Void
+    let onClear: () -> Void
+
+    private var tint: Color { trashEnabled ? .appAccent : .appDanger }
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.45)
+                .ignoresSafeArea()
+                .onTapGesture { onCancel() }
+
+            card
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var card: some View {
+        VStack(spacing: 0) {
+            ZStack {
+                Circle().fill(tint.opacity(0.14))
+                Image(systemName: "calendar.badge.clock")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(tint)
+            }
+            .frame(width: 54, height: 54)
+            .padding(.top, 24)
+            .padding(.bottom, 14)
+
+            Text(L("trash.customRange.title"))
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Color.appMetal)
+
+            Text(trashEnabled
+                 ? L("trash.clearLast.sectionHintSoft")
+                 : L("trash.clearLast.sectionHintHard"))
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 6)
+                .padding(.horizontal, 24)
+
+            HStack(alignment: .top, spacing: 18) {
+                labeledField(L("trash.customRange.start"), $start)
+
+                Divider()
+                    .frame(height: 94)
+                    .padding(.top, 22)
+                    .opacity(0.65)
+
+                labeledField(L("trash.customRange.end"), $end)
+            }
+            .padding(.top, 20)
+            .padding(.horizontal, 24)
+
+            HStack(spacing: 10) {
+                Button(action: onCancel) {
+                    Text(L("common.cancel")).frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PaperActionButtonStyle(role: .plain))
+                .keyboardShortcut(.cancelAction)
+
+                Button(action: onClear) {
+                    Text(L("common.clear")).frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PaperActionButtonStyle(role: trashEnabled ? .primary : .destructive))
+                .keyboardShortcut(.defaultAction)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 22)
+            .padding(.bottom, 20)
+        }
+        .frame(width: 560)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.appCard)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+        )
+        .shadow(color: Color.appCardShadow, radius: 30, y: 12)
+        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+    }
+
+    private func labeledField(_ title: String, _ binding: Binding<Date>) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(.secondary)
+            DateTimeField(date: binding)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// A year/month/day · hour/minute/second editor laid out as two paper-styled
+/// stepper rows. Writing any component recomposes the bound `Date`, clamping the
+/// day to the selected month so e.g. switching to February never rolls over.
+private struct DateTimeField: View {
+    @Binding var date: Date
+
+    private var cal: Calendar { Calendar.current }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                field(L("datetime.year"), .year, 1970...2100, width: 58)
+                field(L("datetime.month"), .month, 1...12)
+                field(L("datetime.day"), .day, 1...daysInMonth)
+            }
+            HStack(spacing: 8) {
+                field(L("datetime.hour"), .hour, 0...23)
+                field(L("datetime.minute"), .minute, 0...59)
+                field(L("datetime.second"), .second, 0...59)
+            }
+        }
+    }
+
+    private func field(
+        _ label: String,
+        _ component: Calendar.Component,
+        _ range: ClosedRange<Int>,
+        width: CGFloat = 44
+    ) -> some View {
+        PaperStepperField(
+            label: label,
+            value: cal.component(component, from: date),
+            range: range,
+            width: width,
+            onChange: { setComponent(component, to: $0) }
+        )
+    }
+
+    private var daysInMonth: Int {
+        let comps = cal.dateComponents([.year, .month], from: date)
+        return daysIn(year: comps.year ?? 2000, month: comps.month ?? 1)
+    }
+
+    private func daysIn(year: Int, month: Int) -> Int {
+        var dc = DateComponents()
+        dc.year = year
+        dc.month = month
+        dc.day = 1
+        guard let d = cal.date(from: dc),
+              let range = cal.range(of: .day, in: .month, for: d) else { return 31 }
+        return range.count
+    }
+
+    private func setComponent(_ component: Calendar.Component, to value: Int) {
+        var comps = cal.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
+        switch component {
+        case .year:   comps.year = value
+        case .month:  comps.month = value
+        case .day:    comps.day = value
+        case .hour:   comps.hour = value
+        case .minute: comps.minute = value
+        case .second: comps.second = value
+        default: break
+        }
+        // Keep the day within the (possibly new) month so the date never wraps.
+        let maxDay = daysIn(year: comps.year ?? 2000, month: comps.month ?? 1)
+        if let day = comps.day, day > maxDay { comps.day = maxDay }
+        if let newDate = cal.date(from: comps) { date = newDate }
+    }
+}
+
+/// One labeled paper field with up/down steppers. Typing is unconstrained while
+/// editing and only clamped on commit (Enter / focus loss), so multi-digit
+/// entry like a year isn't fought by per-keystroke clamping.
+private struct PaperStepperField: View {
+    let label: String
+    let value: Int
+    let range: ClosedRange<Int>
+    var width: CGFloat = 44
+    let onChange: (Int) -> Void
+
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Text(label)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.tertiary)
+
+            HStack(spacing: 3) {
+                TextField("", text: $text)
+                    .focused($focused)
+                    .multilineTextAlignment(.center)
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .monospacedDigit()
+                    .paperTextField(focused: focused)
+                    .frame(width: width)
+                    .onSubmit { commit() }
+                    .onChange(of: focused) { _, isFocused in if !isFocused { commit() } }
+
+                VStack(spacing: 2) {
+                    StepChevron(system: "chevron.up") { bump(1) }
+                    StepChevron(system: "chevron.down") { bump(-1) }
+                }
+            }
+        }
+        .onAppear { text = String(value) }
+        .onChange(of: value) { _, newValue in
+            if !focused { text = String(newValue) }
+        }
+    }
+
+    private func clamped(_ v: Int) -> Int {
+        min(max(v, range.lowerBound), range.upperBound)
+    }
+
+    private func commit() {
+        let parsed = Int(text.trimmingCharacters(in: .whitespaces)) ?? value
+        let result = clamped(parsed)
+        text = String(result)
+        if result != value { onChange(result) }
+    }
+
+    private func bump(_ delta: Int) {
+        let result = clamped(value + delta)
+        text = String(result)
+        if result != value { onChange(result) }
+    }
+}
+
+/// Compact accent stepper button used by `PaperStepperField`.
+private struct StepChevron: View {
+    let system: String
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: system)
+                .font(.system(size: 7, weight: .black))
+                .foregroundStyle(hovering ? Color.white : Color.appAccent)
+                .frame(width: 18, height: 11)
+                .background(
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(hovering ? Color.appAccent : Color.appAccent.opacity(0.14))
+                )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
+
+private extension View {
+    /// Applies the Escape keyboard shortcut only when `enabled`, so a modal can
+    /// claim Escape without the underlying view also reacting to it.
+    @ViewBuilder
+    func escapeShortcut(enabled: Bool) -> some View {
+        if enabled {
+            keyboardShortcut(.escape, modifiers: [])
+        } else {
+            self
+        }
     }
 }

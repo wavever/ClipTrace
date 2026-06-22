@@ -788,6 +788,31 @@ class ClipboardViewModel: ObservableObject {
         return candidates.count
     }
 
+    /// Clears active clips whose capture time falls within `[from, to]`.
+    /// Soft-deletes into trash when the trash is enabled, hard-deletes
+    /// otherwise. Pinned/favorited rows are preserved. Returns the count moved.
+    func clearRange(from: Date, to: Date, context: ModelContext) -> Int {
+        let lower = min(from, to)
+        let upper = max(from, to)
+        let descriptor = FetchDescriptor<ClipboardItem>(
+            predicate: #Predicate {
+                $0.deletedAt == nil && $0.createdAt >= lower && $0.createdAt <= upper
+            }
+        )
+        guard let items = try? context.fetch(descriptor) else { return 0 }
+        let candidates = items.filter { !$0.isPinned && !$0.isFavorite }
+        guard !candidates.isEmpty else { return 0 }
+
+        let now = Date()
+        if FilterSettingsStore.shared.trashEnabled {
+            for item in candidates { item.deletedAt = now }
+        } else {
+            for item in candidates { context.delete(item) }
+        }
+        try? context.save()
+        return candidates.count
+    }
+
     func addTag(_ tag: String, to item: ClipboardItem) {
         item.setTags(item.tags + [tag])
         tagCatalogVersion &+= 1
