@@ -772,7 +772,7 @@ struct MenuBarRow: View {
                             .font(.system(size: 8))
                             .foregroundStyle(.yellow)
                     }
-                    Text(item.effectiveCustomTitle ?? item.preview ?? item.content)
+                    Text(item.effectiveCustomTitle ?? item.redactedForDisplay(item.preview ?? item.content))
                         .font(.system(size: 12))
                         .foregroundStyle(surfaceStyle.primaryText)
                         .lineLimit(1)

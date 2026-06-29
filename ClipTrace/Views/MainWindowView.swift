@@ -99,6 +99,11 @@ struct MainWindowContent: View {
     @ObservedObject private var nav = AppNavigation.shared
     @ObservedObject private var stats = CopyStatsStore.shared
     @ObservedObject private var confirm = ConfirmationCenter.shared
+    @ObservedObject private var ruleEditor = RuleEditorCenter.shared
+    // Observe Content Protection so toggling the master switch or a category
+    // re-renders the live list immediately (its `version` feeds each row's
+    // `Equatable`), rather than waiting for the next incidental refresh.
+    @ObservedObject private var contentProtection = ContentProtectionStore.shared
 
     @AppStorage("fdaOnboardingDismissed") private var fdaOnboardingDismissed = false
     @AppStorage("pinnedCollapsed") private var pinnedCollapsed = false
@@ -194,9 +199,33 @@ struct MainWindowContent: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.95)))
                 .zIndex(5)
             }
+
+            // Single host for the scripting rule editor — same spring-overlay
+            // idiom as the confirm dialog above (not a system sheet), so it
+            // scales in over the settings window with the app's motion.
+            if let rule = ruleEditor.editing {
+                Color.black.opacity(0.45)
+                    .ignoresSafeArea()
+                    .onTapGesture { ruleEditor.dismiss() }
+                    .transition(.opacity)
+                    .zIndex(6)
+
+                RuleEditorPanel(
+                    rule: rule,
+                    onSave: { saved in
+                        FilterSettingsStore.shared.upsertScriptingRule(saved)
+                        ruleEditor.dismiss()
+                    },
+                    onCancel: { ruleEditor.dismiss() }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                .zIndex(7)
+            }
         }
         .animation(.easeOut(duration: 0.22), value: nav.screen)
         .animation(.spring(response: 0.34, dampingFraction: 0.84), value: confirm.request?.id)
+        .animation(.spring(response: 0.34, dampingFraction: 0.84), value: ruleEditor.editing?.id)
         .animation(.easeOut(duration: 0.22), value: fdaOnboardingDismissed)
         .onAppear {
             refreshDerivedCaches()
@@ -1026,6 +1055,7 @@ struct MainWindowContent: View {
             // In normal browsing mode the same "selected" affordance doubles
             // as the keyboard-focus marker for arrow-nav + Space preview.
             isSelected: vm.isSelectionMode ? vm.isSelected(item) : (vm.focusedItemID == item.id),
+            protectionVersion: contentProtection.version,
             onCopy: {
                 vm.copyToClipboard(item)
                 ToastCenter.shared.show(L("common.copied"))
@@ -1178,6 +1208,10 @@ struct MainWindowContent: View {
                 },
                 onPreviewQRCode: dismissThen { qrPreviewTarget = item },
                 onScanCodes: dismissThen { barcodeScanTarget = item },
+                onRunRule: { rule in
+                    rowContextMenu.close()
+                    vm.runRuleManually(rule, on: item, context: modelContext)
+                },
                 onRename: dismissThen { renameTarget = item },
                 onToggleGroup: { group in
                     let wasMember = item.isInGroup(group.id)
@@ -1256,7 +1290,9 @@ struct MainWindowContent: View {
     /// users see what the row currently shows before they type anything.
     private func defaultDisplayTitle(for item: ClipboardItem) -> String {
         if let url = item.resolvedFileURL { return url.lastPathComponent }
-        let firstLine = (item.preview ?? item.content)
+        // Mask sensitive spans so the rename sheet's placeholder never reveals
+        // the raw value (the user can still type any new title they want).
+        let firstLine = item.redactedForDisplay(item.preview ?? item.content)
             .components(separatedBy: .newlines)
             .first ?? ""
         return firstLine.isEmpty ? item.itemType.displayName : firstLine
@@ -1312,6 +1348,7 @@ private struct ClipboardRowContextMenu: View {
     let onCopyPlainText: () -> Void
     let onPreviewQRCode: () -> Void
     let onScanCodes: () -> Void
+    let onRunRule: (ScriptingRule) -> Void
     let onRename: () -> Void
     let onToggleGroup: (ClipboardGroup) -> Void
     let onClearGroups: () -> Void
@@ -1336,6 +1373,7 @@ private struct ClipboardRowContextMenu: View {
         onCopyPlainText: @escaping () -> Void,
         onPreviewQRCode: @escaping () -> Void,
         onScanCodes: @escaping () -> Void,
+        onRunRule: @escaping (ScriptingRule) -> Void,
         onRename: @escaping () -> Void,
         onToggleGroup: @escaping (ClipboardGroup) -> Void,
         onClearGroups: @escaping () -> Void,
@@ -1356,6 +1394,7 @@ private struct ClipboardRowContextMenu: View {
         self.onCopyPlainText = onCopyPlainText
         self.onPreviewQRCode = onPreviewQRCode
         self.onScanCodes = onScanCodes
+        self.onRunRule = onRunRule
         self.onRename = onRename
         self.onToggleGroup = onToggleGroup
         self.onClearGroups = onClearGroups
@@ -1374,6 +1413,11 @@ private struct ClipboardRowContextMenu: View {
     }
 
     private var hasFile: Bool { item.resolvedFileURL != nil }
+    /// Enabled rules surfaced as manual "run rule" actions. Read at menu-build
+    /// time (the menu is rebuilt on each open, so no reactive observation needed).
+    private var enabledRules: [ScriptingRule] {
+        FilterSettingsStore.shared.scriptingRules.filter(\.isEnabled)
+    }
     private var canScanCodes: Bool {
         item.itemType == .image && (item.imageData != nil || item.resolvedFileURL != nil)
     }
@@ -1391,6 +1435,17 @@ private struct ClipboardRowContextMenu: View {
             }
             if canScanCodes {
                 PaperMenuActionRow(icon: "qrcode.viewfinder", title: L("action.scanCodes"), action: onScanCodes)
+            }
+
+            if !enabledRules.isEmpty {
+                PaperMenuDivider()
+                ForEach(enabledRules) { rule in
+                    PaperMenuActionRow(
+                        icon: "wand.and.stars",
+                        title: L("action.runRule", rule.displayName),
+                        action: { onRunRule(rule) }
+                    )
+                }
             }
 
             PaperMenuDivider()

@@ -263,7 +263,7 @@ struct TrashPanelView: View {
             return preview.components(separatedBy: .newlines).first ?? preview
         }
         if let url = item.resolvedFileURL { return url.lastPathComponent }
-        let firstLine = (item.preview ?? item.content)
+        let firstLine = item.redactedForDisplay(item.preview ?? item.content)
             .components(separatedBy: .newlines)
             .first ?? ""
         return firstLine.isEmpty ? item.itemType.displayName : firstLine

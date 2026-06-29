@@ -50,6 +50,9 @@
 		A10041 /* Localization.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10041; };
 		A10042 /* TagEditorPopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10042; };
 		A10043 /* OCRService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10043; };
+		A10350 /* ScriptRuleEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10350; };
+		A10351 /* ScriptRulesSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10351; };
+		A10360 /* ContentProtection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10360; };
 		A10044 /* OCRResultView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10044; };
 		A10045 /* UpdaterService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10045; };
 		A10046 /* PreviewKeyCatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10046; };
@@ -112,6 +115,9 @@
 		B10041 /* Localization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Localization.swift; sourceTree = "<group>"; };
 		B10042 /* TagEditorPopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TagEditorPopover.swift; sourceTree = "<group>"; };
 		B10043 /* OCRService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRService.swift; sourceTree = "<group>"; };
+		B10350 /* ScriptRuleEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptRuleEngine.swift; sourceTree = "<group>"; };
+		B10351 /* ScriptRulesSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptRulesSettingsView.swift; sourceTree = "<group>"; };
+		B10360 /* ContentProtection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentProtection.swift; sourceTree = "<group>"; };
 		B10044 /* OCRResultView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRResultView.swift; sourceTree = "<group>"; };
 		B10045 /* UpdaterService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdaterService.swift; sourceTree = "<group>"; };
 		B10046 /* PreviewKeyCatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewKeyCatcher.swift; sourceTree = "<group>"; };
@@ -219,6 +225,7 @@
 				B10016 /* PreviewPopover.swift */,
 				B10042 /* TagEditorPopover.swift */,
 				B10044 /* OCRResultView.swift */,
+				B10351 /* ScriptRulesSettingsView.swift */,
 				B10018 /* ToastView.swift */,
 				B10051 /* ConfirmationDialogView.swift */,
 				B10020 /* SettingsPanelView.swift */,
@@ -265,6 +272,8 @@
 				B10038 /* DynamicIslandController.swift */,
 				B10041 /* Localization.swift */,
 				B10043 /* OCRService.swift */,
+				B10350 /* ScriptRuleEngine.swift */,
+				B10360 /* ContentProtection.swift */,
 				B10045 /* UpdaterService.swift */,
 				B10211 /* WidgetBridge.swift */,
 			);
@@ -467,7 +476,10 @@
 				A10041 /* Localization.swift in Sources */,
 				A10042 /* TagEditorPopover.swift in Sources */,
 				A10043 /* OCRService.swift in Sources */,
+				A10350 /* ScriptRuleEngine.swift in Sources */,
+				A10360 /* ContentProtection.swift in Sources */,
 				A10044 /* OCRResultView.swift in Sources */,
+				A10351 /* ScriptRulesSettingsView.swift in Sources */,
 				A10045 /* UpdaterService.swift in Sources */,
 				A10046 /* PreviewKeyCatcher.swift in Sources */,
 				A10047 /* Theme.swift in Sources */,

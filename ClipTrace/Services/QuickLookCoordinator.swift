@@ -203,17 +203,22 @@ final class QuickLookCoordinator: NSObject, QLPreviewPanelDataSource, QLPreviewP
             return writeFallbackText("[Image]", id: item.id, in: dir)
 
         case .text:
-            return writeText(item.content, id: item.id, ext: "txt", in: dir)
+            // Materialize the redacted rendition: the on-disk preview file is a
+            // display surface (and could be picked up by Spotlight/screenshots),
+            // so sensitive spans must not land in it. The stored clip is intact.
+            return writeText(item.redactedForDisplay(item.content), id: item.id, ext: "txt", in: dir)
 
         case .url:
-            return writeText(item.content, id: item.id, ext: "txt", in: dir)
+            return writeText(item.redactedForDisplay(item.content), id: item.id, ext: "txt", in: dir)
 
         case .rtf:
             // RTF strings round-trip through QL fine when saved with the
             // `.rtf` extension; plain string write is enough because the
-            // clipboard already stores the raw RTF source.
-            let ext = item.content.hasPrefix("{\\rtf") ? "rtf" : "txt"
-            return writeText(item.content, id: item.id, ext: ext, in: dir)
+            // clipboard already stores the raw RTF source. Redaction only masks
+            // detected sensitive values, leaving the RTF control words intact.
+            let redacted = item.redactedForDisplay(item.content)
+            let ext = redacted.hasPrefix("{\\rtf") ? "rtf" : "txt"
+            return writeText(redacted, id: item.id, ext: ext, in: dir)
         }
     }
 

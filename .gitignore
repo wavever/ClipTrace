@@ -57,3 +57,8 @@ website/
 
 # Codegraph local index/cache
 .codegraph/
+
+# Multica / coding-agent runtime state (machine-local task context + brief)
+.multica/
+.agent_context/
+CLAUDE.md

@@ -164,18 +164,32 @@ class ExportService {
     }
 
     private static func makePayload(items: [ClipboardItem], includeImageData: Bool) -> ExportPayload {
+        // Egress guardrail: protected clips export their redacted value plus
+        // `isProtected`/`protectedCategories` metadata by default. Raw protected
+        // content leaves only when the user has explicitly opted in.
+        let settings = ContentProtectionSettings.current()
         let mapped = items.map { item -> ExportItemDTO in
-            ExportItemDTO(
+            let protection = ContentProtector.redact(item.content, settings: settings)
+            let useRaw = settings.allowRawExport || !protection.isProtected
+            let content = useRaw ? item.content : protection.redactedText
+            let preview = item.preview.map { raw in
+                useRaw ? raw : ContentProtector.redact(raw, settings: settings).redactedText
+            }
+            return ExportItemDTO(
                 id: item.id.uuidString,
                 type: item.type,
-                content: item.content,
-                preview: item.preview,
+                content: content,
+                preview: preview,
                 sourceApp: item.sourceApp.isEmpty ? nil : item.sourceApp,
                 fileURL: item.fileURL,
                 createdAt: item.createdAt,
                 isFavorite: item.isFavorite,
                 isPinned: item.isPinned,
-                imageDataBase64: includeImageData ? item.imageData?.base64EncodedString() : nil
+                imageDataBase64: includeImageData ? item.imageData?.base64EncodedString() : nil,
+                isProtected: protection.isProtected ? true : nil,
+                protectedCategories: protection.isProtected
+                    ? protection.categories.map(\.rawValue).sorted()
+                    : nil
             )
         }
         return ExportPayload(
@@ -197,7 +211,14 @@ class ExportService {
         do {
             switch item.itemType {
             case .text, .rtf, .url:
-                try item.content.write(to: url, atomically: true, encoding: .utf8)
+                // Default to the redacted rendition unless the user opted into
+                // raw protected export; the stored clip itself is unchanged.
+                let settings = ContentProtectionSettings.current()
+                let protection = ContentProtector.redact(item.content, settings: settings)
+                let output = (settings.allowRawExport || !protection.isProtected)
+                    ? item.content
+                    : protection.redactedText
+                try output.write(to: url, atomically: true, encoding: .utf8)
             case .image:
                 if let data = item.imageData {
                     try data.write(to: url)
@@ -242,4 +263,8 @@ private struct ExportItemDTO: Encodable {
     let isFavorite: Bool
     let isPinned: Bool
     let imageDataBase64: String?
+    /// Present (and `true`) only for protected clips, so consumers can tell a
+    /// redacted value apart from a clip that simply contained asterisks.
+    let isProtected: Bool?
+    let protectedCategories: [String]?
 }

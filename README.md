@@ -28,6 +28,7 @@ ClipTrace is an open-source macOS clipboard manager with offline semantic search
 - **Offline semantic search** - Apple `NLEmbedding` powers meaning-based search without hosted embedding APIs.
 - **AI-native workflow** - the app binary can run as an MCP stdio server with searchable and writable clipboard tools.
 - **Native macOS utility** - menu bar app, global hotkeys, Quick Paste, previews, snippets, and SwiftUI interface.
+- **Content protection** - sensitive values such as phone numbers and API keys are redacted across the UI, exports, and MCP by default, while the original stays on your Mac for reuse.
 - **Privacy controls** - pause capture, exclude source apps, ignore sensitive pasteboard markers, strip URL trackers, disable MCP tools, and delete history.
 
 ## Preview
@@ -78,6 +79,15 @@ ClipTrace is an open-source macOS clipboard manager with offline semantic search
 - URL tracking-parameter stripping for `utm_*`, `fbclid`, `gclid`, and more
 - Screen-recording hide mode for the app window
 
+### Content Protection
+
+- Automatic, conservative redaction of sensitive spans: Chinese mainland phone numbers (`13812345678` → `138****5678`) and API keys, tokens, secrets, and passwords — labeled values such as `appkey=…` plus high-confidence prefixes like `sk-`, `ghp_`, `AKIA`
+- Masks only the sensitive value while keeping surrounding labels and structure; conservative enough to leave UUIDs, hashes, timestamps, and ordinary URLs untouched
+- Redacted display across the history list, previews, menu bar, Dynamic Island, Quick Paste, Quick Look, and search snippets, with a lock badge on protected clips
+- The original value is never modified in storage — copy, quick paste, paste-as-plain-text, and edits still use the raw clip
+- Default exports and MCP responses return redacted content with `isProtected` metadata; raw egress requires an explicit opt-in
+- Master switch and per-category toggles in Settings → Privacy
+
 ### Export and Stats
 
 - JSON export with type, date, favorite, and pinned filters
@@ -113,7 +123,7 @@ Available tools:
 | `delete_clip` / `restore_clip` | Soft-delete, permanently delete, or restore entries |
 | `create_snippet` | Create a snippet with optional title and tags |
 
-MCP can expose clipboard contents to the client you configure. Read [PRIVACY.md](PRIVACY.md) before enabling it for sensitive workflows.
+Protected clips are redacted in MCP responses by default and carry `isProtected` metadata; returning raw protected content requires an explicit opt-in in Settings → Privacy. MCP can still expose other clipboard contents to the client you configure — read [PRIVACY.md](PRIVACY.md) before enabling it for sensitive workflows.
 
 ## Install
 

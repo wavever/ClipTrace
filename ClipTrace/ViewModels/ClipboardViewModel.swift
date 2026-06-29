@@ -373,6 +373,13 @@ class ClipboardViewModel: ObservableObject {
                 return
             }
 
+            // Pre-insert tier of the scripting rules: a code-free `.drop` rule
+            // excludes the clip entirely (no flash-in/out), same as the filter.
+            if self.preInsertDropMatches(type: type, content: content, bundleId: bundleId) {
+                ClipboardMonitor.debugLog("[VM] excluded by drop rule")
+                return
+            }
+
             // Re-copying the same content shouldn't grow a wall of duplicates
             // — refresh the existing entry's timestamp so it bubbles back to
             // the top, and still count the copy in stats. We only dedup
@@ -396,7 +403,7 @@ class ClipboardViewModel: ObservableObject {
                     WidgetBridge.shared.requestRefresh(context: context)
                     DynamicIslandController.shared.flash(
                         itemIcon: type.icon,
-                        preview: String(content.prefix(60))
+                        preview: String(ContentProtector.redact(content).redactedText.prefix(60))
                     )
                     return
                 }
@@ -430,6 +437,12 @@ class ClipboardViewModel: ObservableObject {
                 itemIcon: type.icon,
                 preview: String(content.prefix(60))
             )
+
+            // Run the user's scripting rules against the freshly-stored clip,
+            // asynchronously and off-main — never blocks capture (mirrors the
+            // OCR/embedding backfill below). A rule may transform, tag, rename,
+            // or drop the clip a beat later.
+            self.runRulesOnCapture(for: item, bundleId: bundleId, context: context)
 
             // Compute embedding off the main thread, then write back. For
             // image clips we also kick off an OCR pass so the recognized
@@ -822,6 +835,157 @@ class ClipboardViewModel: ObservableObject {
         let key = tag.lowercased()
         item.setTags(item.tags.filter { $0.lowercased() != key })
         tagCatalogVersion &+= 1
+    }
+
+    // MARK: - Scripting rule effects
+
+    /// Apply one `ScriptEffect` produced by a rule action to `item`, reusing the
+    /// same verbs as manual user actions so there is a single mutation path.
+    /// Returns true when the clip was dropped, letting the engine short-circuit
+    /// the rest of the rule chain.
+    ///
+    /// Loop-safety: every case here mutates SwiftData (which the clipboard
+    /// monitor does not observe) or, for the one pasteboard-writing case, marks
+    /// an internal write — so applying an effect never re-enters capture or
+    /// re-triggers rule evaluation, and is never counted as a user copy
+    /// (`recordCopy` lives only on the capture path).
+    @discardableResult
+    func applyScriptEffect(_ effect: ScriptEffect, to item: ClipboardItem, context: ModelContext) -> Bool {
+        switch effect {
+        case .none:
+            return false
+        case .replaceText(let text):
+            item.content = text
+            item.preview = String(text.prefix(200))
+            try? context.save()
+        case .newClip(let text):
+            let new = ClipboardItem(
+                type: .text,
+                content: text,
+                sourceApp: L("rule.sourceApp"),
+                preview: String(text.prefix(200))
+            )
+            context.insert(new)
+            try? context.save()
+        case .setTags(let tags):
+            item.setTags(item.tags + tags)
+            tagCatalogVersion &+= 1
+            try? context.save()
+        case .rename(let title):
+            rename(item, to: title, context: context)
+        case .copyToPasteboard(let text):
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(text, forType: .string)
+            // Treat as our own write so the monitor doesn't re-capture it.
+            ClipboardMonitor.markInternalWrite()
+        case .drop:
+            // Soft-delete (or hard, per trash setting) — mirrors the GUI and the
+            // spec's "remove it if already stored" for a post-insert drop.
+            deleteItem(item, context: context)
+            return true
+        }
+        return false
+    }
+
+    /// Apply a sequence of effects in order, stopping early if one drops the
+    /// clip. Used by both automatic (capture) and manual rule invocation so the
+    /// chain semantics are identical.
+    @discardableResult
+    func applyScriptEffects(_ effects: [ScriptEffect], to item: ClipboardItem, context: ModelContext) -> Bool {
+        for effect in effects {
+            if applyScriptEffect(effect, to: item, context: context) {
+                return true // dropped — short-circuit
+            }
+        }
+        return false
+    }
+
+    // MARK: - Scripting rule execution
+
+    /// Immutable input snapshot for runners. Reads the model on the main actor so
+    /// the (value-typed, Sendable) result can cross to a background executor.
+    private func makeScriptInput(_ item: ClipboardItem, bundleId: String) -> ScriptClipInput {
+        ScriptClipInput(
+            text: item.content,
+            type: item.type,
+            sourceApp: item.sourceApp,
+            bundleId: bundleId,
+            tags: item.tags,
+            imageData: item.imageData
+        )
+    }
+
+    /// Synchronous pre-insert tier: true when an enabled, code-free `.drop` rule
+    /// matches, so the clip is excluded before it is ever stored (preserving the
+    /// legacy filter's clean exclusion, no flash-in/flash-out).
+    func preInsertDropMatches(type: ClipboardItemType, content: String, bundleId: String) -> Bool {
+        for rule in FilterSettingsStore.shared.scriptingRules where rule.isEnabled {
+            if case .drop = rule.action,
+               rule.matches(type: type, content: content, sourceBundleId: bundleId) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Run the enabled rule chain against a freshly-stored clip. The script body
+    /// runs off the main actor; effects apply back on the main actor. Rules run
+    /// in order; a `drop` short-circuits the rest. Never blocks capture.
+    func runRulesOnCapture(for item: ClipboardItem, bundleId: String, context: ModelContext) {
+        let rules = FilterSettingsStore.shared.scriptingRules.filter(\.isEnabled)
+        guard !rules.isEmpty else { return }
+        Task { @MainActor [weak self, weak item] in
+            guard let self, let item else { return }
+            for rule in rules {
+                // Source app is immutable for a clip, so the capture-time bundleId
+                // stays valid; content may have changed via an earlier rule.
+                guard rule.matches(type: item.itemType, content: item.content, sourceBundleId: bundleId) else { continue }
+                if await self.runOneRule(rule, on: item, bundleId: bundleId, context: context) {
+                    break // dropped
+                }
+            }
+        }
+    }
+
+    /// Run a single rule on demand (context menu), ignoring its match conditions
+    /// per the manual-invocation contract.
+    func runRuleManually(_ rule: ScriptingRule, on item: ClipboardItem, context: ModelContext) {
+        Task { @MainActor [weak self, weak item] in
+            guard let self, let item else { return }
+            _ = await self.runOneRule(rule, on: item, bundleId: "", context: context)
+            ToastCenter.shared.show(
+                L("rule.toast.ran") + " " + rule.displayName,
+                systemImage: "wand.and.stars",
+                tint: .appAccent
+            )
+        }
+    }
+
+    /// Execute one rule's action off-main, apply its effects on-main, and record
+    /// the run. Returns true when the clip was dropped.
+    @discardableResult
+    private func runOneRule(_ rule: ScriptingRule, on item: ClipboardItem, bundleId: String, context: ModelContext) async -> Bool {
+        let input = makeScriptInput(item, bundleId: bundleId)
+        let timeout = rule.timeoutSeconds ?? ScriptRuleEngine.defaultTimeout
+        let action = rule.action
+        let caps = rule.grantedCapabilities
+        do {
+            let effects = try await Task.detached(priority: .utility) {
+                try ScriptRuleEngine.runAction(action, input: input, timeout: timeout, capabilities: caps)
+            }.value
+            let dropped = applyScriptEffects(effects, to: item, context: context)
+            ScriptRunLog.shared.record(rule: rule.displayName, outcome: effects.isEmpty ? .skipped : .applied)
+            return dropped
+        } catch {
+            ScriptRunLog.shared.record(rule: rule.displayName, outcome: .error, detail: String(describing: error))
+            ToastCenter.shared.show(
+                L("rule.toast.failed") + " " + rule.displayName,
+                systemImage: "exclamationmark.triangle.fill",
+                tint: .orange
+            )
+            return false
+        }
     }
 
     // MARK: - Selection / Merge

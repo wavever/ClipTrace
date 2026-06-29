@@ -33,30 +33,37 @@ struct PreviewPopover: View {
         .frame(minWidth: 360, idealWidth: 460, minHeight: 240, idealHeight: 320)
     }
 
+    /// Display/egress-safe rendition of the clip. Sensitive spans are masked
+    /// before the popover renders or runs its base64/JSON decode helpers, so the
+    /// raw value never appears here even though it stays intact in storage.
+    private var protectedContent: String {
+        item.redactedForDisplay(item.content)
+    }
+
     @ViewBuilder
     private var content: some View {
         switch item.itemType {
         case .text, .url:
             VStack(spacing: 8) {
                 ScrollView {
-                    Text(item.content)
+                    Text(protectedContent)
                         .font(.system(size: 12, design: .monospaced))
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                         .padding(12)
                 }
-                decodeCard(for: item.content)
+                decodeCard(for: protectedContent)
             }
         case .rtf:
             VStack(spacing: 8) {
                 ScrollView {
-                    Text(item.content)
+                    Text(protectedContent)
                         .font(.system(size: 12))
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                         .padding(12)
                 }
-                decodeCard(for: item.content)
+                decodeCard(for: protectedContent)
             }
         case .image:
             if let img = imageToShow() {
@@ -120,8 +127,11 @@ struct PreviewPopover: View {
     @ViewBuilder
     private func decodeCard(for raw: String) -> some View {
         let epoch = PreviewPopover.epochInterpretation(of: raw)
-        let base64 = PreviewPopover.base64Decoded(of: raw)
-        let json = PreviewPopover.prettyJSON(of: raw)
+        // Decoding can surface sensitive text that the encoded form hid from the
+        // detector (e.g. a Base64 blob of `appkey=…`), so the derived plaintext
+        // is run back through redaction before it is rendered.
+        let base64 = PreviewPopover.base64Decoded(of: raw).map { item.redactedForDisplay($0) }
+        let json = PreviewPopover.prettyJSON(of: raw).map { item.redactedForDisplay($0) }
 
         if epoch != nil || base64 != nil || json != nil {
             VStack(spacing: 8) {

@@ -989,7 +989,10 @@ struct TextQRCodePreviewView: View {
     @State private var qrImage: NSImage?
     @State private var didGenerate = false
 
-    private var text: String { item.content }
+    /// Use protected display text as the QR source: the preview renders the
+    /// string, encodes it into the QR image, and the copy actions emit it — none
+    /// of which is a raw-reuse path, so sensitive spans must stay masked here.
+    private var text: String { item.redactedForDisplay(item.content) }
     private var byteCount: Int { text.data(using: .utf8)?.count ?? 0 }
 
     var body: some View {

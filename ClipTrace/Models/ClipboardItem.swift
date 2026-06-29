@@ -343,3 +343,21 @@ final class ClipboardItem {
         }
     }
 }
+
+// MARK: - Content Protection (display/egress helpers)
+
+extension ClipboardItem {
+    /// Redact an already-derived display string (preview, first line, snippet)
+    /// using the live Content Protection settings. The stored clip is never
+    /// mutated — redaction is computed for presentation only. Idempotent.
+    func redactedForDisplay(_ raw: String) -> String {
+        ContentProtector.redact(raw).redactedText
+    }
+
+    /// Full redaction result over the raw stored `content`. Used by the
+    /// export / MCP egress paths (which need accurate `isProtected` metadata)
+    /// and to decide whether to surface a protected-state badge.
+    var contentProtectionResult: ContentProtectionResult {
+        ContentProtector.redact(content)
+    }
+}

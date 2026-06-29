@@ -361,8 +361,8 @@ struct QuickPasteView: View {
 
     private func displayPreview(for item: ClipboardItem) -> String {
         if let title = item.effectiveCustomTitle { return title }
-        if let p = item.preview, !p.isEmpty { return p }
-        if !item.content.isEmpty { return item.content }
+        if let p = item.preview, !p.isEmpty { return item.redactedForDisplay(p) }
+        if !item.content.isEmpty { return item.redactedForDisplay(item.content) }
         return item.descriptiveTag
     }
 

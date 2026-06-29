@@ -683,15 +683,25 @@ enum MCPServer {
             return "Not found"
         }
 
+        // Egress default: redact protected text/OCR unless the user opted into
+        // raw MCP output. Protected metadata is always reported so a client can
+        // tell a redacted value from an ordinary one.
+        let settings = ContentProtectionSettings.current()
         let body: String
+        var protection: ContentProtectionResult?
         if item.itemType == .image {
             if let ocr = item.ocrText, !ocr.isEmpty {
-                body = "[Image, \(item.imageData?.count ?? 0) bytes]\n\nOCR:\n\(ocr)"
+                let p = ContentProtector.redact(ocr, settings: settings)
+                protection = p
+                let shown = (settings.allowRawMCP || !p.isProtected) ? ocr : p.redactedText
+                body = "[Image, \(item.imageData?.count ?? 0) bytes]\n\nOCR:\n\(shown)"
             } else {
                 body = "[Image, \(item.imageData?.count ?? 0) bytes, not text-extractable]"
             }
         } else {
-            body = item.content
+            let p = ContentProtector.redact(item.content, settings: settings)
+            protection = p
+            body = (settings.allowRawMCP || !p.isProtected) ? item.content : p.redactedText
         }
 
         var headerLines: [String] = [
@@ -704,6 +714,10 @@ enum MCPServer {
         ]
         if let title = item.effectiveCustomTitle {
             headerLines.insert("Title: \(title)", at: 1)
+        }
+        if let protection, protection.isProtected {
+            headerLines.append("Protected: true")
+            headerLines.append("ProtectedCategories: \(protection.categories.map(\.rawValue).sorted().joined(separator: ", "))")
         }
         let header = headerLines.joined(separator: "\n")
 
@@ -926,11 +940,27 @@ enum MCPServer {
     // MARK: - Formatting helpers
 
     private static func formatResultRow(index: Int, item: ClipboardItem) -> String {
+        let settings = ContentProtectionSettings.current()
         let snippet: String
+        var protectedTag = ""
         if item.itemType == .image {
             snippet = "[Image, \(item.imageData?.count ?? 0) bytes]"
+            // Search/list can match an image via its OCR text, so flag the row
+            // when that OCR is protected — consistent with `get_clip` — without
+            // surfacing the OCR snippet itself.
+            if let ocr = item.ocrText, !ocr.isEmpty,
+               ContentProtector.redact(ocr, settings: settings).isProtected {
+                protectedTag = " [protected]"
+            }
         } else {
-            let collapsed = item.content
+            // Egress default: redact protected clips unless the user opted into
+            // raw MCP output. Search still matched the raw content upstream.
+            let protection = ContentProtector.redact(item.content, settings: settings)
+            let shown = (settings.allowRawMCP || !protection.isProtected)
+                ? item.content
+                : protection.redactedText
+            if protection.isProtected { protectedTag = " [protected]" }
+            let collapsed = shown
                 .replacingOccurrences(of: "\n", with: " ")
                 .replacingOccurrences(of: "\r", with: " ")
             if collapsed.count > 300 {
@@ -940,7 +970,7 @@ enum MCPServer {
             }
         }
         let source = item.sourceApp.isEmpty ? "unknown" : item.sourceApp
-        return "[\(index)] [\(item.type)] (\(source), \(iso8601(item.createdAt))) — \(snippet)\nID: \(item.id.uuidString)"
+        return "[\(index)] [\(item.type)]\(protectedTag) (\(source), \(iso8601(item.createdAt))) — \(snippet)\nID: \(item.id.uuidString)"
     }
 
     private static let iso8601Formatter: ISO8601DateFormatter = {

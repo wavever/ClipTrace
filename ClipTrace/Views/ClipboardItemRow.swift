@@ -6,6 +6,10 @@ struct ClipboardItemRow: View, Equatable {
     var groupNames: [String] = []
     var isSelectionMode: Bool = false
     var isSelected: Bool = false
+    /// Bumped by `ContentProtectionStore` when the master toggle or a category
+    /// changes. Carried purely so the `Equatable` gate below invalidates the row
+    /// after a protection setting flips and the masked title/badge recompute.
+    var protectionVersion: Int = 0
     var onCopy: () -> Void = {}
     var onDelete: () -> Void = {}
     var onToggleFavorite: () -> Void = {}
@@ -44,6 +48,7 @@ struct ClipboardItemRow: View, Equatable {
             && lhs.groupNames == rhs.groupNames
             && lhs.isSelected == rhs.isSelected
             && lhs.isSelectionMode == rhs.isSelectionMode
+            && lhs.protectionVersion == rhs.protectionVersion
     }
 
     var body: some View {
@@ -74,6 +79,12 @@ struct ClipboardItemRow: View, Equatable {
                         Image(systemName: "star.fill")
                             .font(.system(size: 10))
                             .foregroundStyle(.yellow)
+                    }
+                    if rowProtection.isProtected {
+                        Image(systemName: "lock.shield.fill")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.appAccent)
+                            .help(L("protection.badge.tooltip"))
                     }
                     Text(displayTitle)
                         .font(.system(size: 14, weight: .semibold))
@@ -274,9 +285,17 @@ struct ClipboardItemRow: View, Equatable {
             .opacity(0.7)
     }
 
+    /// Redaction over the row's text source, reused by the masked title and the
+    /// protected-state badge so the scan runs against the (≤200 char) preview
+    /// rather than the full clip.
+    private var rowProtection: ContentProtectionResult {
+        ContentProtector.redact(item.preview ?? item.content)
+    }
+
     private var displayTitle: String {
         // User-assigned label wins outright — that's the whole point of
-        // letting people rename rows.
+        // letting people rename rows. Custom titles and file names are not
+        // redacted (they aren't the sensitive value).
         if let custom = item.effectiveCustomTitle { return custom }
         // Merged entries set a preview prefixed with a localized "[Merged ..."
         // (or "[合并 ...") tag — keep that as the title so the row visually
@@ -286,7 +305,8 @@ struct ClipboardItemRow: View, Equatable {
             return preview.components(separatedBy: .newlines).first ?? preview
         }
         if let url = item.resolvedFileURL { return url.lastPathComponent }
-        let firstLine = (item.preview ?? item.content)
+        // Sensitive spans are masked before the title is rendered.
+        let firstLine = rowProtection.redactedText
             .components(separatedBy: .newlines)
             .first ?? ""
         return firstLine.isEmpty ? item.itemType.displayName : firstLine

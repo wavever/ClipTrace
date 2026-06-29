@@ -25,6 +25,8 @@ struct SettingsPanelView: View {
         case general
         case shortcut
         case filter
+        case rules
+        case privacy
         case merge
         case ai
         case data
@@ -35,6 +37,8 @@ struct SettingsPanelView: View {
             case .general:  return L("settings.tab.general")
             case .shortcut: return L("settings.tab.shortcut")
             case .filter:   return L("settings.tab.filter")
+            case .rules:    return L("settings.tab.rules")
+            case .privacy:  return L("settings.tab.privacy")
             case .merge:    return L("settings.tab.merge")
             case .ai:       return L("settings.tab.ai")
             case .data:     return L("settings.tab.data")
@@ -155,6 +159,10 @@ struct SettingsPanelView: View {
             ShortcutSection()
         case .filter:
             FilterSection()
+        case .rules:
+            RulesSection()
+        case .privacy:
+            PrivacySection()
         case .merge:
             MergeSection()
         case .ai:
@@ -1514,6 +1522,83 @@ private struct FilterSection: View {
         }
         if added > 0 {
             ToastCenter.shared.show(L("settings.filter.apps.addedFormat", added))
+        }
+    }
+}
+
+// MARK: - Privacy / Content Protection
+
+private struct PrivacySection: View {
+    @ObservedObject private var store = ContentProtectionStore.shared
+
+    var body: some View {
+        VStack(spacing: 18) {
+            SettingsGroup(icon: "lock.shield", title: L("settings.privacy.title"), tint: .appAccent) {
+                SettingsRow(
+                    icon: "lock.shield.fill",
+                    iconTint: .appAccent,
+                    title: L("settings.privacy.master"),
+                    subtitle: L("settings.privacy.master.subtitle")
+                ) {
+                    Toggle("", isOn: $store.isEnabled)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .tint(.appAccent)
+                }
+            }
+
+            SettingsGroup(icon: "checklist", title: L("settings.privacy.categories.title"), tint: .appAccent) {
+                ForEach(ContentProtectionCategory.allCases, id: \.self) { category in
+                    SettingsRow(
+                        icon: category.icon,
+                        iconTint: .appAccent,
+                        title: L(category.titleKey),
+                        subtitle: L(category.subtitleKey)
+                    ) {
+                        Toggle("", isOn: store.categoryBinding(category))
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .tint(.appAccent)
+                            .disabled(!store.isEnabled)
+                    }
+                }
+            }
+            .opacity(store.isEnabled ? 1 : 0.6)
+
+            SettingsGroup(icon: "arrow.up.forward.square", title: L("settings.privacy.egress.title"), tint: .appAccent) {
+                SettingsRow(
+                    icon: "square.and.arrow.up",
+                    iconTint: .appAccent,
+                    title: L("settings.privacy.rawExport"),
+                    subtitle: L("settings.privacy.rawExport.subtitle")
+                ) {
+                    Toggle("", isOn: $store.allowRawExport)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .tint(.appAccent)
+                        .disabled(!store.isEnabled)
+                }
+                SettingsRow(
+                    icon: "terminal",
+                    iconTint: .appAccent,
+                    title: L("settings.privacy.rawMCP"),
+                    subtitle: L("settings.privacy.rawMCP.subtitle")
+                ) {
+                    Toggle("", isOn: $store.allowRawMCP)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .tint(.appAccent)
+                        .disabled(!store.isEnabled)
+                }
+            }
+            .opacity(store.isEnabled ? 1 : 0.6)
+
+            SettingCard(
+                title: L("settings.privacy.note.title"),
+                subtitle: L("settings.privacy.note.body")
+            ) {
+                EmptyView()
+            }
         }
     }
 }
