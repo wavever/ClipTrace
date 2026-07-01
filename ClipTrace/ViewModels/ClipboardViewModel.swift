@@ -409,20 +409,48 @@ class ClipboardViewModel: ObservableObject {
                 }
             }
             
-            let item = ClipboardItem(
-                type: type,
-                content: content,
-                imageData: imageData,
-                fileURL: fileURL,
-                sourceApp: sourceApp,
-                preview: String(content.prefix(200))
-            )
-            context.insert(item)
-            do {
-                try context.save()
-                ClipboardMonitor.debugLog("[VM] inserted id=\(item.id)")
-            } catch {
-                ClipboardMonitor.debugLog("[VM] insert FAILED: \(error)")
+            let item: ClipboardItem
+            if type == .image,
+               let imageData,
+               let payload = ImagePayloadStore.normalizedPayload(from: imageData) {
+                item = ClipboardItem(
+                    type: type,
+                    content: content,
+                    imageData: payload.data,
+                    fileURL: fileURL,
+                    sourceApp: sourceApp,
+                    preview: String(content.prefix(200))
+                )
+                ImagePayloadStore.applyMetadata(from: payload, to: item)
+                context.insert(item)
+                do {
+                    try context.save()
+                    ClipboardMonitor.debugLog("[VM] inserted image id=\(item.id)")
+                } catch {
+                    ClipboardMonitor.debugLog("[VM] image insert FAILED: \(error)")
+                }
+            } else {
+                item = ClipboardItem(
+                    type: type,
+                    content: content,
+                    imageData: imageData,
+                    fileURL: fileURL,
+                    sourceApp: sourceApp,
+                    preview: String(content.prefix(200))
+                )
+                if type == .image,
+                   let imageData,
+                   let payload = ImagePayloadStore.normalizedPayload(from: imageData) {
+                    item.imageData = payload.data
+                    ImagePayloadStore.applyMetadata(from: payload, to: item)
+                }
+                context.insert(item)
+                do {
+                    try context.save()
+                    ClipboardMonitor.debugLog("[VM] inserted id=\(item.id)")
+                } catch {
+                    ClipboardMonitor.debugLog("[VM] insert FAILED: \(error)")
+                }
             }
 
             // Bump today's copy counter (guarded by user's toggle).
@@ -448,8 +476,9 @@ class ClipboardViewModel: ObservableObject {
             // image clips we also kick off an OCR pass so the recognized
             // text feeds both keyword search and the embedding vector.
             if type == .image {
-                Task { @MainActor [item] in
-                    let recognized = await OCRService.shared.recognize(item: item)
+                let reference = ImagePayloadStore.reference(for: item)
+                Task { @MainActor [item, reference] in
+                    let recognized = await OCRService.shared.recognize(reference: reference)
                     item.ocrText = recognized
                     try? context.save()
                     guard !recognized.isEmpty else { return }
@@ -488,7 +517,7 @@ class ClipboardViewModel: ObservableObject {
         retentionTimer?.invalidate()
         retentionTimer = nil
     }
-    
+
     func copyToClipboard(_ item: ClipboardItem) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
@@ -508,11 +537,10 @@ class ClipboardViewModel: ObservableObject {
             }
             pasteboard.setString(output, forType: .string)
         case .image:
-            if let data = item.imageData {
-                pasteboard.setData(data, forType: .tiff)
-            } else if let url = item.resolvedFileURL {
-                pasteboard.writeObjects([url as NSURL])
-            }
+            _ = ImagePayloadStore.writeImage(
+                for: ImagePayloadStore.reference(for: item),
+                to: pasteboard
+            )
         case .video, .file:
             if let url = item.resolvedFileURL {
                 pasteboard.writeObjects([url as NSURL])
@@ -912,7 +940,7 @@ class ClipboardViewModel: ObservableObject {
             sourceApp: item.sourceApp,
             bundleId: bundleId,
             tags: item.tags,
-            imageData: item.imageData
+            imageData: ImagePayloadStore.payload(for: ImagePayloadStore.reference(for: item))?.data
         )
     }
 
@@ -1101,6 +1129,10 @@ class ClipboardViewModel: ObservableObject {
                 sourceApp: sourceApp,
                 preview: content
             )
+            if let payload = ImagePayloadStore.normalizedPayload(from: stitched) {
+                merged.imageData = payload.data
+                ImagePayloadStore.applyMetadata(from: payload, to: merged)
+            }
         }
 
         context.insert(merged)
@@ -1457,7 +1489,18 @@ class ClipboardViewModel: ObservableObject {
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
         descriptor.fetchLimit = Self.ocrBackfillBatchSize
-        descriptor.propertiesToFetch = [\.type, \.content, \.imageData, \.fileURL, \.ocrText]
+        descriptor.propertiesToFetch = [
+            \.id,
+            \.type,
+            \.content,
+            \.fileURL,
+            \.imageUTI,
+            \.imageByteCount,
+            \.imagePixelWidth,
+            \.imagePixelHeight,
+            \.imageStorageVersion,
+            \.ocrText
+        ]
 
         guard let firstBatch = try? context.fetch(descriptor), !firstBatch.isEmpty else { return }
 
@@ -1468,7 +1511,9 @@ class ClipboardViewModel: ObservableObject {
         while !images.isEmpty, !Task.isCancelled {
             for item in images {
                 guard !Task.isCancelled else { break }
-                let recognized = await OCRService.shared.recognize(item: item)
+                let recognized = await OCRService.shared.recognize(
+                    reference: ImagePayloadStore.reference(for: item)
+                )
                 item.ocrText = recognized
                 if semanticFeatureEnabled,
                    !recognized.isEmpty,

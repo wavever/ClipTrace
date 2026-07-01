@@ -34,6 +34,7 @@ final class ClipboardRuntime {
         // Seed the shared snapshot at launch so the widgets have data to show
         // before the first new clip arrives.
         WidgetBridge.shared.refreshNow(context: context)
+        ImagePayloadStore.migrateStoredImagesInBackground(context: context)
     }
 
     func stop() {

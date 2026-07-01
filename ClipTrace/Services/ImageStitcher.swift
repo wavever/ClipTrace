@@ -2,7 +2,7 @@ import AppKit
 
 enum ImageStitcher {
     /// Stack images along the chosen axis, with `spacing` pixels between each
-    /// pair. Returns TIFF data sized to fit every input at its native pixel
+    /// pair. Returns compressed image data sized to fit every input at its native pixel
     /// dimensions; the bounding axis uses the largest input on that axis.
     static func stitch(
         _ images: [NSImage],
@@ -29,8 +29,7 @@ enum ImageStitcher {
 
         // Render into an NSBitmapImageRep so the output preserves the source
         // pixel dimensions (NSImage.lockFocus is point-based and downsamples
-        // Retina captures). We also avoid the classic `defer-unlockFocus`
-        // pitfall where tiffRepresentation runs before unlock.
+        // Retina captures).
         guard let rep = NSBitmapImageRep(
             bitmapDataPlanes: nil,
             pixelsWide: Int(ceil(totalWidth)),
@@ -84,18 +83,11 @@ enum ImageStitcher {
         NSGraphicsContext.restoreGraphicsState()
 
         return rep.representation(using: .png, properties: [:])
-            ?? rep.tiffRepresentation
     }
 
-    /// Resolve the actual image bytes for a clip — preferring the stored
-    /// imageData blob, falling back to disk for file-backed image clips.
+    /// Resolve the actual image bytes for a clip through a short-lived context,
+    /// falling back to disk for file-backed image clips.
     static func imageFromItem(_ item: ClipboardItem) -> NSImage? {
-        if let data = item.imageData, let image = NSImage(data: data) {
-            return image
-        }
-        if let url = item.resolvedFileURL, let image = NSImage(contentsOf: url) {
-            return image
-        }
-        return nil
+        ImagePayloadStore.image(for: ImagePayloadStore.reference(for: item))
     }
 }

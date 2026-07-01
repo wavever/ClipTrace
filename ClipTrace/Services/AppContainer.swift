@@ -329,14 +329,21 @@ enum AppContainer {
                 continue
             }
 
+            let imagePayload = legacy.imageData.flatMap {
+                ImagePayloadStore.normalizedPayload(from: $0)
+            }
+
             let item = ClipboardItem(
                 type: ClipboardItemType(rawValue: legacy.type) ?? .text,
                 content: legacy.content,
-                imageData: legacy.imageData,
+                imageData: imagePayload?.data,
                 fileURL: legacy.fileURL,
                 sourceApp: legacy.sourceApp,
                 preview: legacy.preview
             )
+            if let imagePayload {
+                ImagePayloadStore.applyMetadata(from: imagePayload, to: item)
+            }
             item.id = legacy.id
             item.type = legacy.type
             item.createdAt = legacy.createdAt
@@ -423,7 +430,14 @@ enum AppContainer {
     }
 
     private static func sidecarURLs(for storeURL: URL) -> [URL] {
-        sidecarSuffixes.map { URL(fileURLWithPath: storeURL.path + $0) }
+        var urls = sidecarSuffixes.map { URL(fileURLWithPath: storeURL.path + $0) }
+        urls.append(URL(fileURLWithPath: storeURL.path + "_SUPPORT", isDirectory: true))
+        urls.append(
+            storeURL
+                .deletingLastPathComponent()
+                .appendingPathComponent(".\(storeURL.lastPathComponent)_SUPPORT", isDirectory: true)
+        )
+        return urls
     }
 
     private static func timestamp() -> String {

@@ -160,20 +160,11 @@ class ClipboardMonitor: ObservableObject {
             return
         }
 
-        // 2. 原始图片数据（截图、浏览器复制、应用拷贝出来的位图）
-        //    Fast path: tiff/png directly. Fallback: NSImage(pasteboard:)
-        //    which understands every image UTI macOS recognises (jpeg, heic,
-        //    Safari's image-copy variants, …) and gives us a stable TIFF
-        //    representation back.
-        let imageData: Data? = {
-            if let data = pasteboard.data(forType: .tiff) { return data }
-            if let data = pasteboard.data(forType: .png) { return data }
-            if let img = NSImage(pasteboard: pasteboard) {
-                return img.tiffRepresentation
-            }
-            return nil
-        }()
-        if let imageData {
+        // 2. 原始图片数据（截图、浏览器复制、应用拷贝出来的位图）。
+        // Keep compressed image representations and rewrite TIFF fallbacks to PNG
+        // before the bytes ever enter SwiftData.
+        if let imagePayload = ImagePayloadStore.pasteboardPayload(from: pasteboard) {
+            let imageData = imagePayload.data
             Self.debugLog("[Clipboard] -> image branch bytes=\(imageData.count)")
             let content = L("merge.imagePlaceholderFormat", imageData.count / 1024)
             onNewContent?(.image, content, imageData, nil, sourceApp, bundleId)
