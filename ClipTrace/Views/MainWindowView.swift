@@ -2152,7 +2152,7 @@ private struct GroupFilterPanel: View {
                                 FilterListOption(
                                     title: group.displayName,
                                     icon: "folder.fill",
-                                    isSelected: selection == .group(group.id),
+                                    isSelected: selection == .group(group.id)
                                 ) {
                                     onSelect(.group(group.id))
                                 }
