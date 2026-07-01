@@ -92,7 +92,12 @@ final class ClipboardItem {
     var id: UUID
     var type: String // ClipboardItemType raw value
     var content: String // text content or file path
-    var imageData: Data?
+    @Attribute(.externalStorage) var imageData: Data?
+    var imageUTI: String?
+    var imageByteCount: Int?
+    var imagePixelWidth: Int?
+    var imagePixelHeight: Int?
+    var imageStorageVersion: Int?
     var fileURL: String?
     var sourceApp: String
     var createdAt: Date
@@ -134,6 +139,11 @@ final class ClipboardItem {
         self.type = type.rawValue
         self.content = content
         self.imageData = imageData
+        self.imageUTI = nil
+        self.imageByteCount = imageData?.count
+        self.imagePixelWidth = nil
+        self.imagePixelHeight = nil
+        self.imageStorageVersion = imageData == nil ? nil : 1
         self.fileURL = fileURL
         self.sourceApp = sourceApp
         self.createdAt = Date()
@@ -232,6 +242,19 @@ final class ClipboardItem {
 
     var itemType: ClipboardItemType {
         ClipboardItemType(rawValue: type) ?? .text
+    }
+
+    /// True when the clip has an embedded image blob without faulting that blob.
+    /// Legacy image rows predate `imageByteCount`; for those, image + no file URL
+    /// is the only cheap signal that the bitmap lives in `imageData`.
+    var hasStoredImageData: Bool {
+        guard itemType == .image else { return false }
+        if let imageByteCount { return imageByteCount > 0 }
+        return fileURL == nil
+    }
+
+    var hasImagePayload: Bool {
+        itemType == .image && (hasStoredImageData || resolvedFileURL != nil)
     }
     
     var resolvedFileURL: URL? {
