@@ -11,6 +11,8 @@ import Sparkle
 /// 1. `checkForUpdates()` — fire a user-initiated check; Sparkle takes over from there.
 /// 2. `canCheck` — a `@Published` mirror of the updater's busy state so the UI
 ///    can disable the button while a check is already in flight.
+/// 3. `updateAvailable` / `latestVersion` — delegate-driven state used for
+///    non-modal in-app reminders when a scheduled background check finds an update.
 ///
 /// `SPUUpdater.start()` boots the updater on init, which also kicks off the
 /// configured background check schedule (controlled by `SUEnableAutomaticChecks`
@@ -22,22 +24,27 @@ final class UpdaterService: ObservableObject {
     static let shared = UpdaterService()
 
     @Published private(set) var canCheck: Bool = true
+    @Published private(set) var updateAvailable: Bool = false
+    @Published private(set) var latestVersion: String?
 
     let updater: SPUUpdater
     private let userDriver: ClipTraceUpdaterUserDriver
+    private let delegate = ClipTraceUpdaterDelegate()
     private var observation: NSKeyValueObservation?
 
     private init() {
         userDriver = ClipTraceUpdaterUserDriver(
             hostBundle: .main,
-            delegate: nil
+            delegate: delegate
         )
         updater = SPUUpdater(
             hostBundle: .main,
             applicationBundle: .main,
             userDriver: userDriver,
-            delegate: nil
+            delegate: delegate
         )
+        delegate.service = self
+
         do {
             try updater.start()
         } catch {
@@ -61,6 +68,86 @@ final class UpdaterService: ObservableObject {
     /// "Downloading" → "Install and Relaunch".
     func checkForUpdates() {
         updater.checkForUpdates()
+    }
+
+    fileprivate func markUpdateAvailable(_ item: SUAppcastItem) {
+        let displayVersion = item.displayVersionString.trimmingCharacters(in: .whitespacesAndNewlines)
+        let version = displayVersion.isEmpty ? item.versionString : displayVersion
+        latestVersion = version
+        updateAvailable = true
+    }
+
+    fileprivate func clearUpdateAvailability() {
+        updateAvailable = false
+        latestVersion = nil
+    }
+}
+
+private final class ClipTraceUpdaterDelegate: NSObject, SPUUpdaterDelegate, SPUStandardUserDriverDelegate {
+    weak var service: UpdaterService?
+
+    var supportsGentleScheduledUpdateReminders: Bool { true }
+
+    func standardUserDriverShouldHandleShowingScheduledUpdate(
+        _ update: SUAppcastItem,
+        andInImmediateFocus immediateFocus: Bool
+    ) -> Bool {
+        markUpdateAvailable(update)
+        return false
+    }
+
+    func standardUserDriverWillHandleShowingUpdate(
+        _ handleShowingUpdate: Bool,
+        forUpdate update: SUAppcastItem,
+        state: SPUUserUpdateState
+    ) {
+        if !state.userInitiated {
+            markUpdateAvailable(update)
+        }
+    }
+
+    func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+        markUpdateAvailable(item)
+    }
+
+    func updater(
+        _ updater: SPUUpdater,
+        userDidMake choice: SPUUserUpdateChoice,
+        forUpdate updateItem: SUAppcastItem,
+        state: SPUUserUpdateState
+    ) {
+        switch choice {
+        case .skip, .dismiss:
+            markUpdateAvailable(updateItem)
+        case .install:
+            break
+        @unknown default:
+            break
+        }
+    }
+
+    func updaterDidNotFindUpdate(_ updater: SPUUpdater, error: Error) {
+        clearUpdateAvailability()
+    }
+
+    func updaterDidNotFindUpdate(_ updater: SPUUpdater) {
+        clearUpdateAvailability()
+    }
+
+    func updater(_ updater: SPUUpdater, willInstallUpdate item: SUAppcastItem) {
+        clearUpdateAvailability()
+    }
+
+    private func markUpdateAvailable(_ item: SUAppcastItem) {
+        Task { @MainActor [weak service] in
+            service?.markUpdateAvailable(item)
+        }
+    }
+
+    private func clearUpdateAvailability() {
+        Task { @MainActor [weak service] in
+            service?.clearUpdateAvailability()
+        }
     }
 }
 

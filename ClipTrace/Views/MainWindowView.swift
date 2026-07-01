@@ -54,6 +54,7 @@ struct MainWindowContent: View {
     @Query private var allItems: [ClipboardItem]
     @Query private var groups: [ClipboardGroup]
     @Environment(\.modelContext) private var modelContext
+    @ObservedObject private var updater = UpdaterService.shared
 
     let pageSize: Int
     let canLoadMore: Bool
@@ -804,7 +805,11 @@ struct MainWindowContent: View {
                 nav.showStats()
             }
 
-            ToolbarIconButton(systemName: "gearshape", help: L("toolbar.settings")) {
+            ToolbarIconButton(
+                systemName: "gearshape",
+                help: L("toolbar.settings"),
+                showsBadge: updater.updateAvailable
+            ) {
                 nav.showSettings()
             }
             .keyboardShortcut(",", modifiers: .command)
@@ -3522,6 +3527,7 @@ private struct SelectionBarButton: View {
 struct ToolbarIconButton: View {
     let systemName: String
     let help: String
+    var showsBadge: Bool = false
     let action: () -> Void
 
     @State private var isHovered = false
@@ -3536,11 +3542,19 @@ struct ToolbarIconButton: View {
                     RoundedRectangle(cornerRadius: 7)
                         .fill(isHovered ? Color.secondary.opacity(0.18) : .clear)
                 )
+                .overlay(alignment: .topTrailing) {
+                    if showsBadge {
+                        UpdateAvailableBadge()
+                            .offset(x: -4, y: 4)
+                            .transition(.scale(scale: 0.72).combined(with: .opacity))
+                    }
+                }
         }
         .buttonStyle(.plain)
         .accessibilityLabel(help)
         .hoverTip(help)
         .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.16), value: showsBadge)
     }
 }
 
