@@ -645,6 +645,10 @@ extension L10n {
         "settings.about.update.subtitle": "通过 GitHub Releases 检查最新版本",
         "settings.about.update.hint": "新版本会自动下载并安装，仅在重启应用时生效。",
         "settings.about.update.check": "立即检查",
+        "settings.about.update.available": "发现新版本",
+        "settings.about.update.availableFormat": "发现新版本 %@",
+        "settings.about.update.install": "立即更新",
+        "settings.about.update.installHelp": "打开 Sparkle 更新流程",
         "settings.about.update.noUpdateFound": "您使用的 %@ 已经是最新版本！",
 
         // retention durations
@@ -1339,6 +1343,10 @@ extension L10n {
         "settings.about.update.subtitle": "Look for new releases on GitHub",
         "settings.about.update.hint": "Updates download and install automatically, applied next launch.",
         "settings.about.update.check": "Check Now",
+        "settings.about.update.available": "New version available",
+        "settings.about.update.availableFormat": "New version %@ available",
+        "settings.about.update.install": "Update Now",
+        "settings.about.update.installHelp": "Open the Sparkle update flow",
         "settings.about.update.noUpdateFound": "You're using %@, which is already the latest version!",
 
         // retention durations

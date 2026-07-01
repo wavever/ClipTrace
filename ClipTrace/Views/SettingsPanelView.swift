@@ -2261,9 +2261,9 @@ private struct AboutHeaderCard: View {
                 Text(appName)
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(Color.appMetal)
-                Text(L("settings.about.versionFormat", version))
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                Text(updateStatusText)
+                    .font(updateStatusFont)
+                    .foregroundStyle(updater.updateAvailable ? Color.appWarning : .secondary)
                 if !copyright.isEmpty {
                     Text(copyright)
                         .font(.system(size: 11))
@@ -2274,12 +2274,12 @@ private struct AboutHeaderCard: View {
             Button {
                 updater.checkForUpdates()
             } label: {
-                Label(L("settings.about.update.check"), systemImage: "arrow.clockwise")
+                Label(updateButtonTitle, systemImage: updateButtonIcon)
             }
-            .buttonStyle(PaperActionButtonStyle(role: .plain))
+            .buttonStyle(PaperActionButtonStyle(role: updater.updateAvailable ? .primary : .plain))
             .disabled(!updater.canCheck)
             .opacity(updater.canCheck ? 1 : 0.5)
-            .help(L("settings.about.update.title"))
+            .help(updateButtonHelp)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
@@ -2292,6 +2292,45 @@ private struct AboutHeaderCard: View {
                 .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
         )
         .shadow(color: Color.appCardShadow.opacity(0.55), radius: 7, y: 2)
+    }
+
+    private var updateStatusText: String {
+        guard updater.updateAvailable else {
+            return L("settings.about.versionFormat", version)
+        }
+        if let latestVersionLabel {
+            return L("settings.about.update.availableFormat", latestVersionLabel)
+        }
+        return L("settings.about.update.available")
+    }
+
+    private var updateStatusFont: Font {
+        updater.updateAvailable
+            ? .system(size: 12, weight: .semibold)
+            : .system(size: 12, design: .monospaced)
+    }
+
+    private var updateButtonTitle: String {
+        updater.updateAvailable ? L("settings.about.update.install") : L("settings.about.update.check")
+    }
+
+    private var updateButtonIcon: String {
+        updater.updateAvailable ? "arrow.down.circle.fill" : "arrow.clockwise"
+    }
+
+    private var updateButtonHelp: String {
+        updater.updateAvailable ? L("settings.about.update.installHelp") : L("settings.about.update.title")
+    }
+
+    private var latestVersionLabel: String? {
+        guard let latestVersion = updater.latestVersion?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !latestVersion.isEmpty else {
+            return nil
+        }
+        if latestVersion.lowercased().hasPrefix("v") {
+            return latestVersion
+        }
+        return "v\(latestVersion)"
     }
 }
 

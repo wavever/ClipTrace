@@ -188,6 +188,7 @@ struct MenuBarView: View {
 struct MenuBarContent: View {
     @EnvironmentObject var vm: ClipboardViewModel
     @Environment(\.openWindow) private var openWindow
+    @ObservedObject private var updater = UpdaterService.shared
     @StateObject private var historyStore = MenuBarHistoryStore()
 
     private static let listHeight: CGFloat = 460
@@ -328,9 +329,17 @@ struct MenuBarContent: View {
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .fill(surfaceStyle.headerButtonFill)
                     )
+                    .overlay(alignment: .topTrailing) {
+                        if updater.updateAvailable {
+                            UpdateAvailableBadge()
+                                .offset(x: -4, y: 4)
+                                .transition(.scale(scale: 0.72).combined(with: .opacity))
+                        }
+                    }
             }
             .buttonStyle(.plain)
             .help(L("menubar.openSettings"))
+            .animation(.easeOut(duration: 0.16), value: updater.updateAvailable)
 
             Button {
                 openMain()

@@ -56,6 +56,9 @@ extension Color {
     /// this terracotta red keeps "danger" legible without screaming.
     static var appDanger: Color { Self.dynamic(light: dangerLight, dark: dangerDark) }
 
+    /// Small alert accents such as non-blocking update reminders.
+    static var appWarning: Color { Self.dynamic(light: warningLight, dark: warningDark) }
+
     // MARK: - Raw values
 
     // Keep the page warm, but not so saturated that the whole app turns tan.
@@ -100,10 +103,29 @@ extension Color {
     private static let dangerLight = NSColor(srgbRed: 0.760, green: 0.330, blue: 0.300, alpha: 1)
     private static let dangerDark  = NSColor(srgbRed: 0.815, green: 0.420, blue: 0.385, alpha: 1)
 
+    private static let warningLight = NSColor(srgbRed: 0.855, green: 0.505, blue: 0.245, alpha: 1)
+    private static let warningDark  = NSColor(srgbRed: 0.940, green: 0.620, blue: 0.330, alpha: 1)
+
     private static func dynamic(light: NSColor, dark: NSColor) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
             appearance.bestMatch(from: [.darkAqua, .vibrantDark]) != nil ? dark : light
         })
+    }
+}
+
+struct UpdateAvailableBadge: View {
+    var size: CGFloat = 6.5
+
+    var body: some View {
+        Circle()
+            .fill(Color.appWarning)
+            .frame(width: size, height: size)
+            .overlay(
+                Circle()
+                    .strokeBorder(Color.appPaper.opacity(0.92), lineWidth: 1)
+            )
+            .shadow(color: Color.appWarning.opacity(0.36), radius: 3, y: 1)
+            .allowsHitTesting(false)
     }
 }
 
