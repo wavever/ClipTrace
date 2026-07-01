@@ -329,12 +329,11 @@ struct OCRResultView: View {
         }
         .frame(width: 900, height: 640)
         .task {
-            if let data = item.imageData, let img = NSImage(data: data) {
-                image = img
-            } else if let url = item.resolvedFileURL, let img = NSImage(contentsOf: url) {
-                image = img
-            }
-            fragments = await OCRService.shared.recognizeFragments(item: item)
+            let reference = ImagePayloadStore.reference(for: item)
+            async let loadedImage = ImagePayloadStore.imageAsync(for: reference)
+            async let recognized = OCRService.shared.recognizeFragments(reference: reference)
+            image = await loadedImage
+            fragments = await recognized
             isRecognizing = false
         }
     }
@@ -616,13 +615,11 @@ struct BarcodeResultView: View {
         }
         .frame(width: 980, height: 640)
         .task {
-            if let data = item.imageData, let img = NSImage(data: data) {
-                image = img
-            } else if let url = item.resolvedFileURL, let img = NSImage(contentsOf: url) {
-                image = img
-            }
-
-            detections = await BarcodeService.shared.detect(item: item)
+            let reference = ImagePayloadStore.reference(for: item)
+            async let loadedImage = ImagePayloadStore.imageAsync(for: reference)
+            async let scanned = BarcodeService.shared.detect(reference: reference)
+            image = await loadedImage
+            detections = await scanned
             selectedID = detections.first?.id
             isScanning = false
         }

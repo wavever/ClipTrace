@@ -91,9 +91,11 @@ class ExportService {
         case .text, .rtf, .url:
             savePanel.allowedContentTypes = [.plainText]
             savePanel.nameFieldStringValue = "clipboard_\(item.id.uuidString.prefix(8)).txt"
-        case .image:
-            savePanel.allowedContentTypes = [.png]
-            savePanel.nameFieldStringValue = "clipboard_\(item.id.uuidString.prefix(8)).png"
+         case .image:
+             let imageType = Self.imageExportType(for: item)
+             let ext = imageType.preferredFilenameExtension ?? "png"
+             savePanel.allowedContentTypes = [imageType]
+             savePanel.nameFieldStringValue = "clipboard_\(item.id.uuidString.prefix(8)).\(ext)"
         case .video:
             savePanel.allowedContentTypes = [.movie]
             savePanel.nameFieldStringValue = "clipboard_\(item.id.uuidString.prefix(8)).mp4"
@@ -185,7 +187,9 @@ class ExportService {
                 createdAt: item.createdAt,
                 isFavorite: item.isFavorite,
                 isPinned: item.isPinned,
-                imageDataBase64: includeImageData ? item.imageData?.base64EncodedString() : nil,
+                 imageDataBase64: includeImageData
+                    ? ImagePayloadStore.payload(for: ImagePayloadStore.reference(for: item))?.data.base64EncodedString()
+                    : nil,
                 isProtected: protection.isProtected ? true : nil,
                 protectedCategories: protection.isProtected
                     ? protection.categories.map(\.rawValue).sorted()
@@ -206,6 +210,21 @@ class ExportService {
         return f
     }()
 
+    private static func imageExportType(for item: ClipboardItem) -> UTType {
+        if let payload = ImagePayloadStore.payload(for: ImagePayloadStore.reference(for: item)),
+           let type = UTType(payload.uti) {
+            return type
+        }
+        if let type = item.imageUTI.flatMap(UTType.init) {
+            return type
+        }
+        if let sourceURL = item.resolvedFileURL,
+           let type = UTType(filenameExtension: sourceURL.pathExtension) {
+            return type
+        }
+        return .png
+    }
+
     @discardableResult
     private func writeItem(_ item: ClipboardItem, to url: URL) -> Bool {
         do {
@@ -219,12 +238,17 @@ class ExportService {
                     ? item.content
                     : protection.redactedText
                 try output.write(to: url, atomically: true, encoding: .utf8)
-            case .image:
-                if let data = item.imageData {
-                    try data.write(to: url)
-                } else {
-                    return false
-                }
+             case .image:
+                 if let payload = ImagePayloadStore.payload(for: ImagePayloadStore.reference(for: item)) {
+                     try payload.data.write(to: url)
+                 } else if let sourceURL = item.resolvedFileURL {
+                     if FileManager.default.fileExists(atPath: url.path) {
+                         try FileManager.default.removeItem(at: url)
+                     }
+                     try FileManager.default.copyItem(at: sourceURL, to: url)
+                 } else {
+                     return false
+                 }
             case .video, .file:
                 if let path = item.fileURL, let sourceURL = URL(string: path) {
                     let fileManager = FileManager.default

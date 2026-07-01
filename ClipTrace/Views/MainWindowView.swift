@@ -73,9 +73,14 @@ struct MainWindowContent: View {
         descriptor.propertiesToFetch = [
             \.id,
             \.type,
-            \.content,
-            \.fileURL,
-            \.sourceApp,
+                \.content,
+                \.fileURL,
+                \.imageUTI,
+                \.imageByteCount,
+                \.imagePixelWidth,
+                \.imagePixelHeight,
+                \.imageStorageVersion,
+                \.sourceApp,
             \.createdAt,
             \.isFavorite,
             \.isPinned,
@@ -1419,7 +1424,7 @@ private struct ClipboardRowContextMenu: View {
         FilterSettingsStore.shared.scriptingRules.filter(\.isEnabled)
     }
     private var canScanCodes: Bool {
-        item.itemType == .image && (item.imageData != nil || item.resolvedFileURL != nil)
+        item.hasImagePayload
     }
     private var canPreviewQRCode: Bool {
         item.itemType == .text &&

@@ -356,8 +356,7 @@ struct ClipboardItemRow: View, Equatable {
                     action: onOpenURL
                 )
             }
-            if item.itemType == .image,
-               item.imageData != nil || item.resolvedFileURL != nil {
+            if item.hasImagePayload {
                 HoverIconButton(
                     systemName: "text.viewfinder",
                     help: L("action.ocr"),
@@ -369,7 +368,7 @@ struct ClipboardItemRow: View, Equatable {
                     action: { showBarcodeScan = true }
                 )
             }
-            if item.itemType == .image, item.imageData != nil {
+            if item.hasStoredImageData {
                 HoverIconButton(
                     systemName: "square.and.arrow.down",
                     help: L("action.saveImage"),

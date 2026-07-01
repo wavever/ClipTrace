@@ -68,11 +68,11 @@ actor ThumbnailLoader {
     /// - For file URLs we hand off to `QLThumbnailGenerator`, which already
     ///   runs on its own background queue.
     private static func generate(request: ThumbnailRequest, size: CGSize) async -> NSImage? {
-        if let data = request.imageData {
-            return makeThumbnail(from: data, size: size)
+        if let payload = ImagePayloadStore.payload(for: request.reference) {
+            return makeThumbnail(from: payload.data, size: size)
         }
 
-        guard let url = request.fileURL,
+        guard let url = request.reference.fileURL,
               FileManager.default.fileExists(atPath: url.path) else {
             return nil
         }
@@ -118,12 +118,10 @@ actor ThumbnailLoader {
 /// never touches a `@Model` instance directly.
 struct ThumbnailRequest: Sendable {
     let id: UUID
-    let imageData: Data?
-    let fileURL: URL?
+    let reference: ImagePayloadStore.Reference
 
     init(item: ClipboardItem) {
         self.id = item.id
-        self.imageData = item.imageData
-        self.fileURL = item.resolvedFileURL
+        self.reference = ImagePayloadStore.reference(for: item)
     }
 }

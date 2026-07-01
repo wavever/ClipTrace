@@ -57,7 +57,7 @@ struct ThumbnailView: View {
     private var canHaveThumbnail: Bool {
         switch item.itemType {
         case .image, .video, .file:
-            return item.imageData != nil || item.resolvedFileURL != nil
+            return item.hasImagePayload || item.resolvedFileURL != nil
         case .text, .url, .rtf:
             return false
         }

@@ -6,6 +6,8 @@ struct PreviewPopover: View {
     let item: ClipboardItem
     @AppStorage("videoPreviewMode") private var videoPreviewModeRaw = VideoPreviewMode.video.rawValue
     @AppStorage("videoPreviewMuted") private var videoPreviewMuted = true
+    @State private var previewImage: NSImage?
+    @State private var didAttemptImageLoad = false
 
     private var videoPreviewMode: VideoPreviewMode {
         VideoPreviewMode(rawValue: videoPreviewModeRaw) ?? .video
@@ -30,7 +32,10 @@ struct PreviewPopover: View {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(minWidth: 360, idealWidth: 460, minHeight: 240, idealHeight: 320)
+          .frame(minWidth: 360, idealWidth: 460, minHeight: 240, idealHeight: 320)
+          .task(id: item.id) {
+              await loadPreviewImageIfNeeded()
+          }
     }
 
     /// Display/egress-safe rendition of the clip. Sensitive spans are masked
@@ -66,11 +71,15 @@ struct PreviewPopover: View {
                 decodeCard(for: protectedContent)
             }
         case .image:
-            if let img = imageToShow() {
+            if let img = previewImage {
                 Image(nsImage: img)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .padding(8)
+            } else if !didAttemptImageLoad {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ContentUnavailableView(L("preview.cannotImage"), systemImage: "photo.badge.exclamationmark")
             }
@@ -116,10 +125,13 @@ struct PreviewPopover: View {
         }
     }
 
-    private func imageToShow() -> NSImage? {
-        if let data = item.imageData, let img = NSImage(data: data) { return img }
-        if let url = item.resolvedFileURL, let img = NSImage(contentsOf: url) { return img }
-        return nil
+    private func loadPreviewImageIfNeeded() async {
+        guard item.itemType == .image else { return }
+        didAttemptImageLoad = false
+        previewImage = await ImagePayloadStore.imageAsync(
+            for: ImagePayloadStore.reference(for: item)
+        )
+        didAttemptImageLoad = true
     }
 
     // MARK: - Decode Card

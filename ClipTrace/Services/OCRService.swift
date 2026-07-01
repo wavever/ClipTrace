@@ -29,10 +29,14 @@ final class OCRService {
     /// text joined by newlines, or an empty string when no text was found or
     /// the image cannot be decoded.
     func recognize(item: ClipboardItem) async -> String {
-        if let data = item.imageData {
-            return await recognize(imageData: data)
+        await recognize(reference: ImagePayloadStore.reference(for: item))
+    }
+
+    func recognize(reference: ImagePayloadStore.Reference) async -> String {
+        if let payload = await ImagePayloadStore.payloadAsync(for: reference) {
+            return await recognize(imageData: payload.data)
         }
-        if let url = item.resolvedFileURL,
+        if let url = reference.fileURL,
            let data = try? Data(contentsOf: url) {
             return await recognize(imageData: data)
         }
@@ -48,10 +52,14 @@ final class OCRService {
 
     /// Run OCR and return individual text fragments with their bounding boxes.
     func recognizeFragments(item: ClipboardItem) async -> [OCRFragment] {
-        if let data = item.imageData {
-            return await recognizeFragments(imageData: data)
+        await recognizeFragments(reference: ImagePayloadStore.reference(for: item))
+    }
+
+    func recognizeFragments(reference: ImagePayloadStore.Reference) async -> [OCRFragment] {
+        if let payload = await ImagePayloadStore.payloadAsync(for: reference) {
+            return await recognizeFragments(imageData: payload.data)
         }
-        if let url = item.resolvedFileURL,
+        if let url = reference.fileURL,
            let data = try? Data(contentsOf: url) {
             return await recognizeFragments(imageData: data)
         }
@@ -150,10 +158,14 @@ final class BarcodeService {
     private init() {}
 
     func detect(item: ClipboardItem) async -> [BarcodeDetection] {
-        if let data = item.imageData {
-            return await detect(imageData: data)
+        await detect(reference: ImagePayloadStore.reference(for: item))
+    }
+
+    func detect(reference: ImagePayloadStore.Reference) async -> [BarcodeDetection] {
+        if let payload = await ImagePayloadStore.payloadAsync(for: reference) {
+            return await detect(imageData: payload.data)
         }
-        if let url = item.resolvedFileURL,
+        if let url = reference.fileURL,
            let data = try? Data(contentsOf: url) {
             return await detect(imageData: data)
         }

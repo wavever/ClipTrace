@@ -168,7 +168,7 @@ final class QuickLookCoordinator: NSObject, QLPreviewPanelDataSource, QLPreviewP
 
     /// Produce a URL that QuickLook can render for `item`. Strategy:
     /// - file/video → existing file URL if it's still readable
-    /// - image → write `imageData` (or copy on-disk image) as PNG/original
+        /// - image → write stored image payload (or copy on-disk image) as PNG/original
     /// - text/url/rtf → write content to a temp .txt / .rtf
     private func materialize(_ item: ClipboardItem) -> URL? {
         ensureTempDirectory()
@@ -190,7 +190,8 @@ final class QuickLookCoordinator: NSObject, QLPreviewPanelDataSource, QLPreviewP
             )
 
         case .image:
-            if let data = item.imageData {
+            if let payload = ImagePayloadStore.payload(for: ImagePayloadStore.reference(for: item)) {
+                let data = payload.data
                 let ext = imageExtension(for: data)
                 let url = dir.appendingPathComponent("\(item.id.uuidString).\(ext)")
                 try? data.write(to: url)

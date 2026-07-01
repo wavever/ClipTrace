@@ -239,20 +239,22 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
     }
 
     private func fetchRecentItems(groupFilter: ClipboardGroupFilter) -> [ClipboardItem] {
-        switch groupFilter {
-        case .all:
-            let pinnedDescriptor = FetchDescriptor<ClipboardItem>(
-                predicate: #Predicate { $0.deletedAt == nil && $0.isPinned },
-                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
-            )
-            let pinned = (try? context.fetch(pinnedDescriptor)) ?? []
+         switch groupFilter {
+         case .all:
+             var pinnedDescriptor = FetchDescriptor<ClipboardItem>(
+                 predicate: #Predicate { $0.deletedAt == nil && $0.isPinned },
+                 sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+             )
+             Self.keepPayloadFaulted(in: &pinnedDescriptor)
+             let pinned = (try? context.fetch(pinnedDescriptor)) ?? []
 
-            var recentDescriptor = FetchDescriptor<ClipboardItem>(
-                predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false },
-                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
-            )
-            recentDescriptor.fetchLimit = 60
-            let recent = (try? context.fetch(recentDescriptor)) ?? []
+             var recentDescriptor = FetchDescriptor<ClipboardItem>(
+                 predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false },
+                 sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+             )
+             recentDescriptor.fetchLimit = 60
+             Self.keepPayloadFaulted(in: &recentDescriptor)
+             let recent = (try? context.fetch(recentDescriptor)) ?? []
 
             return pinned + recent
 
@@ -260,19 +262,45 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
             var descriptor = FetchDescriptor<ClipboardItem>(
                 predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false && $0.groupIDsRaw == nil },
                 sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
-            )
-            descriptor.fetchLimit = 60
-            return (try? context.fetch(descriptor)) ?? []
+             )
+             descriptor.fetchLimit = 60
+             Self.keepPayloadFaulted(in: &descriptor)
+             return (try? context.fetch(descriptor)) ?? []
 
         case .group(let groupID):
-            var descriptor = FetchDescriptor<ClipboardItem>(
-                predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false && $0.groupIDsRaw != nil },
-                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
-            )
-            let candidates = (try? context.fetch(descriptor)) ?? []
-            return Array(candidates.lazy.filter { $0.isInGroup(groupID) }.prefix(60))
-        }
-    }
+             var descriptor = FetchDescriptor<ClipboardItem>(
+                 predicate: #Predicate { $0.deletedAt == nil && $0.isPinned == false && $0.groupIDsRaw != nil },
+                 sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+             )
+             Self.keepPayloadFaulted(in: &descriptor)
+             let candidates = (try? context.fetch(descriptor)) ?? []
+             return Array(candidates.lazy.filter { $0.isInGroup(groupID) }.prefix(60))
+         }
+     }
+
+     private static func keepPayloadFaulted(in descriptor: inout FetchDescriptor<ClipboardItem>) {
+         descriptor.propertiesToFetch = [
+             \.id,
+             \.type,
+             \.content,
+             \.fileURL,
+             \.imageUTI,
+             \.imageByteCount,
+             \.imagePixelWidth,
+             \.imagePixelHeight,
+             \.imageStorageVersion,
+             \.sourceApp,
+             \.createdAt,
+             \.isFavorite,
+             \.isPinned,
+             \.preview,
+             \.deletedAt,
+             \.tagsRaw,
+             \.customTitle,
+             \.groupIDsRaw,
+             \.ocrText
+         ]
+     }
 
     private func fetchGroups() -> [ClipboardGroup] {
         let descriptor = FetchDescriptor<ClipboardGroup>(
@@ -367,12 +395,11 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
             switch item.itemType {
             case .text, .url, .rtf:
                 pasteboard.setString(item.content, forType: .string)
-            case .image:
-                if let data = item.imageData {
-                    pasteboard.setData(data, forType: .tiff)
-                } else if let url = item.resolvedFileURL {
-                    pasteboard.writeObjects([url as NSURL])
-                }
+              case .image:
+                  _ = ImagePayloadStore.writeImage(
+                      for: ImagePayloadStore.reference(for: item),
+                      to: pasteboard
+                  )
             case .file, .video:
                 if let url = item.resolvedFileURL {
                     pasteboard.writeObjects([url as NSURL])

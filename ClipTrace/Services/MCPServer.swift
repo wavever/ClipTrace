@@ -694,9 +694,9 @@ enum MCPServer {
                 let p = ContentProtector.redact(ocr, settings: settings)
                 protection = p
                 let shown = (settings.allowRawMCP || !p.isProtected) ? ocr : p.redactedText
-                body = "[Image, \(item.imageData?.count ?? 0) bytes]\n\nOCR:\n\(shown)"
+                body = "[Image, \(item.imageByteCount ?? 0) bytes]\n\nOCR:\n\(shown)"
             } else {
-                body = "[Image, \(item.imageData?.count ?? 0) bytes, not text-extractable]"
+                body = "[Image, \(item.imageByteCount ?? 0) bytes, not text-extractable]"
             }
         } else {
             let p = ContentProtector.redact(item.content, settings: settings)
@@ -944,7 +944,7 @@ enum MCPServer {
         let snippet: String
         var protectedTag = ""
         if item.itemType == .image {
-            snippet = "[Image, \(item.imageData?.count ?? 0) bytes]"
+            snippet = "[Image, \(item.imageByteCount ?? 0) bytes]"
             // Search/list can match an image via its OCR text, so flag the row
             // when that OCR is protected — consistent with `get_clip` — without
             // surfacing the OCR snippet itself.
