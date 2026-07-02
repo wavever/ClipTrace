@@ -38,8 +38,9 @@ xcodebuild -project ClipTrace.xcodeproj -scheme ClipTrace -configuration Debug \
 open build/Build/Products/Debug/ClipTrace.app
 ```
 
-**准则：每次构建成功后都必须把 App 运行起来。** 不要只报告编译通过；构建失败就先修复，
-不算“完成”。构建成功后先杀掉旧实例，再启动刚生成的 `.app`，在真实 App 里验证：
+**准则：开发阶段，每次完成代码开发后都必须构建并把 App 运行起来。** 不要只报告编译通过；
+构建失败就先修复，不算“完成”。构建成功后先杀掉旧实例，再启动刚生成的 `.app`，在真实
+App 里验证：
 
 ```bash
 pkill -f "ClipTrace.app/Contents/MacOS/ClipTrace" || true
