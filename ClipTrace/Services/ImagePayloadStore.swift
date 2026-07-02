@@ -41,16 +41,30 @@ enum ImagePayloadStore {
         )
     }
 
-    static func pasteboardPayload(from pasteboard: NSPasteboard) -> Payload? {
+    /// Raw image datas on the pasteboard, in preference order. Reading
+    /// `data(forType:)` only copies bytes, so this is safe inside the poll
+    /// tick (where the pasteboard is coherent); the potentially expensive
+    /// decode + re-encode in `normalizedPayload` can then run off the main
+    /// thread against the captured bytes.
+    static func rawPasteboardImageCandidates(from pasteboard: NSPasteboard) -> [(data: Data, uti: String)] {
+        var candidates: [(data: Data, uti: String)] = []
         for type in pasteboardImageTypes {
-            guard let data = pasteboard.data(forType: type) else { continue }
-            if let payload = normalizedPayload(from: data, preferredUTI: type.rawValue) {
+            if let data = pasteboard.data(forType: type) {
+                candidates.append((data: data, uti: type.rawValue))
+            }
+        }
+        return candidates
+    }
+
+    /// First candidate that survives normalization — the same type-by-type
+    /// fallthrough the synchronous pasteboard path used to do.
+    static func normalizedPayload(fromCandidates candidates: [(data: Data, uti: String)]) -> Payload? {
+        for candidate in candidates {
+            if let payload = normalizedPayload(from: candidate.data, preferredUTI: candidate.uti) {
                 return payload
             }
         }
-
-        guard let image = NSImage(pasteboard: pasteboard) else { return nil }
-        return normalizedPayload(from: image)
+        return nil
     }
 
     static func normalizedPayload(from data: Data, preferredUTI: String? = nil) -> Payload? {

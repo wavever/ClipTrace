@@ -210,6 +210,15 @@ class ClipboardViewModel: ObservableObject {
     /// a clip came from but not the exact content.
     private let semanticSourceBoost: Float = 0.12
 
+    /// 60-char island toast line, redacted. Scanning only a bounded prefix
+    /// keeps the capture path O(1): the toast shows at most 60 chars, so any
+    /// secret that could appear in it lies fully inside the first 400 — while
+    /// re-copying a multi-megabyte clip used to regex the whole thing on the
+    /// main thread just to build this line.
+    private static func toastPreview(for content: String) -> String {
+        String(ContentProtector.redact(String(content.prefix(400))).redactedText.prefix(60))
+    }
+
     let monitor = ClipboardMonitor()
     private var retentionTimer: Timer?
     private static let embeddingBackfillBatchSize = 12
@@ -292,6 +301,9 @@ class ClipboardViewModel: ObservableObject {
                 self.applyRetentionCleanup(context: context)
             }
         }
+        // The sweep doesn't care about exact hour boundaries; a generous
+        // tolerance lets the OS batch the wakeup with others.
+        retentionTimer?.tolerance = 60
     }
 
     // MARK: - User-configurable limits (read from the same UserDefaults keys
@@ -330,6 +342,9 @@ class ClipboardViewModel: ObservableObject {
         )
         tailDescriptor.fetchOffset = limit
         tailDescriptor.fetchLimit = total - limit
+        // Deleting doesn't read the rows — keep image/embedding blobs faulted
+        // even when a lowered cap trims thousands of entries at once.
+        tailDescriptor.propertiesToFetch = [\.createdAt]
         if let tail = try? context.fetch(tailDescriptor) {
             for oldItem in tail { context.delete(oldItem) }
             try? context.save()
@@ -351,9 +366,9 @@ class ClipboardViewModel: ObservableObject {
         }
         scheduleRetentionTimer(context: context)
 
-        monitor.startMonitoring(interval: Self.resolvedPollInterval()) { [weak self] type, rawContent, imageData, fileURL, sourceApp, bundleId in
+        monitor.startMonitoring(interval: Self.resolvedPollInterval()) { [weak self] type, rawContent, imagePayload, fileURL, sourceApp, bundleId in
             guard let self else { return }
-            ClipboardMonitor.debugLog("[VM] onNewContent type=\(type) src=\(sourceApp) bundle=\(bundleId) hasImageData=\(imageData != nil) fileURL=\(fileURL ?? "nil") content=\(rawContent.prefix(80))")
+            ClipboardMonitor.debugLog("[VM] onNewContent type=\(type) src=\(sourceApp) bundle=\(bundleId) hasImageData=\(imagePayload != nil) fileURL=\(fileURL ?? "nil") content=\(rawContent.prefix(80))")
 
             // Drop utm_*/fbclid/etc. before the URL ever lands in history.
             let content: String = {
@@ -403,54 +418,31 @@ class ClipboardViewModel: ObservableObject {
                     WidgetBridge.shared.requestRefresh(context: context)
                     DynamicIslandController.shared.flash(
                         itemIcon: type.icon,
-                        preview: String(ContentProtector.redact(content).redactedText.prefix(60))
+                        preview: Self.toastPreview(for: content)
                     )
                     return
                 }
             }
             
-            let item: ClipboardItem
-            if type == .image,
-               let imageData,
-               let payload = ImagePayloadStore.normalizedPayload(from: imageData) {
-                item = ClipboardItem(
-                    type: type,
-                    content: content,
-                    imageData: payload.data,
-                    fileURL: fileURL,
-                    sourceApp: sourceApp,
-                    preview: String(content.prefix(200))
-                )
-                ImagePayloadStore.applyMetadata(from: payload, to: item)
-                context.insert(item)
-                do {
-                    try context.save()
-                    ClipboardMonitor.debugLog("[VM] inserted image id=\(item.id)")
-                } catch {
-                    ClipboardMonitor.debugLog("[VM] image insert FAILED: \(error)")
-                }
-            } else {
-                item = ClipboardItem(
-                    type: type,
-                    content: content,
-                    imageData: imageData,
-                    fileURL: fileURL,
-                    sourceApp: sourceApp,
-                    preview: String(content.prefix(200))
-                )
-                if type == .image,
-                   let imageData,
-                   let payload = ImagePayloadStore.normalizedPayload(from: imageData) {
-                    item.imageData = payload.data
-                    ImagePayloadStore.applyMetadata(from: payload, to: item)
-                }
-                context.insert(item)
-                do {
-                    try context.save()
-                    ClipboardMonitor.debugLog("[VM] inserted id=\(item.id)")
-                } catch {
-                    ClipboardMonitor.debugLog("[VM] insert FAILED: \(error)")
-                }
+            // The monitor already normalized image bytes off the main thread
+            // and hands the payload over with its metadata — no re-decode here.
+            let item = ClipboardItem(
+                type: type,
+                content: content,
+                imageData: imagePayload?.data,
+                fileURL: fileURL,
+                sourceApp: sourceApp,
+                preview: String(content.prefix(200))
+            )
+            if let imagePayload {
+                ImagePayloadStore.applyMetadata(from: imagePayload, to: item)
+            }
+            context.insert(item)
+            do {
+                try context.save()
+                ClipboardMonitor.debugLog("[VM] inserted id=\(item.id)")
+            } catch {
+                ClipboardMonitor.debugLog("[VM] insert FAILED: \(error)")
             }
 
             // Bump today's copy counter (guarded by user's toggle).
@@ -463,7 +455,7 @@ class ClipboardViewModel: ObservableObject {
             // Notify the Dynamic Island so it can briefly toast the new clip.
             DynamicIslandController.shared.flash(
                 itemIcon: type.icon,
-                preview: String(content.prefix(60))
+                preview: Self.toastPreview(for: content)
             )
 
             // Run the user's scripting rules against the freshly-stored clip,
@@ -653,9 +645,11 @@ class ClipboardViewModel: ObservableObject {
 
     /// Drop every trashed entry. The active history is untouched.
     func emptyTrash(context: ModelContext) {
-        let descriptor = FetchDescriptor<ClipboardItem>(
+        var descriptor = FetchDescriptor<ClipboardItem>(
             predicate: #Predicate { $0.deletedAt != nil }
         )
+        // Delete-only pass — never materialise the image blobs of a full trash.
+        descriptor.propertiesToFetch = [\.deletedAt]
         if let trashed = try? context.fetch(descriptor) {
             for item in trashed { context.delete(item) }
             try? context.save()
@@ -663,7 +657,10 @@ class ClipboardViewModel: ObservableObject {
     }
 
     func deleteAll(context: ModelContext) {
-        let descriptor = FetchDescriptor<ClipboardItem>()
+        var descriptor = FetchDescriptor<ClipboardItem>()
+        // Delete-only pass over the whole store; faulting every image blob
+        // here made "delete all data" spike memory with the history size.
+        descriptor.propertiesToFetch = [\.createdAt]
         if let all = try? context.fetch(descriptor) {
             for item in all {
                 context.delete(item)
@@ -734,7 +731,14 @@ class ClipboardViewModel: ObservableObject {
 
     func deleteGroup(_ group: ClipboardGroup, context: ModelContext) {
         let groupID = group.id
-        if let items = try? context.fetch(FetchDescriptor<ClipboardItem>()) {
+        // Only rows carrying group membership can reference this one —
+        // fetching the whole (unfiltered) history here faulted every image
+        // blob just to strip a membership string.
+        var descriptor = FetchDescriptor<ClipboardItem>(
+            predicate: #Predicate { $0.groupIDsRaw != nil }
+        )
+        descriptor.propertiesToFetch = [\.groupIDsRaw]
+        if let items = try? context.fetch(descriptor) {
             for item in items where item.isInGroup(groupID) {
                 item.removeFromGroup(groupID)
             }
@@ -784,15 +788,23 @@ class ClipboardViewModel: ObservableObject {
         exitSelectionMode()
     }
 
+    /// Columns the bulk-clear passes actually read (pin/favorite exemption +
+    /// the soft-delete write) — fetching anything more faults image blobs for
+    /// rows that are about to be trashed anyway.
+    private static let bulkClearProperties: [PartialKeyPath<ClipboardItem>] = [
+        \.createdAt, \.deletedAt, \.isPinned, \.isFavorite
+    ]
+
     /// Soft- (or hard-) delete every active clip created in the last
     /// `minutes` minutes. Pinned and favorited entries are preserved on the
     /// theory that the user marked them on purpose; returns the affected count.
     @discardableResult
     func clearLastMinutes(_ minutes: Int, context: ModelContext) -> Int {
         let cutoff = Date().addingTimeInterval(-Double(minutes) * 60)
-        let descriptor = FetchDescriptor<ClipboardItem>(
+        var descriptor = FetchDescriptor<ClipboardItem>(
             predicate: #Predicate { $0.deletedAt == nil && $0.createdAt >= cutoff }
         )
+        descriptor.propertiesToFetch = Self.bulkClearProperties
         guard let items = try? context.fetch(descriptor) else { return 0 }
         let candidates = items.filter { !$0.isPinned && !$0.isFavorite }
         guard !candidates.isEmpty else { return 0 }
@@ -812,9 +824,10 @@ class ClipboardViewModel: ObservableObject {
     @discardableResult
     func clearToday(context: ModelContext) -> Int {
         let startOfDay = Calendar.current.startOfDay(for: Date())
-        let descriptor = FetchDescriptor<ClipboardItem>(
+        var descriptor = FetchDescriptor<ClipboardItem>(
             predicate: #Predicate { $0.deletedAt == nil && $0.createdAt >= startOfDay }
         )
+        descriptor.propertiesToFetch = Self.bulkClearProperties
         guard let items = try? context.fetch(descriptor) else { return 0 }
         let candidates = items.filter { !$0.isPinned && !$0.isFavorite }
         guard !candidates.isEmpty else { return 0 }
@@ -835,11 +848,12 @@ class ClipboardViewModel: ObservableObject {
     func clearRange(from: Date, to: Date, context: ModelContext) -> Int {
         let lower = min(from, to)
         let upper = max(from, to)
-        let descriptor = FetchDescriptor<ClipboardItem>(
+        var descriptor = FetchDescriptor<ClipboardItem>(
             predicate: #Predicate {
                 $0.deletedAt == nil && $0.createdAt >= lower && $0.createdAt <= upper
             }
         )
+        descriptor.propertiesToFetch = Self.bulkClearProperties
         guard let items = try? context.fetch(descriptor) else { return 0 }
         let candidates = items.filter { !$0.isPinned && !$0.isFavorite }
         guard !candidates.isEmpty else { return 0 }

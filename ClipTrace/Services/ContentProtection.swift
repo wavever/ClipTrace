@@ -130,6 +130,52 @@ enum ContentProtector {
             return .clear(text)
         }
 
+        // Row bodies re-run redaction over the same ≤200-char preview on every
+        // hover/scroll re-render (list row title + badge, menu bar rows, quick
+        // paste rows), so the regex passes should run once per distinct string.
+        // Long inputs (full clip bodies in the preview popover / egress paths)
+        // are one-off renders — caching them would only bloat the cache with
+        // huge keys, so they always take the direct path.
+        let cacheKey: NSString? = text.count <= cacheableLength
+            ? cacheKey(for: text, settings: settings)
+            : nil
+        if let cacheKey, let hit = resultCache.object(forKey: cacheKey) {
+            return hit.result
+        }
+        let result = computeRedaction(text, settings: settings)
+        if let cacheKey {
+            resultCache.setObject(CachedRedaction(result), forKey: cacheKey)
+        }
+        return result
+    }
+
+    /// Box so the value-typed result can live in `NSCache`.
+    private final class CachedRedaction {
+        let result: ContentProtectionResult
+        init(_ result: ContentProtectionResult) { self.result = result }
+    }
+
+    /// Memoized redactions for short display strings, keyed by the enabled
+    /// category set + input so a settings flip naturally misses. NSCache is
+    /// thread-safe and evicts under memory pressure (mirrors the tags/regex
+    /// caches elsewhere).
+    private static let resultCache: NSCache<NSString, CachedRedaction> = {
+        let c = NSCache<NSString, CachedRedaction>()
+        c.countLimit = 1_024
+        return c
+    }()
+
+    private static let cacheableLength = 512
+
+    private static func cacheKey(for text: String, settings: ContentProtectionSettings) -> NSString {
+        let categories = settings.categories.map(\.rawValue).sorted().joined(separator: ",")
+        return "\(categories)|\(text)" as NSString
+    }
+
+    private static func computeRedaction(
+        _ text: String,
+        settings: ContentProtectionSettings
+    ) -> ContentProtectionResult {
         let ns = text as NSString
         let full = NSRange(location: 0, length: ns.length)
         var detections: [Detection] = []

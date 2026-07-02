@@ -2,7 +2,10 @@ import AppKit
 import Combine
 
 class ClipboardMonitor: ObservableObject {
-    typealias Callback = (ClipboardItemType, String, Data?, String?, String, String) -> Void
+    /// Image clips carry their already-normalized payload (bytes + UTI +
+    /// dimensions) so the consumer never has to re-decode them; nil for every
+    /// other clip type.
+    typealias Callback = (ClipboardItemType, String, ImagePayloadStore.Payload?, String?, String, String) -> Void
 
     private var timer: Timer?
     private var lastChangeCount: Int = 0
@@ -65,9 +68,20 @@ class ClipboardMonitor: ObservableObject {
     func startMonitoring(interval: TimeInterval = 0.5, onNewContent: @escaping Callback) {
         self.onNewContent = onNewContent
         guard timer == nil else { return }
-        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+        timer = Self.makePollTimer(interval: interval) { [weak self] in
             self?.checkForChanges()
         }
+    }
+
+    /// Poll timers all get a tolerance so the OS can coalesce the wakeups —
+    /// exact tick alignment doesn't matter for change-count polling, and the
+    /// slack measurably reduces idle CPU/energy draw.
+    private static func makePollTimer(interval: TimeInterval, _ tick: @escaping () -> Void) -> Timer {
+        let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in
+            tick()
+        }
+        timer.tolerance = interval * 0.15
+        return timer
     }
     
     func stopMonitoring() {
@@ -88,7 +102,7 @@ class ClipboardMonitor: ObservableObject {
             // Only spin a timer back up if monitoring was actually started.
             guard onNewContent != nil, timer == nil else { return }
             lastChangeCount = pasteboard.changeCount
-            timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            timer = Self.makePollTimer(interval: interval) { [weak self] in
                 self?.checkForChanges()
             }
         }
@@ -99,7 +113,7 @@ class ClipboardMonitor: ObservableObject {
     func updateInterval(_ interval: TimeInterval) {
         guard timer != nil else { return }
         timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+        timer = Self.makePollTimer(interval: interval) { [weak self] in
             self?.checkForChanges()
         }
     }
@@ -161,16 +175,54 @@ class ClipboardMonitor: ObservableObject {
         }
 
         // 2. 原始图片数据（截图、浏览器复制、应用拷贝出来的位图）。
-        // Keep compressed image representations and rewrite TIFF fallbacks to PNG
-        // before the bytes ever enter SwiftData.
-        if let imagePayload = ImagePayloadStore.pasteboardPayload(from: pasteboard) {
-            let imageData = imagePayload.data
-            Self.debugLog("[Clipboard] -> image branch bytes=\(imageData.count)")
-            let content = L("merge.imagePlaceholderFormat", imageData.count / 1024)
-            onNewContent?(.image, content, imageData, nil, sourceApp, bundleId)
+        // Raw bytes are grabbed on this tick — the pasteboard is only coherent
+        // now — but the normalization (decode + PNG re-encode, which rewrites
+        // TIFF fallbacks before the bytes ever enter SwiftData) runs on a
+        // background queue. A TIFF-only copy (Preview, office apps) or an
+        // oversized bitmap used to re-encode synchronously inside this
+        // main-thread tick, freezing the UI for the whole encode on every
+        // large image copy.
+        let imageCandidates = ImagePayloadStore.rawPasteboardImageCandidates(from: pasteboard)
+        if !imageCandidates.isEmpty {
+            // Capture the text fallbacks now: if every candidate fails to
+            // decode, the tick still degrades to the string/RTF branches —
+            // and the live pasteboard may have moved on by the time the
+            // normalization result lands back on the main queue.
+            let fallbackString = pasteboard.string(forType: .string)
+            let fallbackRTF = pasteboard.data(forType: .rtf)
+            let deliver = onNewContent
+            DispatchQueue.global(qos: .userInitiated).async {
+                let payload = ImagePayloadStore.normalizedPayload(fromCandidates: imageCandidates)
+                DispatchQueue.main.async {
+                    if let payload {
+                        Self.debugLog("[Clipboard] -> image branch bytes=\(payload.data.count)")
+                        let content = L("merge.imagePlaceholderFormat", payload.data.count / 1024)
+                        deliver?(.image, content, payload, nil, sourceApp, bundleId)
+                    } else if let string = fallbackString, !string.isEmpty {
+                        Self.debugLog("[Clipboard] -> image decode failed; string fallback")
+                        let isURL = string.hasPrefix("http://") || string.hasPrefix("https://")
+                        deliver?(isURL ? .url : .text, string, nil, nil, sourceApp, bundleId)
+                    } else if let rtfData = fallbackRTF {
+                        let content = String(data: rtfData, encoding: .utf8) ?? L("merge.rtfPlaceholder")
+                        deliver?(.rtf, content, nil, nil, sourceApp, bundleId)
+                    }
+                }
+            }
             return
         }
-        Self.debugLog("[Clipboard] -> no image found; image=\(NSImage(pasteboard: pasteboard) != nil) tiff=\(pasteboard.data(forType: .tiff)?.count ?? -1) png=\(pasteboard.data(forType: .png)?.count ?? -1)")
+
+        // Pasteboards that expose no standard bitmap flavor but that NSImage
+        // can still read (rare — e.g. PDF-only image copies). Reading requires
+        // the live pasteboard, so this stays synchronous; the case is too
+        // uncommon to justify restructuring it around the background hop.
+        if let image = NSImage(pasteboard: pasteboard),
+           let imagePayload = ImagePayloadStore.normalizedPayload(from: image) {
+            Self.debugLog("[Clipboard] -> image (NSImage fallback) bytes=\(imagePayload.data.count)")
+            let content = L("merge.imagePlaceholderFormat", imagePayload.data.count / 1024)
+            onNewContent?(.image, content, imagePayload, nil, sourceApp, bundleId)
+            return
+        }
+        Self.debugLog("[Clipboard] -> no image found; tiff=\(pasteboard.data(forType: .tiff)?.count ?? -1) png=\(pasteboard.data(forType: .png)?.count ?? -1)")
 
         // 3. 普通字符串
         if let string = pasteboard.string(forType: .string), !string.isEmpty {
