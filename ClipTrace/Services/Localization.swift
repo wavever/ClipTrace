@@ -648,8 +648,10 @@ extension L10n {
         "settings.about.update.available": "发现新版本",
         "settings.about.update.availableFormat": "发现新版本 %@",
         "settings.about.update.install": "立即更新",
-        "settings.about.update.installHelp": "打开 Sparkle 更新流程",
+        "settings.about.update.installHelp": "下载并安装新版本",
         "settings.about.update.noUpdateFound": "您使用的 %@ 已经是最新版本！",
+        "toolbar.update.tip": "发现新版本，点击立即更新",
+        "toolbar.update.tipFormat": "发现新版本 %@，点击立即更新",
 
         // retention durations
         "retention.forever": "永久",
@@ -1346,8 +1348,10 @@ extension L10n {
         "settings.about.update.available": "New version available",
         "settings.about.update.availableFormat": "New version %@ available",
         "settings.about.update.install": "Update Now",
-        "settings.about.update.installHelp": "Open the Sparkle update flow",
+        "settings.about.update.installHelp": "Download and install the new version",
         "settings.about.update.noUpdateFound": "You're using %@, which is already the latest version!",
+        "toolbar.update.tip": "A new version is available — click to update now",
+        "toolbar.update.tipFormat": "Version %@ is available — click to update now",
 
         // retention durations
         "retention.forever": "Forever",

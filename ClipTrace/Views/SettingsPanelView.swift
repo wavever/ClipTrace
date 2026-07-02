@@ -64,6 +64,10 @@ struct SettingsPanelView: View {
                     .padding(.bottom, 24)
             }
         }
+        .onAppear { consumePendingSection() }
+        .onChange(of: nav.pendingSettingsSection) { _, _ in
+            consumePendingSection()
+        }
         .background(
             VStack(spacing: 0) {
                 LinearGradient(
@@ -83,6 +87,16 @@ struct SettingsPanelView: View {
             // so the window background tone stays consistent across screens.
             .ignoresSafeArea(edges: .top)
         )
+    }
+
+    private func consumePendingSection() {
+        guard let pending = nav.pendingSettingsSection else { return }
+        withAnimation(.easeOut(duration: 0.18)) { section = pending }
+        // Clear outside the view-update cycle; the resulting onChange re-entry
+        // exits on the nil guard above.
+        Task { @MainActor in
+            nav.pendingSettingsSection = nil
+        }
     }
 
     private var header: some View {
@@ -2298,8 +2312,8 @@ private struct AboutHeaderCard: View {
         guard updater.updateAvailable else {
             return L("settings.about.versionFormat", version)
         }
-        if let latestVersionLabel {
-            return L("settings.about.update.availableFormat", latestVersionLabel)
+        if let label = updater.latestVersionLabel {
+            return L("settings.about.update.availableFormat", label)
         }
         return L("settings.about.update.available")
     }
@@ -2320,17 +2334,6 @@ private struct AboutHeaderCard: View {
 
     private var updateButtonHelp: String {
         updater.updateAvailable ? L("settings.about.update.installHelp") : L("settings.about.update.title")
-    }
-
-    private var latestVersionLabel: String? {
-        guard let latestVersion = updater.latestVersion?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !latestVersion.isEmpty else {
-            return nil
-        }
-        if latestVersion.lowercased().hasPrefix("v") {
-            return latestVersion
-        }
-        return "v\(latestVersion)"
     }
 }
 
