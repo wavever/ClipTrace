@@ -552,6 +552,12 @@ struct MenuBarContent: View {
     }
 
     private func openSettings() {
+        // The gear carries the update badge, so when an update is waiting land
+        // on About — that's where the "Update Now" button lives. Set before the
+        // closure path too (dynamic island calls showSettings() itself).
+        if updater.updateAvailable {
+            AppNavigation.shared.pendingSettingsSection = .about
+        }
         if let onOpenSettings {
             onOpenSettings()
         } else {

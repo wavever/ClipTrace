@@ -27,6 +27,12 @@ final class UpdaterService: ObservableObject {
     @Published private(set) var updateAvailable: Bool = false
     @Published private(set) var latestVersion: String?
 
+    /// `latestVersion` normalized for display ("0.9.14" → "v0.9.14").
+    var latestVersionLabel: String? {
+        guard let latestVersion, !latestVersion.isEmpty else { return nil }
+        return latestVersion.lowercased().hasPrefix("v") ? latestVersion : "v\(latestVersion)"
+    }
+
     let updater: SPUUpdater
     private let userDriver: ClipTraceUpdaterUserDriver
     private let delegate = ClipTraceUpdaterDelegate()
@@ -117,7 +123,12 @@ private final class ClipTraceUpdaterDelegate: NSObject, SPUUpdaterDelegate, SPUS
         state: SPUUserUpdateState
     ) {
         switch choice {
-        case .skip, .dismiss:
+        case .skip:
+            // The user explicitly skipped this version; Sparkle won't offer it
+            // again on scheduled checks, so keeping the reminder lit would nag
+            // about an update the user just opted out of.
+            clearUpdateAvailability()
+        case .dismiss:
             markUpdateAvailable(updateItem)
         case .install:
             break
