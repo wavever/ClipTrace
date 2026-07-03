@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://wavever.github.io/ClipTrace-HomePage/"><img src="https://img.shields.io/badge/website-cliptrace-7AA487" alt="Website" /></a>
+  <a href="https://wavever.github.io/ClipTrace/"><img src="https://img.shields.io/badge/website-cliptrace-7AA487" alt="Website" /></a>
   <a href="https://github.com/wavever/ClipTrace/actions/workflows/ci.yml"><img src="https://github.com/wavever/ClipTrace/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://github.com/wavever/ClipTrace/releases/latest"><img src="https://img.shields.io/github/v/release/wavever/ClipTrace" alt="Latest release" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="MIT License" /></a>
@@ -34,19 +34,19 @@ ClipTrace is an open-source macOS clipboard manager with offline semantic search
 ## Preview
 
 <p align="center">
-  <img src="docs/screenshots/main.png" alt="Main window" width="720" />
+  <img src="docs/assets/screenshot-main.png" alt="Main window" width="720" />
   <br/>
   <em>Main window - history, full-text and semantic search, tags</em>
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/stats.png" alt="Activity stats" width="720" />
+  <img src="docs/assets/screenshot-stats.png" alt="Activity stats" width="720" />
   <br/>
   <em>Activity stats - daily count and yearly heatmap</em>
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/mcp.png" alt="MCP integration" width="720" />
+  <img src="docs/assets/screenshot-mcp.png" alt="MCP integration" width="720" />
   <br/>
   <em>MCP server - connect Claude Desktop, Claude Code, or Cursor</em>
 </p>

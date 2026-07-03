@@ -1,0 +1,10 @@
+# Keep GitHub Actions steps (actions/checkout etc.) up to date. The SPM
+# dependencies (Sparkle / KeyboardShortcuts) are resolved through the
+# .xcodeproj, which Dependabot's swift ecosystem can't read — bump those
+# manually in Xcode.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

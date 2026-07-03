@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://wavever.github.io/ClipTrace-HomePage/"><img src="https://img.shields.io/badge/%E5%AE%98%E7%BD%91-%E5%9C%A8%E7%BA%BF-7AA487" alt="官网" /></a>
+  <a href="https://wavever.github.io/ClipTrace/"><img src="https://img.shields.io/badge/%E5%AE%98%E7%BD%91-%E5%9C%A8%E7%BA%BF-7AA487" alt="官网" /></a>
   <a href="https://github.com/wavever/ClipTrace/actions/workflows/ci.yml"><img src="https://github.com/wavever/ClipTrace/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://github.com/wavever/ClipTrace/releases/latest"><img src="https://img.shields.io/github/v/release/wavever/ClipTrace" alt="最新版本" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="MIT License" /></a>
@@ -34,19 +34,19 @@
 ## 预览
 
 <p align="center">
-  <img src="docs/screenshots/main.png" alt="主界面" width="720" />
+  <img src="docs/assets/screenshot-main.png" alt="主界面" width="720" />
   <br/>
   <em>主界面：历史记录、全文与语义搜索、标签</em>
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/stats.png" alt="活跃统计" width="720" />
+  <img src="docs/assets/screenshot-stats.png" alt="活跃统计" width="720" />
   <br/>
   <em>活跃统计：每日复制次数与年度热力图</em>
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/mcp.png" alt="MCP 集成" width="720" />
+  <img src="docs/assets/screenshot-mcp.png" alt="MCP 集成" width="720" />
   <br/>
   <em>MCP 服务器：接入 Claude Desktop、Claude Code 或 Cursor</em>
 </p>
