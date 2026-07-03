@@ -87,7 +87,7 @@ ClipTrace is an open-source macOS clipboard manager with offline semantic search
 - Redacted display across the history list, previews, menu bar, Dynamic Island, Quick Paste, Quick Look, and search snippets, with a lock badge on protected clips
 - The original value is never modified in storage — copy, quick paste, paste-as-plain-text, and edits still use the raw clip
 - Default exports and MCP responses return redacted content with `isProtected` metadata; raw egress requires an explicit opt-in
-- Master switch and per-category toggles in Settings → Privacy
+- Master switch and one editable rule list in Settings → Privacy: the built-in phone/app-key rules can be edited, reset, or turned off, alongside your own keyword or regex rules
 
 ### Export and Stats
 

@@ -146,9 +146,14 @@ do {
     check("bounded.shorter", r.redactedText.count < ("secret=" + longSecret).count, r.redactedText)
 }
 
-// 8. Category toggle — disabling phone leaves keys working and vice versa
+// 8. Rule toggle — disabling the phone built-in leaves keys working
 do {
-    let keyOnly = ContentProtectionSettings(isEnabled: true, categories: [.key], allowRawExport: false, allowRawMCP: false)
+    var keyOnly = ContentProtectionSettings.defaults
+    keyOnly.rules = keyOnly.rules.map { rule in
+        var r = rule
+        if r.builtin == .phone { r.isEnabled = false }
+        return r
+    }
     let r = redact("13812345678 token=ABCDEFGH12345678", keyOnly)
     check("toggle.phoneOff", r.redactedText.contains("13812345678"), r.redactedText)
     check("toggle.keyStillOn", !r.redactedText.contains("ABCDEFGH12345678"), r.redactedText)
@@ -156,9 +161,79 @@ do {
 
 // 9. Master disabled -> raw passthrough, not protected
 do {
-    let off = ContentProtectionSettings(isEnabled: false, categories: Set(ContentProtectionCategory.allCases), allowRawExport: false, allowRawMCP: false)
+    let off = ContentProtectionSettings(
+        isEnabled: false,
+        allowRawExport: false,
+        allowRawMCP: false,
+        rules: ProtectionRule.builtinDefaults()
+    )
     let r = redact("appkey=abcdef1234567890", off)
     check("master.off", !r.isProtected && r.redactedText == "appkey=abcdef1234567890", r.redactedText)
+}
+
+// 10. Custom keyword rule masks its matches and tags .custom
+do {
+    var s = ContentProtectionSettings.defaults
+    s.rules.append(ProtectionRule(mode: .contains, pattern: "ProjectPhoenix"))
+    let r = redact("docs for projectphoenix are ready", s)
+    check("custom.keyword.masked", !r.redactedText.lowercased().contains("projectphoenix"), r.redactedText)
+    check("custom.keyword.context", r.redactedText.hasPrefix("docs for ") && r.redactedText.hasSuffix(" are ready"), r.redactedText)
+    check("custom.keyword.category", r.categories.contains(.custom))
+}
+
+// 11. Custom regex with a capture group masks only the group, label survives
+do {
+    var s = ContentProtectionSettings.defaults
+    s.rules.append(ProtectionRule(mode: .regex, pattern: "employee-id:\\s*([0-9]{6})"))
+    let r = redact("employee-id: 123456", s)
+    check("custom.group.label", r.redactedText.hasPrefix("employee-id: "), r.redactedText)
+    check("custom.group.masked", !r.redactedText.contains("123456"), r.redactedText)
+}
+
+// 12. Edited built-in phone rule still applies the 138****5678 phone mask
+do {
+    var s = ContentProtectionSettings.defaults
+    s.rules = s.rules.map { rule in
+        var r = rule
+        // Narrow the built-in to 138-prefixed numbers only.
+        if r.builtin == .phone { r.pattern = "(?<![0-9+])(138(?:[ \\-]?[0-9]){8})(?![0-9])" }
+        return r
+    }
+    let r = redact("13812345678 and 13912345678", s)
+    check("editedPhone.masked", r.redactedText.contains("138****5678"), r.redactedText)
+    check("editedPhone.narrowed", r.redactedText.contains("13912345678"), r.redactedText)
+}
+
+// 13. Invalid regex rule is inert; the rest keep working
+do {
+    var s = ContentProtectionSettings.defaults
+    s.rules.append(ProtectionRule(mode: .regex, pattern: "([unclosed"))
+    let r = redact("call 13812345678", s)
+    check("invalidRegex.inert", r.redactedText == "call 138****5678", r.redactedText)
+}
+
+// 14. Disabled custom rule does not fire
+do {
+    var s = ContentProtectionSettings.defaults
+    s.rules.append(ProtectionRule(isEnabled: false, mode: .contains, pattern: "hello"))
+    let r = redact("hello world", s)
+    check("disabledRule.inert", !r.isProtected && r.redactedText == "hello world", r.redactedText)
+}
+
+// 15. Legacy custom-rule blob (id/mode/pattern only) decodes as enabled user rule
+do {
+    let legacy = "[{\"id\":\"00000000-0000-0000-0000-000000000001\",\"mode\":\"contains\",\"pattern\":\"secretword\"}]"
+    let rules = ContentProtectionSettings.decodeRules(legacy.data(using: .utf8))
+    check("legacy.decode.count", rules.count == 1)
+    check("legacy.decode.fields", rules.first.map { $0.isEnabled && $0.builtin == nil && $0.pattern == "secretword" } ?? false)
+}
+
+// 16. normalized() re-seeds missing built-ins ahead of user rules
+do {
+    let userOnly = [ProtectionRule(mode: .contains, pattern: "x")]
+    let fixed = ContentProtectionSettings.normalized(userOnly)
+    check("normalized.reseeds", fixed.count == 3)
+    check("normalized.order", fixed[0].builtin == .phone && fixed[1].builtin == .key && fixed[2].builtin == nil)
 }
 
 print("\nContentProtection harness: \(passed) passed, \(failures) failed")

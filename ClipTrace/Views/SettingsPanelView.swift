@@ -1581,26 +1581,8 @@ private struct PrivacySection: View {
                 }
             }
 
-            SettingsGroup(icon: "checklist", title: L("settings.privacy.categories.title"), tint: .appAccent) {
-                ForEach(ContentProtectionCategory.allCases, id: \.self) { category in
-                    SettingsRow(
-                        icon: category.icon,
-                        iconTint: .appAccent,
-                        title: L(category.titleKey),
-                        subtitle: L(category.subtitleKey)
-                    ) {
-                        Toggle("", isOn: store.categoryBinding(category))
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                            .tint(.appAccent)
-                            .disabled(!store.isEnabled)
-                    }
-                }
-            }
-            .opacity(store.isEnabled ? 1 : 0.6)
-
-            customRulesCard
-                .opacity(store.isEnabled && store.isCategoryEnabled(.custom) ? 1 : 0.6)
+            rulesCard
+                .opacity(store.isEnabled ? 1 : 0.6)
 
             SettingsGroup(icon: "arrow.up.forward.square", title: L("settings.privacy.egress.title"), tint: .appAccent) {
                 SettingsRow(
@@ -1639,28 +1621,46 @@ private struct PrivacySection: View {
         }
     }
 
-    private var customRulesCard: some View {
+    private var rulesCard: some View {
         SettingCard(
-            title: L("settings.privacy.customRules.title"),
-            subtitle: L("settings.privacy.customRules.subtitle")
+            title: L("settings.privacy.rules.title"),
+            subtitle: L("settings.privacy.rules.subtitle")
         ) {
+            // The list is never empty: the two built-ins are always seeded
+            // (normalized on load), so no empty-state branch is needed.
             VStack(spacing: 8) {
-                if store.customRules.isEmpty {
-                    Text(L("common.notSet"))
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else {
-                    ForEach(store.customRules) { rule in
-                        let binding = elementBinding($store.customRules, id: rule.id, fallback: rule)
-                        HStack(spacing: 8) {
-                            PaperMenuPicker(
-                                options: CustomProtectionRule.Mode.allCases.map {
-                                    PaperMenuOption($0, $0.displayName)
-                                },
-                                selection: binding.mode,
-                                width: 130
-                            )
+                ForEach(store.rules) { rule in
+                    let binding = elementBinding($store.rules, id: rule.id, fallback: rule)
+                    HStack(spacing: 8) {
+                        Toggle("", isOn: binding.isEnabled)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                            .tint(.appAccent)
+
+                        Group {
+                            if let kind = rule.builtin {
+                                // Built-ins keep a fixed name in the picker's
+                                // column so rows align; their pattern is regex
+                                // by construction.
+                                HStack(spacing: 6) {
+                                    Image(systemName: kind.icon)
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(Color.appAccent)
+                                    Text(kind.displayName)
+                                        .font(.system(size: 12, weight: .medium))
+                                    Spacer(minLength: 0)
+                                }
+                                .frame(width: 130, alignment: .leading)
+                            } else {
+                                PaperMenuPicker(
+                                    options: ProtectionRule.Mode.allCases.map {
+                                        PaperMenuOption($0, $0.displayName)
+                                    },
+                                    selection: binding.mode,
+                                    width: 130
+                                )
+                            }
 
                             TextField(rule.mode.placeholder, text: binding.pattern)
                                 .paperTextField()
@@ -1674,21 +1674,34 @@ private struct PrivacySection: View {
                                     .help(L("settings.privacy.customRules.invalidRegex"))
                             }
 
-                            Button {
-                                store.customRules.removeAll { $0.id == rule.id }
-                            } label: {
-                                Image(systemName: "minus.circle.fill")
+                            if let kind = rule.builtin {
+                                if rule.pattern != ProtectionRule.defaultPattern(for: kind) {
+                                    Button {
+                                        binding.wrappedValue.pattern = ProtectionRule.defaultPattern(for: kind)
+                                    } label: {
+                                        Image(systemName: "arrow.uturn.backward")
+                                    }
+                                    .buttonStyle(PaperIconButtonStyle(size: 28))
+                                    .help(L("settings.privacy.rules.reset"))
+                                }
+                            } else {
+                                Button {
+                                    store.rules.removeAll { $0.id == rule.id }
+                                } label: {
+                                    Image(systemName: "minus.circle.fill")
+                                }
+                                .buttonStyle(PaperIconButtonStyle(size: 28))
+                                .foregroundStyle(Color.appDanger)
+                                .help(L("common.remove"))
                             }
-                            .buttonStyle(PaperIconButtonStyle(size: 28))
-                            .foregroundStyle(Color.appDanger)
-                            .help(L("common.remove"))
                         }
+                        .opacity(rule.isEnabled ? 1 : 0.55)
                     }
                 }
                 HStack {
                     Spacer()
                     Button {
-                        store.customRules.append(CustomProtectionRule())
+                        store.rules.append(ProtectionRule())
                     } label: {
                         Label(L("settings.privacy.customRules.add"), systemImage: "plus")
                     }
@@ -1702,7 +1715,7 @@ private struct PrivacySection: View {
 
 /// Display strings live here (not in ContentProtection.swift) so the pure
 /// detector file stays standalone-compilable for the test harness.
-private extension CustomProtectionRule.Mode {
+private extension ProtectionRule.Mode {
     var displayName: String {
         switch self {
         case .contains: return L("settings.privacy.customRules.mode.contains")
@@ -1714,6 +1727,15 @@ private extension CustomProtectionRule.Mode {
         switch self {
         case .contains: return L("settings.privacy.customRules.placeholder.contains")
         case .regex:    return L("settings.privacy.customRules.placeholder.regex")
+        }
+    }
+}
+
+private extension ProtectionRule.BuiltinKind {
+    var displayName: String {
+        switch self {
+        case .phone: return L("settings.privacy.rule.builtin.phone")
+        case .key:   return L("settings.privacy.rule.builtin.key")
         }
     }
 }

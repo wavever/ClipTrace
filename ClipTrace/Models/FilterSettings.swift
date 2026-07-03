@@ -151,18 +151,15 @@ final class FilterSettingsStore: ObservableObject {
 /// Persisted Content Protection preferences and the observable model the
 /// settings UI binds to. The pure redactor (`ContentProtector`) never touches
 /// this store — it reads the same `UserDefaults` keys via
-/// `ContentProtectionSettings.current()`, so a toggle here is visible to display
-/// and egress code on its next read. Built-in protection and every category
-/// default to **enabled**; raw-egress opt-ins default to **off**.
+/// `ContentProtectionSettings.current()`, so a change here is visible to
+/// display and egress code on its next read. Protection and the seeded
+/// built-in rules default to **enabled**; raw-egress opt-ins default to **off**.
 @MainActor
 final class ContentProtectionStore: ObservableObject {
     static let shared = ContentProtectionStore()
 
     @Published var isEnabled: Bool {
         didSet { persist(ContentProtectionSettings.Keys.enabled, isEnabled); bumpVersion() }
-    }
-    @Published var enabledCategories: Set<ContentProtectionCategory> {
-        didSet { persistCategories(); bumpVersion() }
     }
     /// Opt-in: include raw (un-redacted) protected content in bulk export.
     @Published var allowRawExport: Bool {
@@ -172,14 +169,13 @@ final class ContentProtectionStore: ObservableObject {
     @Published var allowRawMCP: Bool {
         didSet { persist(ContentProtectionSettings.Keys.allowRawMCP, allowRawMCP) }
     }
-    /// User-authored keyword/regex detectors, applied alongside the built-in
-    /// categories while the `.custom` category is enabled.
-    @Published var customRules: [CustomProtectionRule] {
-        didSet { persistCustomRules(); bumpVersion() }
+    /// The unified detection-rule list: editable built-ins + user rules.
+    @Published var rules: [ProtectionRule] {
+        didSet { persistRules(); bumpVersion() }
     }
 
     /// Monotonic counter bumped whenever a *display-affecting* setting (master
-    /// toggle or a category) changes. Persistent display surfaces feed this into
+    /// toggle or a rule) changes. Persistent display surfaces feed this into
     /// their row `Equatable` inputs so an already-rendered list re-computes its
     /// redaction immediately instead of waiting for the next incidental refresh.
     @Published private(set) var version = 0
@@ -194,40 +190,24 @@ final class ContentProtectionStore: ObservableObject {
     private init() {
         let snapshot = ContentProtectionSettings.current()
         isEnabled = snapshot.isEnabled
-        enabledCategories = snapshot.categories
         allowRawExport = snapshot.allowRawExport
         allowRawMCP = snapshot.allowRawMCP
-        customRules = snapshot.customRules
+        rules = snapshot.rules
+        // Finalize the legacy → unified-rules migration: `current()` derives
+        // the list from the pre-0.9.14 keys until the new key exists, so
+        // persist the derived list once here.
+        if UserDefaults.standard.data(forKey: ContentProtectionSettings.Keys.rules) == nil {
+            persistRules()
+        }
     }
 
     /// Live snapshot for callers that prefer the value type over the store.
     var snapshot: ContentProtectionSettings {
         ContentProtectionSettings(
             isEnabled: isEnabled,
-            categories: enabledCategories,
             allowRawExport: allowRawExport,
             allowRawMCP: allowRawMCP,
-            customRules: customRules
-        )
-    }
-
-    func isCategoryEnabled(_ category: ContentProtectionCategory) -> Bool {
-        enabledCategories.contains(category)
-    }
-
-    func setCategory(_ category: ContentProtectionCategory, enabled: Bool) {
-        if enabled {
-            enabledCategories.insert(category)
-        } else {
-            enabledCategories.remove(category)
-        }
-    }
-
-    /// Two-way binding for a single category toggle in the settings UI.
-    func categoryBinding(_ category: ContentProtectionCategory) -> Binding<Bool> {
-        Binding(
-            get: { [weak self] in self?.isCategoryEnabled(category) ?? false },
-            set: { [weak self] in self?.setCategory(category, enabled: $0) }
+            rules: rules
         )
     }
 
@@ -236,22 +216,10 @@ final class ContentProtectionStore: ObservableObject {
         UserDefaults.standard.set(value, forKey: key)
     }
 
-    private func persistCategories() {
+    private func persistRules() {
         guard !loading else { return }
-        for category in ContentProtectionCategory.allCases {
-            UserDefaults.standard.set(
-                enabledCategories.contains(category),
-                forKey: ContentProtectionSettings.Keys.category(category)
-            )
-        }
-    }
-
-    private func persistCustomRules() {
-        guard !loading else { return }
-        if customRules.isEmpty {
-            UserDefaults.standard.removeObject(forKey: ContentProtectionSettings.Keys.customRules)
-        } else if let data = try? JSONEncoder().encode(customRules) {
-            UserDefaults.standard.set(data, forKey: ContentProtectionSettings.Keys.customRules)
+        if let data = try? JSONEncoder().encode(rules) {
+            UserDefaults.standard.set(data, forKey: ContentProtectionSettings.Keys.rules)
         }
     }
 }
