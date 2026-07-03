@@ -1579,6 +1579,9 @@ private struct PrivacySection: View {
             }
             .opacity(store.isEnabled ? 1 : 0.6)
 
+            customRulesCard
+                .opacity(store.isEnabled && store.isCategoryEnabled(.custom) ? 1 : 0.6)
+
             SettingsGroup(icon: "arrow.up.forward.square", title: L("settings.privacy.egress.title"), tint: .appAccent) {
                 SettingsRow(
                     icon: "square.and.arrow.up",
@@ -1613,6 +1616,83 @@ private struct PrivacySection: View {
             ) {
                 EmptyView()
             }
+        }
+    }
+
+    private var customRulesCard: some View {
+        SettingCard(
+            title: L("settings.privacy.customRules.title"),
+            subtitle: L("settings.privacy.customRules.subtitle")
+        ) {
+            VStack(spacing: 8) {
+                if store.customRules.isEmpty {
+                    Text(L("common.notSet"))
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    ForEach($store.customRules) { $rule in
+                        HStack(spacing: 8) {
+                            PaperMenuPicker(
+                                options: CustomProtectionRule.Mode.allCases.map {
+                                    PaperMenuOption($0, $0.displayName)
+                                },
+                                selection: $rule.mode,
+                                width: 130
+                            )
+
+                            TextField(rule.mode.placeholder, text: $rule.pattern)
+                                .paperTextField()
+
+                            // Surface a dead rule (bad regex) instead of
+                            // silently matching nothing.
+                            if !rule.pattern.isEmpty, !rule.isValid {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(Color.appWarning)
+                                    .help(L("settings.privacy.customRules.invalidRegex"))
+                            }
+
+                            Button {
+                                store.customRules.removeAll { $0.id == rule.id }
+                            } label: {
+                                Image(systemName: "minus.circle.fill")
+                            }
+                            .buttonStyle(PaperIconButtonStyle(size: 28))
+                            .foregroundStyle(Color.appDanger)
+                            .help(L("common.remove"))
+                        }
+                    }
+                }
+                HStack {
+                    Spacer()
+                    Button {
+                        store.customRules.append(CustomProtectionRule())
+                    } label: {
+                        Label(L("settings.privacy.customRules.add"), systemImage: "plus")
+                    }
+                    .buttonStyle(PaperActionButtonStyle(role: .plain))
+                }
+            }
+            .disabled(!store.isEnabled)
+        }
+    }
+}
+
+/// Display strings live here (not in ContentProtection.swift) so the pure
+/// detector file stays standalone-compilable for the test harness.
+private extension CustomProtectionRule.Mode {
+    var displayName: String {
+        switch self {
+        case .contains: return L("settings.privacy.customRules.mode.contains")
+        case .regex:    return L("settings.privacy.customRules.mode.regex")
+        }
+    }
+
+    var placeholder: String {
+        switch self {
+        case .contains: return L("settings.privacy.customRules.placeholder.contains")
+        case .regex:    return L("settings.privacy.customRules.placeholder.regex")
         }
     }
 }

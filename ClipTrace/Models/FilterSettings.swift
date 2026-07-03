@@ -172,6 +172,11 @@ final class ContentProtectionStore: ObservableObject {
     @Published var allowRawMCP: Bool {
         didSet { persist(ContentProtectionSettings.Keys.allowRawMCP, allowRawMCP) }
     }
+    /// User-authored keyword/regex detectors, applied alongside the built-in
+    /// categories while the `.custom` category is enabled.
+    @Published var customRules: [CustomProtectionRule] {
+        didSet { persistCustomRules(); bumpVersion() }
+    }
 
     /// Monotonic counter bumped whenever a *display-affecting* setting (master
     /// toggle or a category) changes. Persistent display surfaces feed this into
@@ -192,6 +197,7 @@ final class ContentProtectionStore: ObservableObject {
         enabledCategories = snapshot.categories
         allowRawExport = snapshot.allowRawExport
         allowRawMCP = snapshot.allowRawMCP
+        customRules = snapshot.customRules
     }
 
     /// Live snapshot for callers that prefer the value type over the store.
@@ -200,7 +206,8 @@ final class ContentProtectionStore: ObservableObject {
             isEnabled: isEnabled,
             categories: enabledCategories,
             allowRawExport: allowRawExport,
-            allowRawMCP: allowRawMCP
+            allowRawMCP: allowRawMCP,
+            customRules: customRules
         )
     }
 
@@ -236,6 +243,15 @@ final class ContentProtectionStore: ObservableObject {
                 enabledCategories.contains(category),
                 forKey: ContentProtectionSettings.Keys.category(category)
             )
+        }
+    }
+
+    private func persistCustomRules() {
+        guard !loading else { return }
+        if customRules.isEmpty {
+            UserDefaults.standard.removeObject(forKey: ContentProtectionSettings.Keys.customRules)
+        } else if let data = try? JSONEncoder().encode(customRules) {
+            UserDefaults.standard.set(data, forKey: ContentProtectionSettings.Keys.customRules)
         }
     }
 }

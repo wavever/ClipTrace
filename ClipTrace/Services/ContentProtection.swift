@@ -20,27 +20,66 @@ enum ContentProtectionCategory: String, Codable, CaseIterable, Hashable {
     /// App keys, API keys, access/bearer tokens, client secrets, passwords, and
     /// high-confidence provider token prefixes.
     case key
+    /// User-authored rules (keyword / regex) — the actual patterns live in
+    /// `ContentProtectionSettings.customRules`; this case is their master
+    /// toggle and the category tag their detections carry.
+    case custom
 
     /// Localization key for the settings row title.
     var titleKey: String {
         switch self {
-        case .phone: return "settings.privacy.category.phone"
-        case .key:   return "settings.privacy.category.key"
+        case .phone:  return "settings.privacy.category.phone"
+        case .key:    return "settings.privacy.category.key"
+        case .custom: return "settings.privacy.category.custom"
         }
     }
 
     /// Localization key for the settings row subtitle.
     var subtitleKey: String {
         switch self {
-        case .phone: return "settings.privacy.category.phone.subtitle"
-        case .key:   return "settings.privacy.category.key.subtitle"
+        case .phone:  return "settings.privacy.category.phone.subtitle"
+        case .key:    return "settings.privacy.category.key.subtitle"
+        case .custom: return "settings.privacy.category.custom.subtitle"
         }
     }
 
     var icon: String {
         switch self {
-        case .phone: return "phone.fill"
-        case .key:   return "key.fill"
+        case .phone:  return "phone.fill"
+        case .key:    return "key.fill"
+        case .custom: return "slider.horizontal.3"
+        }
+    }
+}
+
+// MARK: - Custom rules
+
+/// A user-authored detector: a literal keyword or a regular expression whose
+/// matches are masked exactly like the built-in categories. Kept Foundation-only
+/// (no L(), no UI types) so this file still compiles standalone for the test
+/// harness; display names for `Mode` live in the settings UI layer.
+struct CustomProtectionRule: Codable, Identifiable, Hashable {
+    enum Mode: String, Codable, CaseIterable, Identifiable {
+        /// Case-insensitive literal substring match.
+        case contains
+        /// User-supplied `NSRegularExpression`; invalid patterns are inert.
+        case regex
+
+        var id: String { rawValue }
+    }
+
+    var id: UUID = UUID()
+    var mode: Mode = .contains
+    var pattern: String = ""
+
+    /// True when the rule can match at all: non-empty, and for regex mode the
+    /// pattern must compile. The settings UI surfaces the inverse as a warning.
+    var isValid: Bool {
+        let trimmed = pattern.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        switch mode {
+        case .contains: return true
+        case .regex:    return (try? NSRegularExpression(pattern: trimmed)) != nil
         }
     }
 }
@@ -57,6 +96,10 @@ struct ContentProtectionSettings: Equatable {
     var allowRawExport: Bool
     /// Allow raw protected content to leave through MCP text responses.
     var allowRawMCP: Bool
+    /// User-authored keyword/regex detectors, active while `.custom` is in
+    /// `categories`. Defaulted so existing memberwise call sites (tests) keep
+    /// compiling unchanged.
+    var customRules: [CustomProtectionRule] = []
 
     /// UserDefaults keys — shared verbatim with `ContentProtectionStore` so the
     /// settings UI and the pure redactor agree on storage.
@@ -64,6 +107,7 @@ struct ContentProtectionSettings: Equatable {
         static let enabled = "contentProtection.enabled"
         static let allowRawExport = "contentProtection.allowRawExport"
         static let allowRawMCP = "contentProtection.allowRawMCP"
+        static let customRules = "contentProtection.customRules"
         static func category(_ c: ContentProtectionCategory) -> String {
             "contentProtection.category.\(c.rawValue)"
         }
@@ -93,8 +137,34 @@ struct ContentProtectionSettings: Equatable {
             isEnabled: enabled,
             categories: categories,
             allowRawExport: flag(Keys.allowRawExport, false),
-            allowRawMCP: flag(Keys.allowRawMCP, false)
+            allowRawMCP: flag(Keys.allowRawMCP, false),
+            customRules: decodeCustomRules(defaults.data(forKey: Keys.customRules))
         )
+    }
+
+    /// Box so the value-typed rules array can live in `NSCache`.
+    private final class CachedRules {
+        let rules: [CustomProtectionRule]
+        init(_ rules: [CustomProtectionRule]) { self.rules = rules }
+    }
+
+    /// Decode memo keyed by the raw persisted blob: `current()` runs on every
+    /// redaction call (hot row-render paths), so the JSON decode must not
+    /// repeat per call. NSCache compares NSData keys by content and is
+    /// thread-safe (egress paths call this off the main actor).
+    private static let rulesCache: NSCache<NSData, CachedRules> = {
+        let c = NSCache<NSData, CachedRules>()
+        c.countLimit = 8
+        return c
+    }()
+
+    static func decodeCustomRules(_ data: Data?) -> [CustomProtectionRule] {
+        guard let data, !data.isEmpty else { return [] }
+        let key = data as NSData
+        if let hit = rulesCache.object(forKey: key) { return hit.rules }
+        let rules = (try? JSONDecoder().decode([CustomProtectionRule].self, from: data)) ?? []
+        rulesCache.setObject(CachedRules(rules), forKey: key)
+        return rules
     }
 }
 
@@ -169,7 +239,14 @@ enum ContentProtector {
 
     private static func cacheKey(for text: String, settings: ContentProtectionSettings) -> NSString {
         let categories = settings.categories.map(\.rawValue).sorted().joined(separator: ",")
-        return "\(categories)|\(text)" as NSString
+        // Custom rules participate in the key so editing one invalidates
+        // memoized results naturally (in-memory cache, so per-run hash is fine).
+        var hasher = Hasher()
+        for rule in settings.customRules {
+            hasher.combine(rule.mode)
+            hasher.combine(rule.pattern)
+        }
+        return "\(categories)|\(hasher.finalize())|\(text)" as NSString
     }
 
     private static func computeRedaction(
@@ -185,6 +262,9 @@ enum ContentProtector {
         }
         if settings.categories.contains(.key) {
             detections += keyDetections(in: text, ns: ns, range: full)
+        }
+        if settings.categories.contains(.custom), !settings.customRules.isEmpty {
+            detections += customDetections(in: text, ns: ns, range: full, rules: settings.customRules)
         }
 
         guard !detections.isEmpty else { return .clear(text) }
@@ -308,6 +388,68 @@ enum ContentProtector {
             out.append(Detection(range: tokenRange, replacement: maskValue(token), category: .key))
         }
 
+        return out
+    }
+
+    // MARK: - Custom rules (user-authored keyword / regex)
+
+    /// Shared LRU of compiled user patterns. Redaction runs per row render, so
+    /// recompiling per evaluation would tax hot paths; invalid patterns are
+    /// inert (nil) rather than fatal. Mirrors `ScriptingRule.compiledRegex`,
+    /// duplicated here to keep this file standalone-compilable for the tests.
+    private static let customRegexCache: NSCache<NSString, NSRegularExpression> = {
+        let c = NSCache<NSString, NSRegularExpression>()
+        c.countLimit = 128
+        return c
+    }()
+
+    private static func compiledCustomRegex(_ pattern: String) -> NSRegularExpression? {
+        let key = pattern as NSString
+        if let cached = customRegexCache.object(forKey: key) { return cached }
+        guard let re = try? NSRegularExpression(pattern: pattern) else { return nil }
+        customRegexCache.setObject(re, forKey: key)
+        return re
+    }
+
+    private static func customDetections(
+        in text: String,
+        ns: NSString,
+        range: NSRange,
+        rules: [CustomProtectionRule]
+    ) -> [Detection] {
+        var out: [Detection] = []
+        for rule in rules {
+            let pattern = rule.pattern.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !pattern.isEmpty else { continue }
+            switch rule.mode {
+            case .contains:
+                let end = range.location + range.length
+                var cursor = range.location
+                while cursor < end {
+                    let remaining = NSRange(location: cursor, length: end - cursor)
+                    let found = ns.range(of: pattern, options: [.caseInsensitive], range: remaining)
+                    guard found.location != NSNotFound else { break }
+                    out.append(Detection(
+                        range: found,
+                        replacement: maskValue(ns.substring(with: found)),
+                        category: .custom
+                    ))
+                    cursor = found.location + max(found.length, 1)
+                }
+            case .regex:
+                guard let re = compiledCustomRegex(pattern) else { continue }
+                re.enumerateMatches(in: text, range: range) { match, _, _ in
+                    // Zero-width matches (e.g. `a*`) would loop the masker over
+                    // nothing — skip them so pathological patterns stay inert.
+                    guard let match, match.range.length > 0 else { return }
+                    out.append(Detection(
+                        range: match.range,
+                        replacement: maskValue(ns.substring(with: match.range)),
+                        category: .custom
+                    ))
+                }
+            }
+        }
         return out
     }
 
