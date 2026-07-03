@@ -305,6 +305,8 @@ struct OCRResultView: View {
     @State private var fragments: [OCRFragment] = []
     @State private var isRecognizing: Bool = true
     @State private var image: NSImage?
+    @State private var textTab: TextTab = .plain
+    @Namespace private var tabNamespace
 
     // Zoom / pan / rotate state
     @State private var scale: CGFloat = 1
@@ -318,16 +320,35 @@ struct OCRResultView: View {
         scale != 1 || offset != .zero || rotation != .zero
     }
 
+    private enum TextTab: String, CaseIterable, Identifiable {
+        case plain
+        case structured
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .plain:      return L("ocr.tab.plain")
+            case .structured: return L("ocr.tab.structured")
+            }
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            imageArea
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            HStack(spacing: 0) {
+                imageArea
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Divider()
+                textPanel
+                    .frame(width: 300)
+            }
             Divider()
             footer
         }
-        .frame(width: 900, height: 640)
+        .frame(width: 1200, height: 640)
         .task {
             let reference = ImagePayloadStore.reference(for: item)
             async let loadedImage = ImagePayloadStore.imageAsync(for: reference)
@@ -461,6 +482,206 @@ struct OCRResultView: View {
         }
     }
 
+    // MARK: - Recognized text panel
+
+    private var textPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label(L("ocr.text.title"), systemImage: "text.alignleft")
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+                if !isRecognizing, !fragments.isEmpty {
+                    Button {
+                        copyToPasteboard(currentTabText)
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 12, weight: .medium))
+                            .frame(width: 26, height: 26)
+                    }
+                    .buttonStyle(PaperActionButtonStyle(role: .plain))
+                    .help(L("ocr.text.copy"))
+                }
+            }
+
+            tabPicker
+
+            if isRecognizing {
+                VStack(spacing: 10) {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .controlSize(.small)
+                    Text(L("ocr.recognizing"))
+                        .font(.system(size: 12))
+                }
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if fragments.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "text.badge.xmark")
+                        .font(.system(size: 30, weight: .light))
+                    Text(L("ocr.empty"))
+                        .font(.system(size: 12))
+                }
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView([.vertical, .horizontal]) {
+                    Text(currentTabText)
+                        .font(
+                            textTab == .plain
+                                ? .system(size: 12)
+                                : .system(size: 11.5, design: .monospaced)
+                        )
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: textTab == .structured, vertical: false)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(10)
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.appCard.opacity(0.82))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+                )
+            }
+        }
+        .padding(14)
+        .background(Color.appPaper)
+    }
+
+    /// Paper chip tab bar with a sliding selection pill (matchedGeometryEffect
+    /// keeps the highlight gliding between tabs instead of snapping).
+    private var tabPicker: some View {
+        HStack(spacing: 2) {
+            ForEach(TextTab.allCases) { tab in
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        textTab = tab
+                    }
+                } label: {
+                    Text(tab.title)
+                        .font(.system(size: 11.5, weight: textTab == tab ? .semibold : .medium))
+                        .foregroundStyle(textTab == tab ? Color.appAccent : .secondary)
+                        .padding(.vertical, 5)
+                        .frame(maxWidth: .infinity)
+                        .background {
+                            if textTab == tab {
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(Color.appAccent.opacity(0.14))
+                                    .matchedGeometryEffect(id: "ocrTextTab", in: tabNamespace)
+                            }
+                        }
+                        .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(2)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.appChipFill)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+        )
+    }
+
+    private var currentTabText: String {
+        textTab == .plain ? plainText : structuredText
+    }
+
+    /// Fragments in reading order: top-to-bottom, then left-to-right within a
+    /// vertical band. Vision boxes are bottom-left origin, so *larger* midY is
+    /// visually higher.
+    private var orderedFragments: [OCRFragment] {
+        fragments.sorted { lhs, rhs in
+            let band = min(lhs.boundingBox.height, rhs.boundingBox.height) * 0.5
+            if abs(lhs.boundingBox.midY - rhs.boundingBox.midY) > band {
+                return lhs.boundingBox.midY > rhs.boundingBox.midY
+            }
+            return lhs.boundingBox.minX < rhs.boundingBox.minX
+        }
+    }
+
+    private var plainText: String {
+        orderedFragments.map(\.text).joined(separator: "\n")
+    }
+
+    /// Layout-preserving reconstruction: fragments grouped into visual rows,
+    /// indented and spaced by mapping x-positions to monospaced text columns
+    /// (CJK counted double-width), and large vertical gaps kept as blank lines
+    /// — so tables and code screenshots keep their shape.
+    private var structuredText: String {
+        let ordered = orderedFragments
+        guard !ordered.isEmpty else { return "" }
+
+        var rows: [[OCRFragment]] = []
+        for frag in ordered {
+            if let anchor = rows.last?.first,
+               abs(anchor.boundingBox.midY - frag.boundingBox.midY)
+                   < min(anchor.boundingBox.height, frag.boundingBox.height) * 0.6 {
+                rows[rows.count - 1].append(frag)
+            } else {
+                rows.append([frag])
+            }
+        }
+
+        // Median per-column glyph width (normalized) maps x to text columns.
+        let charWidths = ordered.compactMap { frag -> CGFloat? in
+            let columns = Self.columnCount(frag.text)
+            return columns > 0 ? frag.boundingBox.width / CGFloat(columns) : nil
+        }.sorted()
+        guard !charWidths.isEmpty else { return plainText }
+        let charWidth = max(charWidths[charWidths.count / 2], 0.0005)
+
+        let rowHeights = rows.compactMap { $0.first?.boundingBox.height }.sorted()
+        let medianRowHeight = max(rowHeights[rowHeights.count / 2], 0.001)
+
+        var lines: [String] = []
+        var previousBottom: CGFloat?
+        for row in rows {
+            let sorted = row.sorted { $0.boundingBox.minX < $1.boundingBox.minX }
+            let top = sorted.map(\.boundingBox.maxY).max() ?? 0
+            if let previousBottom, previousBottom - top > medianRowHeight * 1.2 {
+                lines.append("")   // preserve paragraph / section gaps
+            }
+            previousBottom = sorted.map(\.boundingBox.minY).min()
+
+            var line = ""
+            var cursor = 0
+            for frag in sorted {
+                let targetColumn = Int((frag.boundingBox.minX / charWidth).rounded())
+                let pad = line.isEmpty
+                    ? max(0, min(targetColumn, 120))
+                    : max(1, targetColumn - cursor)
+                line += String(repeating: " ", count: pad) + frag.text
+                cursor += pad + Self.columnCount(frag.text)
+            }
+            lines.append(line)
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Monospaced column estimate: CJK and other wide glyphs occupy two cells.
+    private static func columnCount(_ text: String) -> Int {
+        text.reduce(0) { $0 + ($1.isASCII ? 1 : 2) }
+    }
+
+    private func copyToPasteboard(_ text: String) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        ClipboardMonitor.markInternalWrite()
+        ToastCenter.shared.show(
+            L("common.copied"),
+            systemImage: "doc.on.doc",
+            tint: .appAccent
+        )
+    }
+
     // MARK: - Gestures
 
     private var zoomGesture: some Gesture {
@@ -518,16 +739,7 @@ struct OCRResultView: View {
         HStack(spacing: 10) {
             if !isRecognizing, !fragments.isEmpty {
                 Button {
-                    let fullText = fragments.map(\.text).joined(separator: "\n")
-                    let pb = NSPasteboard.general
-                    pb.clearContents()
-                    pb.setString(fullText, forType: .string)
-                    ClipboardMonitor.markInternalWrite()
-                    ToastCenter.shared.show(
-                        L("common.copied"),
-                        systemImage: "doc.on.doc",
-                        tint: .appAccent
-                    )
+                    copyToPasteboard(plainText)
                 } label: {
                     Label(L("ocr.copyAll"), systemImage: "doc.on.doc")
                 }
