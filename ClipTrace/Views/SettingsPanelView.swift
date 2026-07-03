@@ -1274,6 +1274,25 @@ private struct GlobalShortcutProbe: NSViewRepresentable {
 
 // MARK: - Filter
 
+/// `ForEach($array)` hands each row a positional binding; when a row is
+/// deleted, its still-focused TextField flushes one last read through the
+/// stale index and traps on Array bounds (crashed in the wild on the
+/// custom-rule editor). Keying the binding on the element id turns that
+/// late access into a no-op instead.
+private func elementBinding<Element: Identifiable>(
+    _ array: Binding<[Element]>,
+    id: Element.ID,
+    fallback: Element
+) -> Binding<Element> {
+    Binding(
+        get: { array.wrappedValue.first { $0.id == id } ?? fallback },
+        set: { updated in
+            guard let index = array.wrappedValue.firstIndex(where: { $0.id == id }) else { return }
+            array.wrappedValue[index] = updated
+        }
+    )
+}
+
 private struct FilterSection: View {
     @ObservedObject private var store = FilterSettingsStore.shared
     @AppStorage("tagFilterMode") private var tagFilterModeRaw: String = TagFilterMode.any.rawValue
@@ -1467,17 +1486,18 @@ private struct FilterSection: View {
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
-                    ForEach($store.textFilters) { $rule in
+                    ForEach(store.textFilters) { rule in
+                        let binding = elementBinding($store.textFilters, id: rule.id, fallback: rule)
                         HStack(spacing: 8) {
                             PaperMenuPicker(
                                 options: TextFilterRule.Mode.allCases.map {
                                     PaperMenuOption($0, $0.displayName)
                                 },
-                                selection: $rule.mode,
+                                selection: binding.mode,
                                 width: 130
                             )
 
-                            TextField(L("settings.filter.textRules.placeholder"), text: $rule.text)
+                            TextField(L("settings.filter.textRules.placeholder"), text: binding.text)
                                 .paperTextField()
 
                             Button {
@@ -1631,17 +1651,18 @@ private struct PrivacySection: View {
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
-                    ForEach($store.customRules) { $rule in
+                    ForEach(store.customRules) { rule in
+                        let binding = elementBinding($store.customRules, id: rule.id, fallback: rule)
                         HStack(spacing: 8) {
                             PaperMenuPicker(
                                 options: CustomProtectionRule.Mode.allCases.map {
                                     PaperMenuOption($0, $0.displayName)
                                 },
-                                selection: $rule.mode,
+                                selection: binding.mode,
                                 width: 130
                             )
 
-                            TextField(rule.mode.placeholder, text: $rule.pattern)
+                            TextField(rule.mode.placeholder, text: binding.pattern)
                                 .paperTextField()
 
                             // Surface a dead rule (bad regex) instead of
