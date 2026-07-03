@@ -152,7 +152,7 @@ struct ClipTraceApp: App {
     }
 
     private func applyActivationPolicy() {
-        let policy: NSApplication.ActivationPolicy = showInDock ? .regular : .accessory
+        let policy = AppDelegate.desiredActivationPolicy()
         guard NSApp.activationPolicy() != policy else { return }
 
         // Remember the window that was focused so we can restore it after the
@@ -238,17 +238,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    /// Re-assert the user's chosen Dock visibility from the saved preference.
-    /// Used at launch and again whenever a window closes, since AppKit silently
-    /// reverts an `.accessory` app back to `.regular` (its bundle default) once
-    /// the last standard window goes away.
-    private func syncActivationPolicyFromDefaults() {
+    static let mainWindowTitle = "剪迹"
+
+    /// The policy the app should hold right now: the saved Dock preference,
+    /// except that a visible main window always pins `.regular`. macOS never
+    /// performs its "switch to a Space with the app's windows" transition for
+    /// `.accessory` apps, so honoring "hide Dock icon" while the main window
+    /// is open would strand users on another app's fullscreen Space whenever
+    /// they enter through the menu bar / island / hotkey — the window opens
+    /// but the screen never moves there. The preference takes effect again as
+    /// soon as the main window closes (`windowWillClose` re-syncs).
+    static func desiredActivationPolicy() -> NSApplication.ActivationPolicy {
         let defaults = UserDefaults.standard
         if defaults.object(forKey: "showInDock") == nil {
             defaults.set(true, forKey: "showInDock")
         }
-        let showInDock = defaults.bool(forKey: "showInDock")
-        NSApp.setActivationPolicy(showInDock ? .regular : .accessory)
+        if defaults.bool(forKey: "showInDock") { return .regular }
+        let mainWindowVisible = NSApp.windows.contains {
+            $0.title == mainWindowTitle && $0.isVisible
+        }
+        return mainWindowVisible ? .regular : .accessory
+    }
+
+    /// Re-assert the desired policy. Used at launch and again whenever a
+    /// window closes, since AppKit silently reverts an `.accessory` app back
+    /// to `.regular` (its bundle default) once the last standard window goes
+    /// away — and, in the other direction, closing the main window is when a
+    /// hidden-Dock preference becomes applicable again.
+    private func syncActivationPolicyFromDefaults() {
+        NSApp.setActivationPolicy(Self.desiredActivationPolicy())
     }
 
     private var shouldConfirmBeforeQuit: Bool {
@@ -286,7 +304,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func mainAppWindow() -> NSWindow? {
         NSApp.windows.first { window in
-            window.title == "剪迹" && window.isVisible
+            window.title == Self.mainWindowTitle && window.isVisible
         } ?? NSApp.windows.first { window in
             window.isVisible && window.canBecomeKey && !(window is NSPanel)
         }
@@ -294,7 +312,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showMainWindowForQuitPrompt() {
         NSApp.activate(ignoringOtherApps: true)
-        for window in NSApp.windows where window.title == "剪迹" {
+        for window in NSApp.windows where window.title == Self.mainWindowTitle {
             window.makeKeyAndOrderFront(nil)
             return
         }
@@ -409,11 +427,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @MainActor
+    /// Bring the main window to the user from any entry point (menu bar
+    /// panel, dynamic island, global hotkey, Dock re-open) — including while
+    /// another app's fullscreen Space is active. Two quirks conspire there:
+    /// `.accessory` apps never get the system Space switch on activation, so
+    /// the policy is pinned to `.regular` up front (the main window is about
+    /// to be visible, which is exactly when `desiredActivationPolicy` holds
+    /// `.regular` anyway); and activating/keying in the same runloop turn as
+    /// the policy flip or the panel teardown loses the switch, so both are
+    /// deferred one tick.
     static func openMainWindow() {
-        NSApp.activate(ignoringOtherApps: true)
-        for window in NSApp.windows where window.title == "剪迹" {
-            window.makeKeyAndOrderFront(nil)
-            return
+        if NSApp.activationPolicy() != .regular {
+            NSApp.setActivationPolicy(.regular)
+        }
+        DispatchQueue.main.async {
+            // Re-pin in case a window-close re-sync raced us in this gap
+            // (closing the menu-bar panel triggers one).
+            if NSApp.activationPolicy() != .regular {
+                NSApp.setActivationPolicy(.regular)
+            }
+            NSApp.activate(ignoringOtherApps: true)
+            for window in NSApp.windows where window.title == mainWindowTitle {
+                window.makeKeyAndOrderFront(nil)
+                return
+            }
         }
     }
 }

@@ -190,6 +190,11 @@ struct MenuBarContent: View {
     @Environment(\.openWindow) private var openWindow
     @ObservedObject private var updater = UpdaterService.shared
     @StateObject private var historyStore = MenuBarHistoryStore()
+    /// The panel hosting this view, captured so the open-main/settings actions
+    /// can dismiss it deterministically — SwiftUI exposes no dismiss API for a
+    /// `.window`-style `MenuBarExtra`, and waiting for it to resign key fails
+    /// when the main window opens on another Space.
+    @State private var hostWindow: NSWindow?
 
     private static let listHeight: CGFloat = 460
 
@@ -281,6 +286,7 @@ struct MenuBarContent: View {
         }
         .menuBarWindowContainerBackground(surfaceStyle)
         .preferredColorScheme(surfaceStyle.isIsland ? .dark : nil)
+        .background(HostWindowReader { hostWindow = $0 })
         .onAppear {
             reloadHistory()
         }
@@ -544,9 +550,14 @@ struct MenuBarContent: View {
         if let onOpenMain {
             onOpenMain()
         } else {
+            // Order matters: the window must exist (and count as visible for
+            // the activation-policy pinning) before the panel close triggers
+            // the window-close policy re-sync; the actual activation + Space
+            // switch runs deferred inside `openMainWindow`.
             openWindow(id: "main")
             AppNavigation.shared.showList()
-            NSApp.activate(ignoringOtherApps: true)
+            hostWindow?.close()
+            AppDelegate.openMainWindow()
         }
         onRequestClose?()
     }
@@ -557,9 +568,38 @@ struct MenuBarContent: View {
         } else {
             openWindow(id: "main")
             AppNavigation.shared.showSettings()
-            NSApp.activate(ignoringOtherApps: true)
+            hostWindow?.close()
+            AppDelegate.openMainWindow()
         }
         onRequestClose?()
+    }
+}
+
+/// Invisible probe that reports the `NSWindow` hosting the menu-bar panel back
+/// to SwiftUI (deferred a tick — `viewDidMoveToWindow` fires mid view-update).
+private struct HostWindowReader: NSViewRepresentable {
+    let onResolve: (NSWindow?) -> Void
+
+    func makeNSView(context: Context) -> Probe {
+        let probe = Probe()
+        probe.onResolve = onResolve
+        return probe
+    }
+
+    func updateNSView(_ view: Probe, context: Context) {
+        view.onResolve = onResolve
+    }
+
+    final class Probe: NSView {
+        var onResolve: ((NSWindow?) -> Void)?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            let window = window
+            DispatchQueue.main.async { [onResolve] in
+                onResolve?(window)
+            }
+        }
     }
 }
 
