@@ -113,19 +113,76 @@ extension Color {
     }
 }
 
-struct UpdateAvailableBadge: View {
-    var size: CGFloat = 6.5
+/// Non-modal update reminder shown beside `CaptureToggle` in the main window
+/// header and the menu-bar panel. Mirrors the toggle's anatomy (tinted glyph
+/// bubble on a paper chip) so the two read as siblings; the warm amber tint is
+/// what marks it as a prompt. Clicking hands off to Sparkle's user-initiated
+/// flow, which focuses the already-deferred update immediately.
+struct UpdateReminderPill: View {
+    /// Drops the version label for tight layouts (keeps the glyph bubble).
+    var showsLabel: Bool = true
+
+    @ObservedObject private var updater = UpdaterService.shared
+    @State private var hovering = false
+
+    private var cornerRadius: CGFloat { showsLabel ? 7 : 8 }
+    private var horizontalPadding: CGFloat { showsLabel ? 10 : 7 }
+    private var verticalPadding: CGFloat { showsLabel ? 6 : 5 }
+    private var glyphSize: CGFloat { showsLabel ? 18 : 17 }
 
     var body: some View {
-        Circle()
-            .fill(Color.appWarning)
-            .frame(width: size, height: size)
-            .overlay(
-                Circle()
-                    .strokeBorder(Color.appPaper.opacity(0.92), lineWidth: 1)
+        Button {
+            updater.checkForUpdates()
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "arrow.down")
+                    .font(.system(size: showsLabel ? 10 : 9, weight: .semibold))
+                    .foregroundStyle(Color.appWarning)
+                    .frame(width: glyphSize, height: glyphSize)
+                    .background(
+                        Circle()
+                            .fill(Color.appWarning.opacity(0.13))
+                    )
+                    .overlay(
+                        Circle()
+                            .strokeBorder(Color.appWarning.opacity(0.22), lineWidth: 0.5)
+                    )
+                if showsLabel {
+                    Text(updater.latestVersionLabel ?? L("settings.about.update.available"))
+                        .font(.system(size: 12, weight: .medium))
+                        .monospacedDigit()
+                        .foregroundStyle(Color.appMetal)
+                        .fixedSize()
+                }
+            }
+            .padding(.horizontal, horizontalPadding)
+            .padding(.vertical, verticalPadding)
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(Color.appChipFill)
             )
-            .shadow(color: Color.appWarning.opacity(0.36), radius: 3, y: 1)
-            .allowsHitTesting(false)
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(
+                        hovering ? Color.appWarning.opacity(0.42) : Color.appCardBorder,
+                        lineWidth: hovering ? 1 : 0.75
+                    )
+            )
+            .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { h in
+            withAnimation(.easeOut(duration: 0.12)) { hovering = h }
+        }
+        .accessibilityLabel(tip)
+        .hoverTip(tip)
+    }
+
+    private var tip: String {
+        if let label = updater.latestVersionLabel {
+            return L("toolbar.update.tipFormat", label)
+        }
+        return L("toolbar.update.tip")
     }
 }
 

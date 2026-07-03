@@ -316,6 +316,13 @@ struct MenuBarContent: View {
                 .foregroundStyle(surfaceStyle.primaryText)
             Spacer()
 
+            // Update reminder sits beside the capture toggle (same placement
+            // as the main window header) so both status chips share one spot.
+            if updater.updateAvailable {
+                UpdateReminderPill(showsLabel: false)
+                    .transition(.scale(scale: 0.86).combined(with: .opacity))
+            }
+
             CaptureToggle(isPaused: $vm.isCapturePaused, showsLabel: false)
 
             Button {
@@ -329,17 +336,9 @@ struct MenuBarContent: View {
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .fill(surfaceStyle.headerButtonFill)
                     )
-                    .overlay(alignment: .topTrailing) {
-                        if updater.updateAvailable {
-                            UpdateAvailableBadge()
-                                .offset(x: -4, y: 4)
-                                .transition(.scale(scale: 0.72).combined(with: .opacity))
-                        }
-                    }
             }
             .buttonStyle(.plain)
             .help(L("menubar.openSettings"))
-            .animation(.easeOut(duration: 0.16), value: updater.updateAvailable)
 
             Button {
                 openMain()
@@ -358,6 +357,7 @@ struct MenuBarContent: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+        .animation(.easeOut(duration: 0.16), value: updater.updateAvailable)
     }
 
     private var searchField: some View {
@@ -552,12 +552,6 @@ struct MenuBarContent: View {
     }
 
     private func openSettings() {
-        // The gear carries the update badge, so when an update is waiting land
-        // on About — that's where the "Update Now" button lives. Set before the
-        // closure path too (dynamic island calls showSettings() itself).
-        if updater.updateAvailable {
-            AppNavigation.shared.pendingSettingsSection = .about
-        }
         if let onOpenSettings {
             onOpenSettings()
         } else {

@@ -736,11 +736,21 @@ struct MainWindowContent: View {
 
             Spacer()
 
+            // The requirement's "new version prompt": appears only when a
+            // scheduled Sparkle check found an update; one click brings the
+            // update flow into focus (no detour through Settings). Lives next
+            // to the capture toggle so both status chips share one corner.
+            if updater.updateAvailable {
+                UpdateReminderPill()
+                    .transition(.scale(scale: 0.86).combined(with: .opacity))
+            }
+
             CaptureToggle(isPaused: $vm.isCapturePaused)
         }
         .padding(.horizontal, 18)
         .padding(.top, 16)
         .padding(.bottom, 12)
+        .animation(.easeOut(duration: 0.18), value: updater.updateAvailable)
     }
 
     private var toolbar: some View {
@@ -805,14 +815,6 @@ struct MainWindowContent: View {
                 nav.showStats()
             }
 
-            // The requirement's "new version prompt": appears only when a
-            // scheduled Sparkle check found an update; one click brings the
-            // update flow into focus (no detour through Settings).
-            if updater.updateAvailable {
-                ToolbarUpdatePill()
-                    .transition(.scale(scale: 0.86).combined(with: .opacity))
-            }
-
             ToolbarIconButton(systemName: "gearshape", help: L("toolbar.settings")) {
                 nav.showSettings()
             }
@@ -820,7 +822,6 @@ struct MainWindowContent: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .animation(.easeOut(duration: 0.18), value: updater.updateAvailable)
     }
 
     private var emptyState: some View {
@@ -3551,52 +3552,6 @@ struct ToolbarIconButton: View {
         .accessibilityLabel(help)
         .hoverTip(help)
         .onHover { isHovered = $0 }
-    }
-}
-
-/// Non-modal update reminder in the toolbar. Quiet amber chip so it reads as
-/// a gentle prompt inside the paper palette rather than a system alert;
-/// clicking hands off to Sparkle's user-initiated flow, which focuses the
-/// already-deferred update immediately.
-struct ToolbarUpdatePill: View {
-    @ObservedObject private var updater = UpdaterService.shared
-    @State private var isHovered = false
-
-    var body: some View {
-        Button {
-            updater.checkForUpdates()
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "arrow.down.circle.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                Text(updater.latestVersionLabel ?? L("settings.about.update.available"))
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .monospacedDigit()
-            }
-            .foregroundStyle(Color.appWarning)
-            .padding(.horizontal, 9)
-            .frame(height: 26)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(Color.appWarning.opacity(isHovered ? 0.24 : 0.13))
-            )
-            .overlay(
-                Capsule(style: .continuous)
-                    .strokeBorder(Color.appWarning.opacity(0.5), lineWidth: 0.75)
-            )
-            .contentShape(Capsule(style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(tip)
-        .hoverTip(tip)
-        .onHover { isHovered = $0 }
-    }
-
-    private var tip: String {
-        if let label = updater.latestVersionLabel {
-            return L("toolbar.update.tipFormat", label)
-        }
-        return L("toolbar.update.tip")
     }
 }
 
