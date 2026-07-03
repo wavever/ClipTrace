@@ -739,6 +739,7 @@ extension L10n {
         "quickpaste.pasteInOrderFormat": "按顺序粘贴 (%d)",
         "quickpaste.emptyClipboard": "剪贴板历史为空",
         "quickpaste.emptyGroup": "当前分组暂无可粘贴内容",
+        "quickpaste.emptySearch": "未找到匹配的内容",
         "quickpaste.manualPasteHint": "已复制到剪贴板，请手动 ⌘V。已为你打开「系统设置 → 辅助功能」，请允许 ClipTrace 以启用自动粘贴",
 
         // trash
@@ -1449,6 +1450,7 @@ extension L10n {
         "quickpaste.pasteInOrderFormat": "Paste in order (%d)",
         "quickpaste.emptyClipboard": "Clipboard history is empty",
         "quickpaste.emptyGroup": "No pasteable items in this group",
+        "quickpaste.emptySearch": "No matches",
         "quickpaste.manualPasteHint": "Copied — paste manually with ⌘V. Opened System Settings → Accessibility so you can enable ClipTrace for auto-paste.",
 
         // trash

@@ -134,6 +134,8 @@ struct MainWindowContent: View {
     @State private var favoritesCountCache: Int = 0
     @State private var allKnownTagsCache: [String] = []
     @State private var allKnownSourceAppsCache: [String] = []
+    /// Bumped by ⌘F to pull keyboard focus into the toolbar's search field.
+    @State private var searchFocusToken = 0
 
     /// One spring drives both the highlight glide and the scroll follow, in a
     /// single transaction, so they move as one. `interpolatingSpring` is the key
@@ -786,7 +788,17 @@ struct MainWindowContent: View {
                 activeTags: $vm.activeTags,
                 availableTags: allKnownTagsCache,
                 featureEnabled: vm.semanticFeatureEnabled,
-                indexing: vm.isBackfillingEmbeddings
+                indexing: vm.isBackfillingEmbeddings,
+                focusToken: searchFocusToken
+            )
+            .background(
+                // Invisible ⌘F target: bumping the token asks the search
+                // field to grab keyboard focus (see ToolbarSearchField).
+                Button("") { searchFocusToken &+= 1 }
+                    .keyboardShortcut("f", modifiers: .command)
+                    .opacity(0)
+                    .frame(width: 0, height: 0)
+                    .accessibilityHidden(true)
             )
 
             ToolbarIconButton(systemName: "square.and.pencil", help: L("toolbar.newSnippet")) {
@@ -2535,6 +2547,9 @@ private struct ToolbarSearchField: View {
     /// segment with a "building index" hint instead of letting users switch
     /// into a half-populated mode.
     var indexing: Bool
+    /// Bumped by the toolbar's hidden ⌘F button to pull keyboard focus into
+    /// the field — @FocusState is private here, so a token is the handshake.
+    var focusToken: Int = 0
 
     @FocusState private var focused: Bool
     /// Tag mode's text field is a *local* typing buffer — it filters the
@@ -2746,6 +2761,9 @@ private struct ToolbarSearchField: View {
                             .help(L("common.searchHint.tooltip"))
                             .frame(width: typingWidth, alignment: .leading)
                             .onSubmit(handleSubmit)
+                            .onExitCommand {
+                                handleEscape()
+                            }
                             // SwiftUI's `onKeyPress` never reaches a focused
                             // TextField — the field editor swallows editing keys
                             // first — so Backspace and ←/→ chip navigation are
@@ -2914,6 +2932,21 @@ private struct ToolbarSearchField: View {
         // the user actually sees results until the index is ready.
         .onChange(of: indexing) { _, isOn in
             if isOn, mode == .semantic { mode = .fullText }
+        }
+        .onChange(of: focusToken) { _, _ in
+            focused = true
+        }
+    }
+
+    /// Esc while typing: first press clears the field, second press (already
+    /// empty) drops focus so the list's keyboard navigation takes over —
+    /// a double-Esc always exits search.
+    private func handleEscape() {
+        caretIndex = nil
+        if fieldText.wrappedValue.isEmpty {
+            focused = false
+        } else {
+            fieldText.wrappedValue = ""
         }
     }
 

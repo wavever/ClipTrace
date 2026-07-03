@@ -63,10 +63,17 @@ final class QuickPastePanelState: ObservableObject {
     @Published var items: [ClipboardItem] = []
     @Published var groups: [ClipboardGroup] = []
     @Published var selectedGroupFilter: ClipboardGroupFilter = .all
+    /// Debounced query currently narrowing `items` (set via `updateSearch`).
+    @Published private(set) var searchQuery = ""
+    /// Bumped on every `configure` so the reused panel's view can reset
+    /// transient search state (draft text, field focus) between invocations.
+    @Published private(set) var session = 0
 
     var onCommit: (_ items: [ClipboardItem], _ plainText: Bool) -> Void = { _, _ in }
     var onTogglePin: (_ item: ClipboardItem) -> Void = { _ in }
-    var onSelectGroup: (_ filter: ClipboardGroupFilter) -> [ClipboardItem] = { _ in [] }
+    /// Single data source for the list: empty query means the recents feed
+    /// for `filter`, anything else a bounded search within it.
+    var onQuery: (_ filter: ClipboardGroupFilter, _ query: String) -> [ClipboardItem] = { _, _ in [] }
     var onCancel: () -> Void = {}
 
     func configure(
@@ -74,14 +81,16 @@ final class QuickPastePanelState: ObservableObject {
         groups: [ClipboardGroup],
         onCommit: @escaping (_ items: [ClipboardItem], _ plainText: Bool) -> Void,
         onTogglePin: @escaping (_ item: ClipboardItem) -> Void,
-        onSelectGroup: @escaping (_ filter: ClipboardGroupFilter) -> [ClipboardItem],
+        onQuery: @escaping (_ filter: ClipboardGroupFilter, _ query: String) -> [ClipboardItem],
         onCancel: @escaping () -> Void
     ) {
         self.onCommit = onCommit
         self.onTogglePin = onTogglePin
-        self.onSelectGroup = onSelectGroup
+        self.onQuery = onQuery
         self.onCancel = onCancel
         self.selectedGroupFilter = .all
+        self.searchQuery = ""
+        self.session &+= 1
         self.groups = groups
         self.items = items
     }
@@ -89,7 +98,13 @@ final class QuickPastePanelState: ObservableObject {
     func selectGroup(_ filter: ClipboardGroupFilter) {
         guard selectedGroupFilter != filter else { return }
         selectedGroupFilter = filter
-        items = onSelectGroup(filter)
+        items = onQuery(filter, searchQuery)
+    }
+
+    func updateSearch(_ query: String) {
+        guard query != searchQuery else { return }
+        searchQuery = query
+        items = onQuery(selectedGroupFilter, query)
     }
 }
 
@@ -151,8 +166,8 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
             onTogglePin: { [weak self] item in
                 self?.togglePin(item)
             },
-            onSelectGroup: { [weak self] filter in
-                self?.fetchRecentItems(groupFilter: filter) ?? []
+            onQuery: { [weak self] filter, query in
+                self?.fetchItems(groupFilter: filter, query: query) ?? []
             },
             onCancel: { [weak self] in self?.cancel() }
         )
@@ -238,6 +253,28 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
         panel.setFrameOrigin(origin)
     }
 
+    /// One entry point for the panel's list: an empty query keeps the recents
+    /// feed, anything else swaps to the bounded search fetch.
+    private func fetchItems(groupFilter: ClipboardGroupFilter, query: String) -> [ClipboardItem] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return fetchRecentItems(groupFilter: groupFilter) }
+        return fetchSearchResults(groupFilter: groupFilter, query: trimmed)
+    }
+
+    /// Same shape as `fetchRecentItems`, but matching in SQLite via the shared
+    /// search predicate — never an unbounded fetch filtered in memory.
+    private func fetchSearchResults(groupFilter: ClipboardGroupFilter, query: String) -> [ClipboardItem] {
+        var descriptor = ClipboardHistorySearch.descriptor(groupFilter: groupFilter, query: query)
+        if case .group(let groupID) = groupFilter {
+            Self.keepPayloadFaulted(in: &descriptor)
+            let candidates = (try? context.fetch(descriptor)) ?? []
+            return Array(candidates.lazy.filter { $0.isInGroup(groupID) }.prefix(60))
+        }
+        descriptor.fetchLimit = 60
+        Self.keepPayloadFaulted(in: &descriptor)
+        return (try? context.fetch(descriptor)) ?? []
+    }
+
     private func fetchRecentItems(groupFilter: ClipboardGroupFilter) -> [ClipboardItem] {
          switch groupFilter {
          case .all:
@@ -314,7 +351,10 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
 
     private func togglePin(_ item: ClipboardItem) {
         ClipboardRuntime.shared.viewModel.togglePin(item)
-        panelState.items = fetchRecentItems(groupFilter: panelState.selectedGroupFilter)
+        panelState.items = fetchItems(
+            groupFilter: panelState.selectedGroupFilter,
+            query: panelState.searchQuery
+        )
     }
 
     // MARK: - Close

@@ -87,6 +87,54 @@ extension Array where Element == ClipboardGroup {
     }
 }
 
+/// Bounded history search shared by the menu bar and Quick Paste panels.
+/// Matching runs inside SwiftData/SQLite and callers keep a `fetchLimit` on
+/// the descriptor, so typing a query never expands a fetch to the whole table
+/// or filters it in memory — that's what made the original menu-bar search
+/// block the panel and got it disabled.
+enum ClipboardHistorySearch {
+    static func predicate(groupFilter: ClipboardGroupFilter, query: String) -> Predicate<ClipboardItem> {
+        switch groupFilter {
+        case .all:
+            return #Predicate { item in
+                item.deletedAt == nil && (
+                    item.content.localizedStandardContains(query) ||
+                    item.sourceApp.localizedStandardContains(query) ||
+                    item.customTitle?.localizedStandardContains(query) == true ||
+                    item.ocrText?.localizedStandardContains(query) == true
+                )
+            }
+        case .ungrouped:
+            return #Predicate { item in
+                item.deletedAt == nil && item.isPinned == false && item.groupIDsRaw == nil && (
+                    item.content.localizedStandardContains(query) ||
+                    item.sourceApp.localizedStandardContains(query) ||
+                    item.customTitle?.localizedStandardContains(query) == true ||
+                    item.ocrText?.localizedStandardContains(query) == true
+                )
+            }
+        case .group:
+            // Candidate set only — exact membership still goes through
+            // `isInGroup(_:)` after fetching (see the `groupIDsRaw` note).
+            return #Predicate { item in
+                item.deletedAt == nil && item.isPinned == false && item.groupIDsRaw != nil && (
+                    item.content.localizedStandardContains(query) ||
+                    item.sourceApp.localizedStandardContains(query) ||
+                    item.customTitle?.localizedStandardContains(query) == true ||
+                    item.ocrText?.localizedStandardContains(query) == true
+                )
+            }
+        }
+    }
+
+    static func descriptor(groupFilter: ClipboardGroupFilter, query: String) -> FetchDescriptor<ClipboardItem> {
+        FetchDescriptor<ClipboardItem>(
+            predicate: predicate(groupFilter: groupFilter, query: query),
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+    }
+}
+
 @Model
 final class ClipboardItem {
     var id: UUID

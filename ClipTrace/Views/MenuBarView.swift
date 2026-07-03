@@ -101,6 +101,11 @@ enum MenuBarSurfaceStyle {
 
 struct MenuBarView: View {
     @State private var searchText = ""
+    /// Query actually sent to SwiftData. Trails `searchText` by a short
+    /// debounce so a fetch never runs per keystroke; clearing applies
+    /// immediately so leaving search feels instant.
+    @State private var debouncedQuery = ""
+    @State private var searchDebounce: Task<Void, Never>?
     @State private var fetchLimit = Self.pageSize
     @State private var totalActiveRecords = 0
     @State private var isLoadingMore = false
@@ -113,10 +118,6 @@ struct MenuBarView: View {
     private let surfaceStyle: MenuBarSurfaceStyle
 
     private static let pageSize = 20
-    /// Menu bar search currently expands the SwiftData fetch to the full
-    /// history. Keep the implementation available, but hide it until it can
-    /// be replaced with a bounded query that does not block the panel.
-    private static let isSearchEnabled = false
 
     init(
         surfaceStyle: MenuBarSurfaceStyle = .paper,
@@ -131,14 +132,11 @@ struct MenuBarView: View {
     }
 
     var body: some View {
-        let searching = Self.isSearchEnabled &&
-            !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-
         MenuBarContent(
             searchText: $searchText,
-            isSearchEnabled: Self.isSearchEnabled,
+            searchQuery: debouncedQuery,
             selectedGroupFilter: $selectedGroupFilter,
-            fetchLimit: searching ? max(totalActiveRecords, Self.pageSize) : fetchLimit,
+            fetchLimit: fetchLimit,
             totalActiveRecords: $totalActiveRecords,
             isLoadingMore: isLoadingMore,
             onRequestMore: loadMore,
@@ -147,8 +145,8 @@ struct MenuBarView: View {
             onOpenMain: onOpenMain,
             onOpenSettings: onOpenSettings
         )
-        .onChange(of: searchText) { _, _ in
-            resetPagination()
+        .onChange(of: searchText) { _, newValue in
+            scheduleSearch(newValue)
         }
         .onChange(of: selectedGroupFilter) { _, _ in
             resetPagination()
@@ -156,6 +154,26 @@ struct MenuBarView: View {
         .onChange(of: totalActiveRecords) { _, _ in
             clampFetchLimit()
         }
+    }
+
+    private func scheduleSearch(_ raw: String) {
+        searchDebounce?.cancel()
+        let query = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard query != debouncedQuery else { return }
+        if query.isEmpty {
+            applySearch("")
+            return
+        }
+        searchDebounce = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 180_000_000)
+            guard !Task.isCancelled else { return }
+            applySearch(query)
+        }
+    }
+
+    private func applySearch(_ query: String) {
+        debouncedQuery = query
+        resetPagination()
     }
 
     private func resetPagination() {
@@ -195,11 +213,12 @@ struct MenuBarContent: View {
     /// `.window`-style `MenuBarExtra`, and waiting for it to resign key fails
     /// when the main window opens on another Space.
     @State private var hostWindow: NSWindow?
+    @FocusState private var searchFocused: Bool
 
     private static let listHeight: CGFloat = 460
 
     @Binding var searchText: String
-    let isSearchEnabled: Bool
+    let searchQuery: String
     @Binding var selectedGroupFilter: ClipboardGroupFilter
     let fetchLimit: Int
     @Binding var totalActiveRecords: Int
@@ -212,7 +231,7 @@ struct MenuBarContent: View {
 
     init(
         searchText: Binding<String>,
-        isSearchEnabled: Bool,
+        searchQuery: String,
         selectedGroupFilter: Binding<ClipboardGroupFilter>,
         fetchLimit: Int,
         totalActiveRecords: Binding<Int>,
@@ -224,7 +243,7 @@ struct MenuBarContent: View {
         onOpenSettings: (() -> Void)? = nil
     ) {
         _searchText = searchText
-        self.isSearchEnabled = isSearchEnabled
+        self.searchQuery = searchQuery
         _selectedGroupFilter = selectedGroupFilter
         self.fetchLimit = fetchLimit
         _totalActiveRecords = totalActiveRecords
@@ -240,31 +259,14 @@ struct MenuBarContent: View {
         historyStore.items
     }
 
-    private var matchingItems: [ClipboardItem] {
-        guard isSearchEnabled else { return allItems }
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return allItems }
-
-        return allItems.filter { item in
-            item.content.localizedCaseInsensitiveContains(query) ||
-            item.sourceApp.localizedCaseInsensitiveContains(query) ||
-            item.effectiveCustomTitle?.localizedCaseInsensitiveContains(query) == true ||
-            item.ocrText?.localizedCaseInsensitiveContains(query) == true
-        }
-    }
-
     var body: some View {
-        let items = matchingItems
-        let searching = isSearchEnabled &&
-            !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let canLoadMore = !searching && allItems.count < totalActiveRecords
+        let items = allItems
+        let canLoadMore = items.count < totalActiveRecords
 
         return VStack(spacing: 0) {
             header
             groupStrip
-            if isSearchEnabled {
-                searchField
-            }
+            searchField
             Rectangle()
                 .fill(surfaceStyle.divider)
                 .frame(height: 1)
@@ -287,11 +289,25 @@ struct MenuBarContent: View {
         .menuBarWindowContainerBackground(surfaceStyle)
         .preferredColorScheme(surfaceStyle.isIsland ? .dark : nil)
         .background(HostWindowReader { hostWindow = $0 })
+        .background(
+            // Invisible ⌘F target: routes the shortcut into the search field
+            // whenever this panel is the key window.
+            Button("") { searchFocused = true }
+                .keyboardShortcut("f", modifiers: .command)
+                .opacity(0)
+                .frame(width: 0, height: 0)
+                .accessibilityHidden(true)
+        )
         .onAppear {
             reloadHistory()
         }
         .onChange(of: fetchLimit) { _, _ in
             reloadHistory()
+        }
+        .onChange(of: searchQuery) { _, _ in
+            withAnimation(.easeOut(duration: 0.15)) {
+                reloadHistory()
+            }
         }
         .onChange(of: selectedGroupFilter) { _, _ in
             reloadHistory()
@@ -370,11 +386,15 @@ struct MenuBarContent: View {
         HStack(spacing: 7) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 11))
-                .foregroundStyle(surfaceStyle.secondaryText)
+                .foregroundStyle(searchFocused ? Color.appAccent : surfaceStyle.secondaryText)
             TextField(L("common.search"), text: $searchText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
                 .foregroundStyle(surfaceStyle.primaryText)
+                .focused($searchFocused)
+                .onExitCommand {
+                    handleSearchEscape()
+                }
             if !searchText.isEmpty {
                 Button {
                     searchText = ""
@@ -384,6 +404,10 @@ struct MenuBarContent: View {
                         .foregroundStyle(surfaceStyle.tertiaryText)
                 }
                 .buttonStyle(.plain)
+            } else if !searchFocused {
+                Text(verbatim: "⌘F")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(surfaceStyle.tertiaryText)
             }
         }
         .padding(.horizontal, 8)
@@ -392,8 +416,25 @@ struct MenuBarContent: View {
             RoundedRectangle(cornerRadius: 7)
                 .fill(surfaceStyle.controlFill)
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: 7)
+                .strokeBorder(searchFocused ? Color.appAccent.opacity(0.55) : Color.clear, lineWidth: 1)
+        )
+        .animation(.easeOut(duration: 0.15), value: searchFocused)
         .padding(.horizontal, 12)
         .padding(.bottom, 10)
+    }
+
+    /// Esc in the search field: first press clears the query, second press
+    /// (field already empty) drops focus — so a double-Esc always exits
+    /// search from any state. With focus released, the next Esc reaches the
+    /// window and closes the panel as before.
+    private func handleSearchEscape() {
+        if searchText.isEmpty {
+            searchFocused = false
+        } else {
+            searchText = ""
+        }
     }
 
     private var groupStrip: some View {
@@ -405,7 +446,7 @@ struct MenuBarContent: View {
                 }
             }
             .padding(.horizontal, 12)
-            .padding(.bottom, isSearchEnabled ? 8 : 10)
+            .padding(.bottom, 8)
         }
     }
 
@@ -438,7 +479,7 @@ struct MenuBarContent: View {
             Image(systemName: "tray")
                 .font(.system(size: 24, weight: .light))
                 .foregroundStyle(surfaceStyle.secondaryText)
-            Text(isSearchEnabled && !searchText.isEmpty
+            Text(!searchQuery.isEmpty
                 ? L("menubar.empty.noMatch")
                 : L("menubar.empty.noRecords"))
                 .font(.caption)
@@ -538,7 +579,7 @@ struct MenuBarContent: View {
     }
 
     private func reloadHistory() {
-        historyStore.reload(fetchLimit: fetchLimit, groupFilter: selectedGroupFilter)
+        historyStore.reload(fetchLimit: fetchLimit, groupFilter: selectedGroupFilter, searchQuery: searchQuery)
         totalActiveRecords = historyStore.totalActiveRecords
     }
 
@@ -665,9 +706,15 @@ private final class MenuBarHistoryStore: ObservableObject {
 
     private let context = ModelContext(AppContainer.shared)
 
-    func reload(fetchLimit: Int, groupFilter: ClipboardGroupFilter) {
+    func reload(fetchLimit: Int, groupFilter: ClipboardGroupFilter, searchQuery: String = "") {
         reloadGroups()
         let limit = max(fetchLimit, 1)
+
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !query.isEmpty {
+            reloadSearch(limit: limit, groupFilter: groupFilter, query: query)
+            return
+        }
 
         switch groupFilter {
         case .all:
@@ -699,6 +746,32 @@ private final class MenuBarHistoryStore: ObservableObject {
             let matching = candidates.filter { $0.isInGroup(groupID) }
             items = Array(matching.prefix(limit))
             totalActiveRecords = matching.count
+        }
+    }
+
+    /// Search stays bounded end-to-end: the page fetch carries `limit` and the
+    /// match total comes from `fetchCount`, so even a huge history filters in
+    /// SQLite instead of being loaded and scanned in memory.
+    private func reloadSearch(limit: Int, groupFilter: ClipboardGroupFilter, query: String) {
+        switch groupFilter {
+        case .group(let groupID):
+            var descriptor = ClipboardHistorySearch.descriptor(groupFilter: groupFilter, query: query)
+            Self.keepRowPropertiesFaulted(in: &descriptor)
+            let candidates = (try? context.fetch(descriptor)) ?? []
+            let matching = candidates.filter { $0.isInGroup(groupID) }
+            items = Array(matching.prefix(limit))
+            totalActiveRecords = matching.count
+
+        default:
+            var descriptor = ClipboardHistorySearch.descriptor(groupFilter: groupFilter, query: query)
+            descriptor.fetchLimit = limit
+            Self.keepRowPropertiesFaulted(in: &descriptor)
+            items = (try? context.fetch(descriptor)) ?? []
+
+            let countDescriptor = FetchDescriptor<ClipboardItem>(
+                predicate: ClipboardHistorySearch.predicate(groupFilter: groupFilter, query: query)
+            )
+            totalActiveRecords = (try? context.fetchCount(countDescriptor)) ?? items.count
         }
     }
 

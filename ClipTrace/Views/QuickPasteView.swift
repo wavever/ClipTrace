@@ -12,6 +12,15 @@ struct QuickPasteView: View {
     /// Row highlighted by the keyboard flow (↑/↓). Distinct from `selectedIDs`:
     /// focus just marks where the cursor is; the commit key acts on it.
     @State private var focusedID: UUID? = nil
+    /// Live text in the search field. Trails into `state.searchQuery` after a
+    /// short debounce so a SwiftData fetch never runs per keystroke; clearing
+    /// applies immediately so leaving search feels instant.
+    @State private var searchDraft = ""
+    @State private var searchDebounce: Task<Void, Never>?
+    @FocusState private var searchFocused: Bool
+    /// Bumped to hand first-responder back to the key catcher when search
+    /// focus ends — otherwise ↑/↓ would go nowhere after Esc.
+    @State private var keyClaimToken = 0
 
     @ObservedObject private var keyStore = QuickPasteKeyStore.shared
 
@@ -36,6 +45,7 @@ struct QuickPasteView: View {
             if !sortedGroups.isEmpty {
                 groupStrip
             }
+            searchField
             Divider().opacity(0.4)
             list
             Divider().opacity(0.4)
@@ -47,6 +57,7 @@ struct QuickPasteView: View {
         )
         .background(
             QuickPasteKeyCatcher(
+                claimFocusToken: keyClaimToken,
                 onLeft: { switchGroup(by: -1) },
                 onRight: { switchGroup(by: 1) },
                 onUp: { moveFocus(by: -1) },
@@ -54,6 +65,14 @@ struct QuickPasteView: View {
                 onToggleSelect: { toggleFocusedSelection() },
                 onCommit: { plainText in commitFromKeyboard(plainText: plainText) }
             )
+        )
+        .background(
+            // Invisible ⌘F target: routes the shortcut into the search field.
+            Button("") { searchFocused = true }
+                .keyboardShortcut("f", modifiers: .command)
+                .opacity(0)
+                .frame(width: 0, height: 0)
+                .accessibilityHidden(true)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -69,7 +88,8 @@ struct QuickPasteView: View {
             // The panel window is now reused across invocations for speed.
             // Reset transient selection/focus whenever the freshly-fetched
             // history snapshot is swapped in, so stale selections from the
-            // previous popup session don't leak into the next one.
+            // previous popup session don't leak into the next one. During
+            // search this doubles as "focus lands on the first match".
             selectedIDs.removeAll(keepingCapacity: true)
             hoverID = nil
             focusedID = ids.first
@@ -78,6 +98,12 @@ struct QuickPasteView: View {
             selectedIDs.removeAll(keepingCapacity: true)
             hoverID = nil
             focusedID = visualItems.first?.id
+        }
+        .onChange(of: searchDraft) { _, draft in
+            scheduleSearch(draft)
+        }
+        .onChange(of: state.session) { _, _ in
+            resetSearchSession()
         }
     }
 
@@ -121,6 +147,60 @@ struct QuickPasteView: View {
             .padding(.horizontal, 12)
             .padding(.bottom, 8)
         }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundStyle(searchFocused ? Color.appAccent : .secondary)
+            TextField(L("common.search"), text: $searchDraft)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .focused($searchFocused)
+                .onSubmit {
+                    // Keyboard-only flow: type to filter, ⏎ pastes the
+                    // focused (by default the first) match without leaving
+                    // the field.
+                    commitFromKeyboard(plainText: false)
+                }
+                .onExitCommand {
+                    handleSearchEscape()
+                }
+                .background(
+                    SearchArrowRouter(
+                        isActive: { searchFocused },
+                        onMove: { delta in moveFocus(by: delta) }
+                    )
+                )
+            if !searchDraft.isEmpty {
+                Button {
+                    searchDraft = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+            } else if !searchFocused {
+                Text(verbatim: "⌘F")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(Color.secondary.opacity(0.12))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 7)
+                .strokeBorder(searchFocused ? Color.appAccent.opacity(0.55) : Color.clear, lineWidth: 1)
+        )
+        .animation(.easeOut(duration: 0.15), value: searchFocused)
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
     }
 
     private var list: some View {
@@ -174,14 +254,19 @@ struct QuickPasteView: View {
 
     private var emptyState: some View {
         VStack(spacing: 8) {
-            Image(systemName: "tray")
+            Image(systemName: !state.searchQuery.isEmpty ? "magnifyingglass" : "tray")
                 .font(.system(size: 24, weight: .light))
-            Text(state.selectedGroupFilter.isAll ? L("quickpaste.emptyClipboard") : L("quickpaste.emptyGroup"))
+            Text(emptyStateText)
                 .font(.system(size: 12))
         }
         .foregroundStyle(.secondary)
         .frame(maxWidth: .infinity, minHeight: 260)
         .padding(20)
+    }
+
+    private var emptyStateText: String {
+        if !state.searchQuery.isEmpty { return L("quickpaste.emptySearch") }
+        return state.selectedGroupFilter.isAll ? L("quickpaste.emptyClipboard") : L("quickpaste.emptyGroup")
     }
 
     private func row(for item: ClipboardItem) -> some View {
@@ -288,7 +373,9 @@ struct QuickPasteView: View {
                     .frame(minWidth: 56)
             }
             .buttonStyle(PaperActionButtonStyle(role: .plain))
-            .keyboardShortcut(.escape, modifiers: [])
+            // While the search field owns the keyboard, Esc belongs to it
+            // (clear → exit search); only afterwards may Esc close the panel.
+            .escapeShortcut(enabled: !searchFocused)
 
             Spacer()
 
@@ -309,6 +396,55 @@ struct QuickPasteView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+    }
+
+    // MARK: - Search flow
+
+    private func scheduleSearch(_ draft: String) {
+        searchDebounce?.cancel()
+        let query = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard query != state.searchQuery else { return }
+        if query.isEmpty {
+            applySearch("")
+            return
+        }
+        searchDebounce = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 160_000_000)
+            guard !Task.isCancelled else { return }
+            applySearch(query)
+        }
+    }
+
+    private func applySearch(_ query: String) {
+        withAnimation(.easeOut(duration: 0.14)) {
+            state.updateSearch(query)
+        }
+    }
+
+    /// Esc in the search field: first press clears the query, second press
+    /// (field already empty) leaves search — a double-Esc always exits from
+    /// any state. Only after that does Esc reach the Cancel button and close
+    /// the panel, as before.
+    private func handleSearchEscape() {
+        if searchDraft.isEmpty {
+            exitSearch()
+        } else {
+            searchDraft = ""
+        }
+    }
+
+    private func exitSearch() {
+        searchFocused = false
+        keyClaimToken &+= 1
+    }
+
+    /// The panel window is reused across invocations, so scrub any search
+    /// left over from the previous session and give the key catcher back
+    /// first-responder before the panel becomes visible again.
+    private func resetSearchSession() {
+        searchDebounce?.cancel()
+        searchDraft = ""
+        exitSearch()
     }
 
     // MARK: - Keyboard flow
@@ -397,6 +533,9 @@ struct QuickPasteView: View {
 /// (plain keys) and `performKeyEquivalent` (modifier combos) so any recorded
 /// shortcut works regardless of whether AppKit routes it as a key equivalent.
 struct QuickPasteKeyCatcher: NSViewRepresentable {
+    /// Bumped by the host to re-claim first responder (e.g. when search focus
+    /// ends) so the arrow-key flow resumes without rebuilding the view.
+    var claimFocusToken: Int = 0
     var onLeft: () -> Void
     var onRight: () -> Void
     var onUp: () -> Void
@@ -407,6 +546,7 @@ struct QuickPasteKeyCatcher: NSViewRepresentable {
 
     func makeNSView(context: Context) -> KeyView {
         let view = KeyView()
+        view.claimFocusToken = claimFocusToken
         view.onLeft = onLeft
         view.onRight = onRight
         view.onUp = onUp
@@ -423,9 +563,19 @@ struct QuickPasteKeyCatcher: NSViewRepresentable {
         nsView.onDown = onDown
         nsView.onToggleSelect = onToggleSelect
         nsView.onCommit = onCommit
+        if nsView.claimFocusToken != claimFocusToken {
+            nsView.claimFocusToken = claimFocusToken
+            // Deferred: updateNSView runs mid view-update, and yanking first
+            // responder synchronously would mutate @FocusState re-entrantly.
+            DispatchQueue.main.async { [weak nsView] in
+                guard let nsView, let window = nsView.window else { return }
+                window.makeFirstResponder(nsView)
+            }
+        }
     }
 
     final class KeyView: NSView {
+        var claimFocusToken = 0
         var onLeft: (() -> Void)?
         var onRight: (() -> Void)?
         var onUp: (() -> Void)?
@@ -438,8 +588,8 @@ struct QuickPasteKeyCatcher: NSViewRepresentable {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             // Grab first responder once the panel exists so arrow keys land
-            // here instead of beeping. The panel has no text fields, so it is
-            // safe to hold focus for the panel's whole lifetime.
+            // here instead of beeping. The search field can take focus away
+            // (⌘F); the host hands it back via `claimFocusToken` on exit.
             DispatchQueue.main.async { [weak self] in
                 guard let self, let window = self.window else { return }
                 window.makeFirstResponder(self)
@@ -514,6 +664,71 @@ struct QuickPasteKeyCatcher: NSViewRepresentable {
         override func performKeyEquivalent(with event: NSEvent) -> Bool {
             if handle(event) { return true }
             return super.performKeyEquivalent(with: event)
+        }
+    }
+}
+
+/// Window-local key monitor that keeps ↑/↓ driving the list highlight while
+/// the search field owns the keyboard — the field editor would otherwise
+/// swallow the arrows for caret movement, killing the type-then-pick flow.
+/// Only consumes the two arrow keys and only while `isActive`; everything
+/// else flows through to normal text editing untouched.
+private struct SearchArrowRouter: NSViewRepresentable {
+    var isActive: () -> Bool
+    /// -1 for ↑, +1 for ↓.
+    var onMove: (Int) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        context.coordinator.isActive = isActive
+        context.coordinator.onMove = onMove
+        context.coordinator.install()
+        return NSView()
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.isActive = isActive
+        context.coordinator.onMove = onMove
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.uninstall()
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator {
+        var isActive: (() -> Bool)?
+        var onMove: ((Int) -> Void)?
+        private var monitor: Any?
+
+        func install() {
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self, self.isActive?() == true else { return event }
+                switch event.keyCode {
+                case 126: self.onMove?(-1); return nil // ↑
+                case 125: self.onMove?(1); return nil  // ↓
+                default: return event
+                }
+            }
+        }
+
+        func uninstall() {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+        }
+    }
+}
+
+private extension View {
+    /// Applies the Escape shortcut only when `enabled`, so the focused search
+    /// field can claim Esc (clear → exit) without the Cancel button closing
+    /// the panel on the first press.
+    @ViewBuilder
+    func escapeShortcut(enabled: Bool) -> some View {
+        if enabled {
+            keyboardShortcut(.escape, modifiers: [])
+        } else {
+            self
         }
     }
 }
