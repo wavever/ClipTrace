@@ -161,6 +161,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async {
             QuickPasteController.shared.prewarm()
         }
+        notifyIfStoreWasReset()
 
         // AppKit resets the activation policy back to the bundle default
         // (`.regular`, since we ship no `LSUIElement`) when the last standard
@@ -385,6 +386,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             ?? AppearanceTheme.system.rawValue
         let theme = AppearanceTheme(rawValue: raw) ?? .system
         NSApp.appearance = theme.nsAppearance
+    }
+
+    /// If `AppContainer` had to discard an unopenable store at launch, tell the
+    /// user once (their history was reset but a backup was kept), then clear the
+    /// flag so the notice doesn't repeat. Deferred so the toast panel has a
+    /// visible window to anchor to.
+    private func notifyIfStoreWasReset() {
+        let defaults = UserDefaults.standard
+        guard defaults.bool(forKey: AppContainer.didResetStoreDefaultsKey) else { return }
+        defaults.set(false, forKey: AppContainer.didResetStoreDefaultsKey)
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            ToastCenter.shared.show(
+                L("store.reset.notice"),
+                systemImage: "exclamationmark.arrow.circlepath",
+                tint: .orange,
+                duration: 5
+            )
+        }
     }
 
     private func setupGlobalHotKeys() {

@@ -17,16 +17,45 @@ enum AppContainer {
     private static let sidecarSuffixes = ["", "-wal", "-shm"]
     private static let scannedStoreExtensions = ["store", "sqlite"]
 
+    /// Set to `true` when `shared` had to discard an unopenable store and start
+    /// fresh. The app reads it once at launch to tell the user their history was
+    /// reset (a backup is kept under `StoreBackups/`), then clears it.
+    static let didResetStoreDefaultsKey = "didResetClipboardStore"
+
     static let shared: ModelContainer = {
         do {
             return try makeContainer()
         } catch {
-            fatalError("Failed to open ModelContainer: \(error)")
+            // The store can't be opened by this build — usually a schema *newer*
+            // than ours (an older binary launched after a newer one migrated the
+            // shared store) or on-disk corruption. The old `fatalError` here made
+            // that an unrecoverable launch crash on every start; instead move the
+            // unopenable store aside (data preserved, not deleted) and rebuild a
+            // clean one so the app still launches.
+            NSLog(
+                "ClipTrace: opening ModelContainer failed (%@) — quarantining store and rebuilding",
+                String(describing: error)
+            )
+            quarantineUnopenableStore()
+            UserDefaults.standard.set(true, forKey: didResetStoreDefaultsKey)
+            do {
+                // Skip legacy recovery on the rebuild: the environment is already
+                // degraded, and re-scanning could pull another incompatible store
+                // straight back into a crash loop. A clean empty store is enough
+                // to get the user back in — the quarantined data stays on disk.
+                return try makeContainer(recoverLegacy: false)
+            } catch {
+                // Even a fresh store won't open — the environment is broken (no
+                // write access, disk full). Nothing left to try.
+                fatalError("Failed to open ModelContainer after resetting the store: \(error)")
+            }
         }
     }()
 
-    static func makeContainer() throws -> ModelContainer {
-        try recoverLegacyStoreIfNeeded()
+    static func makeContainer(recoverLegacy: Bool = true) throws -> ModelContainer {
+        if recoverLegacy {
+            try recoverLegacyStoreIfNeeded()
+        }
 
         let schema = Schema([ClipboardItem.self, ClipboardGroup.self])
         let configuration = ModelConfiguration(
@@ -35,9 +64,60 @@ enum AppContainer {
             url: storeURL
         )
         let container = try ModelContainer(for: schema, configurations: [configuration])
-        mergeLegacyStoresIfNeeded(into: container)
-        migrateLegacyGroupAssignments(in: container)
+        if recoverLegacy {
+            mergeLegacyStoresIfNeeded(into: container)
+            migrateLegacyGroupAssignments(in: container)
+        }
         return container
+    }
+
+    /// Move an unopenable store (plus its `-wal`/`-shm` sidecars and the Core
+    /// Data external-storage `_SUPPORT` folders) into a timestamped
+    /// `StoreBackups/` subfolder so the next `makeContainer()` can create a clean
+    /// database. Files are *moved*, never deleted, so the user can recover their
+    /// history manually. The backed-up store file gets a non-`.store` extension
+    /// so `recoverLegacyStoreIfNeeded` can't re-adopt the very file we just
+    /// quarantined.
+    private static func quarantineUnopenableStore() {
+        let fileManager = FileManager.default
+        let store = storeURL
+        let directory = store.deletingLastPathComponent()
+        let backupDirectory = directory
+            .appendingPathComponent(backupFolderName, isDirectory: true)
+            .appendingPathComponent("unopenable-\(timestamp())", isDirectory: true)
+
+        // Every on-disk artifact belonging to the store. Core Data names the
+        // external-storage folder after the store's *stem* (".default_SUPPORT"),
+        // so cover that plus the full-name variants defensively.
+        let name = store.lastPathComponent            // "default.store"
+        let stem = store.deletingPathExtension().lastPathComponent  // "default"
+        let artifacts: [(source: URL, backupName: String)] = [
+            (store, name + ".quarantine"),
+            (URL(fileURLWithPath: store.path + "-wal"), name + "-wal"),
+            (URL(fileURLWithPath: store.path + "-shm"), name + "-shm"),
+            (directory.appendingPathComponent(".\(stem)_SUPPORT", isDirectory: true), ".\(stem)_SUPPORT"),
+            (directory.appendingPathComponent("\(name)_SUPPORT", isDirectory: true), "\(name)_SUPPORT"),
+            (directory.appendingPathComponent(".\(name)_SUPPORT", isDirectory: true), ".\(name)_SUPPORT")
+        ]
+
+        let present = artifacts.filter { fileManager.fileExists(atPath: $0.source.path) }
+        guard !present.isEmpty else { return }
+
+        let haveBackupDir = (try? fileManager.createDirectory(
+            at: backupDirectory,
+            withIntermediateDirectories: true
+        )) != nil
+
+        for artifact in present {
+            let destination = backupDirectory.appendingPathComponent(artifact.backupName)
+            if haveBackupDir, (try? fileManager.moveItem(at: artifact.source, to: destination)) != nil {
+                continue
+            }
+            // Couldn't back it up (e.g. backup dir creation failed) — delete so
+            // the same unreadable file doesn't block the rebuild.
+            NSLog("ClipTrace: could not back up %@ — deleting so the store can rebuild", artifact.source.lastPathComponent)
+            try? fileManager.removeItem(at: artifact.source)
+        }
     }
 
     /// One-time fold of the pre-multi-group `groupID` field into the
