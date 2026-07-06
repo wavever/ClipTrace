@@ -111,6 +111,15 @@ extension Color {
             appearance.bestMatch(from: [.darkAqua, .vibrantDark]) != nil ? dark : light
         })
     }
+
+    /// AppKit handle for the page color, for the rare spots that must paint an
+    /// `NSWindow` directly (SwiftUI backgrounds can't reach the window chrome
+    /// the system draws around the menu-bar panel on macOS 26).
+    static var appPaperNSColor: NSColor {
+        NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .vibrantDark]) != nil ? paperDark : paperLight
+        }
+    }
 }
 
 /// Non-modal update reminder shown beside `CaptureToggle` in the main window

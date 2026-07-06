@@ -282,13 +282,24 @@ struct MenuBarContent: View {
                 .frame(height: 1)
             footer
         }
-        .frame(width: 340)
+        // The menu-bar window sizes itself to this fixed width; inside the
+        // island the surface dictates the size, so fill it instead — a fixed
+        // frame there leaves black bands between the content and the surface.
+        .frame(width: surfaceStyle.isIsland ? nil : 340)
+        .frame(
+            maxWidth: surfaceStyle.isIsland ? .infinity : nil,
+            maxHeight: surfaceStyle.isIsland ? .infinity : nil,
+            alignment: .top
+        )
         .background {
             panelBackground
         }
         .menuBarWindowContainerBackground(surfaceStyle)
         .preferredColorScheme(surfaceStyle.isIsland ? .dark : nil)
-        .background(HostWindowReader { hostWindow = $0 })
+        .background(HostWindowReader { window in
+            hostWindow = window
+            applyWindowChrome(to: window)
+        })
         .background(
             // Invisible ⌘F target: routes the shortcut into the search field
             // whenever this panel is the key window.
@@ -328,6 +339,19 @@ struct MenuBarContent: View {
     private var panelBackground: some View {
         MenuBarPanelBackground(surfaceStyle: surfaceStyle)
             .ignoresSafeArea()
+    }
+
+    /// On macOS 26 the `MenuBarExtra` window reserves bands above and below
+    /// the content — the stretch that carries the window's rounded corners —
+    /// which neither `.background` nor `containerBackground` paints anymore,
+    /// so they show through as transparent slots. Painting the hosting window
+    /// itself keeps the paper surface continuous under whatever chrome the
+    /// system adds. The island variant must not paint: its hosting panel stays
+    /// transparent around the black island surface.
+    private func applyWindowChrome(to window: NSWindow?) {
+        guard surfaceStyle == .paper, let window else { return }
+        guard #available(macOS 26.0, *) else { return }
+        window.backgroundColor = Color.appPaperNSColor
     }
 
     private var header: some View {
@@ -485,7 +509,11 @@ struct MenuBarContent: View {
                 .font(.caption)
                 .foregroundStyle(surfaceStyle.secondaryText)
         }
-        .frame(maxWidth: .infinity, minHeight: Self.listHeight)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: Self.listHeight,
+            maxHeight: surfaceStyle.isIsland ? .infinity : nil
+        )
         .padding(20)
     }
 
@@ -502,7 +530,10 @@ struct MenuBarContent: View {
         }
         // Use a fixed height, not just `maxHeight`: the menu panel must grow
         // even when the current history has fewer rows than the visible area.
-        .frame(height: Self.listHeight)
+        // The island body has a fixed size already, so the list stretches to
+        // fill it there instead.
+        .frame(height: surfaceStyle.isIsland ? nil : Self.listHeight)
+        .frame(maxHeight: surfaceStyle.isIsland ? .infinity : nil)
     }
 
     @ViewBuilder
