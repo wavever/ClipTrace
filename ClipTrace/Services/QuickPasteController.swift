@@ -189,6 +189,27 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
         panel.makeKey()
 
         self.panel = panel
+
+        // Since macOS 14, activation is cooperative and completes a runloop
+        // turn (or more) after the request, so the `makeKey()` above can run
+        // while the previous app is still active — the panel shows but stays
+        // deaf to the keyboard. In practice this bites on external displays,
+        // where the timing loses more often. Re-assert until key sticks.
+        reassertKey(panel)
+    }
+
+    /// Companion to `show`: retries activate + makeKey for a few ticks, since
+    /// one attempt isn't guaranteed to land under cooperative activation.
+    /// Stops as soon as the panel is key or has been dismissed.
+    private func reassertKey(_ panel: NSPanel, attempt: Int = 0) {
+        guard attempt < 6 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { [weak self] in
+            guard let self, self.panel === panel,
+                  panel.isVisible, !panel.isKeyWindow else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            panel.makeKey()
+            self.reassertKey(panel, attempt: attempt + 1)
+        }
     }
 
     /// Lazily build the floating window once and reuse it. Creating a fresh
@@ -211,6 +232,12 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
         panel.isFloatingPanel = true
         panel.level = .floating
         panel.hidesOnDeactivate = false
+        // With “Displays have separate Spaces” every screen runs its own
+        // active Space. A panel pinned to the Space it was first shown on can
+        // be summoned on another display yet stay un-keyable there. Joining
+        // all Spaces keeps it on whichever Space is active where it appears,
+        // fullscreen apps included.
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
