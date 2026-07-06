@@ -508,15 +508,6 @@ private struct GeneralSection: View {
             set: { videoPreviewModeRaw = $0.rawValue }
         )
     }
-    private var dynamicIslandCanReplaceMenuBar: Bool {
-        dynamicIslandEnabled && DynamicIslandController.hasNotchedDisplay
-    }
-    private var menuBarIconBinding: Binding<Bool> {
-        Binding(
-            get: { dynamicIslandCanReplaceMenuBar ? false : menuBarIcon },
-            set: { menuBarIcon = $0 }
-        )
-    }
     // Read/write the @Observable singleton directly so the swatch ring also
     // re-evaluates on selection, and external writes (e.g. CLI / tests) flow
     // back into the UI.
@@ -614,17 +605,13 @@ private struct GeneralSection: View {
                     icon: "menubar.rectangle",
                     iconTint: .appAccent,
                     title: L("settings.window.menuBarIcon"),
-                    subtitle: dynamicIslandCanReplaceMenuBar
-                        ? L("settings.window.menuBarIcon.disabledByDynamicIsland")
-                        : L("settings.window.menuBarIcon.subtitle")
+                    subtitle: L("settings.window.menuBarIcon.subtitle")
                 ) {
-                    Toggle("", isOn: menuBarIconBinding)
+                    Toggle("", isOn: $menuBarIcon)
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .tint(.appAccent)
-                        .disabled(dynamicIslandCanReplaceMenuBar)
                 }
-                .opacity(dynamicIslandCanReplaceMenuBar ? 0.58 : 1)
                 SettingsRow(
                     icon: "eye.slash",
                     iconTint: .appAccent,

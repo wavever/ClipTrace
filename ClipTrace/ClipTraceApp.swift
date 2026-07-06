@@ -99,7 +99,7 @@ struct ClipTraceApp: App {
         .defaultSize(width: 1000, height: 640)
         .windowStyle(.hiddenTitleBar)
 
-        MenuBarExtra("ClipBoard", image: "MenuBarIcon", isInserted: menuBarInsertionBinding) {
+        MenuBarExtra("ClipBoard", image: "MenuBarIcon", isInserted: $menuBarIcon) {
             MenuBarView()
                 .environmentObject(clipboardVM)
                 .modelContainer(AppContainer.shared)
@@ -108,28 +108,6 @@ struct ClipTraceApp: App {
                 .onAppear { applyAppearance() }
         }
         .menuBarExtraStyle(.window)
-    }
-
-    /// Dynamic Island is a replacement entry point for notched MacBooks. Keep
-    /// the real menu-bar extra suppressed only while that built-in notched
-    /// display is present, so clamshell/external-only setups still have a menu.
-    private var menuBarInsertionBinding: Binding<Bool> {
-        Binding(
-            get: {
-                let islandCanReplaceMenuBar = dynamicIslandEnabled
-                    && DynamicIslandController.hasNotchedDisplay
-                return menuBarIcon && !islandCanReplaceMenuBar
-            },
-            set: { inserted in
-                if inserted {
-                    dynamicIslandEnabled = false
-                    DynamicIslandController.shared.setEnabled(false)
-                    menuBarIcon = true
-                } else if !(dynamicIslandEnabled && DynamicIslandController.hasNotchedDisplay) {
-                    menuBarIcon = false
-                }
-            }
-        )
     }
 
     /// Pin (or release) the app-wide appearance. Driving `NSApp.appearance`
