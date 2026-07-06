@@ -407,3 +407,287 @@ enum VideoPreviewMode: String, CaseIterable, Identifiable {
         }
     }
 }
+
+// MARK: - Dwell preview (menu-bar panel & Quick Paste panel)
+
+/// Persisted knobs for the dwell-to-preview behavior on the two lightweight
+/// panels. One shared store so Settings and both panels observe the same
+/// source of truth without threading bindings through the view trees.
+@MainActor
+final class HoverPreviewSettings: ObservableObject {
+    static let shared = HoverPreviewSettings()
+
+    @Published var menuBarEnabled: Bool {
+        didSet { UserDefaults.standard.set(menuBarEnabled, forKey: "menuBarHoverPreviewEnabled") }
+    }
+    @Published var menuBarDelay: Double {
+        didSet { UserDefaults.standard.set(menuBarDelay, forKey: "menuBarHoverPreviewDelay") }
+    }
+    @Published var quickPasteEnabled: Bool {
+        didSet { UserDefaults.standard.set(quickPasteEnabled, forKey: "quickPasteHoverPreviewEnabled") }
+    }
+    @Published var quickPasteDelay: Double {
+        didSet { UserDefaults.standard.set(quickPasteDelay, forKey: "quickPasteHoverPreviewDelay") }
+    }
+
+    private init() {
+        let defaults = UserDefaults.standard
+        menuBarEnabled = defaults.object(forKey: "menuBarHoverPreviewEnabled") as? Bool ?? true
+        menuBarDelay = defaults.object(forKey: "menuBarHoverPreviewDelay") as? Double ?? 1.0
+        quickPasteEnabled = defaults.object(forKey: "quickPasteHoverPreviewEnabled") as? Bool ?? true
+        quickPasteDelay = defaults.object(forKey: "quickPasteHoverPreviewDelay") as? Double ?? 1.0
+    }
+}
+
+/// Model behind the floating preview window, so the hosted SwiftUI tree can
+/// swap items in place (crossfade) instead of tearing the window down.
+@MainActor
+private final class HoverPreviewState: ObservableObject {
+    @Published var item: ClipboardItem?
+}
+
+private struct HoverPreviewSurface: View {
+    @ObservedObject var state: HoverPreviewState
+
+    var body: some View {
+        ZStack {
+            if let item = state.item {
+                PreviewPopover(item: item)
+                    .id(item.id)
+                    .transition(.opacity)
+            }
+        }
+        .frame(
+            width: HoverPreviewController.surfaceSize.width,
+            height: HoverPreviewController.surfaceSize.height
+        )
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.appPaper)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .animation(.easeOut(duration: 0.14), value: state.item?.id)
+    }
+}
+
+/// Drives the dwell-to-preview window for the menu-bar panel and the Quick
+/// Paste panel. The window is deliberately *never* key and ignores the mouse:
+/// both host panels dismiss themselves on `windowDidResignKey`, so a preview
+/// surface that could steal key status would close the very panel it belongs
+/// to. It therefore floats beside the host as a purely visual sibling.
+@MainActor
+final class HoverPreviewController {
+    static let shared = HoverPreviewController()
+    static let surfaceSize = NSSize(width: 420, height: 340)
+
+    private let state = HoverPreviewState()
+    private var panel: NSPanel?
+    private var dwellTask: Task<Void, Never>?
+    private var graceTask: Task<Void, Never>?
+    /// Row currently pending or presented; exits for any other row are stale
+    /// (row-to-row moves can deliver the old row's exit after the new row's
+    /// enter) and must not cancel the fresh dwell timer.
+    private var activeItemID: UUID?
+    /// Bumped on every present/hide so a fade-out completion from a superseded
+    /// hide never orders out a window that has been re-shown meanwhile.
+    private var generation = 0
+    private weak var hostWindow: NSWindow?
+    private var hostResignObserver: NSObjectProtocol?
+
+    private init() {}
+
+    /// Ask for a preview of `item` after `delay`. While a preview is already
+    /// on screen the swap happens immediately (QuickLook-style browsing);
+    /// otherwise the dwell timer restarts, so sweeping across rows never fires.
+    func schedule(item: ClipboardItem, host: NSWindow?, after delay: TimeInterval) {
+        graceTask?.cancel()
+        graceTask = nil
+
+        // Protected clips stay redacted inside the popover, but auto-popping
+        // an enlarged view of masked content still defeats the point of the
+        // masking — sensitive rows simply don't auto-preview. Prefix-bounded
+        // so a hover never runs the detector over megabytes of text.
+        if ContentProtector.redact(String(item.content.prefix(4000))).isProtected {
+            let previous = activeItemID
+            activeItemID = nil
+            dwellTask?.cancel()
+            dwellTask = nil
+            if previous != nil { beginGraceHide() }
+            return
+        }
+
+        activeItemID = item.id
+        if isPresented {
+            dwellTask?.cancel()
+            dwellTask = nil
+            present(item: item, host: host)
+            return
+        }
+
+        dwellTask?.cancel()
+        dwellTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self?.present(item: item, host: host)
+        }
+    }
+
+    /// Hover/focus left `itemID` without landing on another row. Ignored when
+    /// a newer row already took over; otherwise the pending timer dies and a
+    /// visible preview fades after a short grace (which absorbs the hover gap
+    /// between adjacent rows without flickering the window off and on).
+    func noteExit(itemID: UUID) {
+        guard activeItemID == itemID else { return }
+        activeItemID = nil
+        dwellTask?.cancel()
+        dwellTask = nil
+        beginGraceHide()
+    }
+
+    /// Immediate dismissal — host panel is closing or committing.
+    func hide() {
+        dwellTask?.cancel()
+        dwellTask = nil
+        graceTask?.cancel()
+        graceTask = nil
+        activeItemID = nil
+        fadeOut()
+    }
+
+    private var isPresented: Bool {
+        panel?.isVisible == true && state.item != nil
+    }
+
+    private func beginGraceHide() {
+        guard isPresented else { return }
+        graceTask?.cancel()
+        graceTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            guard !Task.isCancelled else { return }
+            self?.fadeOut()
+        }
+    }
+
+    private func present(item: ClipboardItem, host: NSWindow?) {
+        guard let host, host.isVisible else { return }
+        let panel = preparePanel()
+        attachHostObserver(to: host)
+        generation &+= 1
+
+        let alreadyShowing = isPresented
+        state.item = item
+        position(panel, beside: host)
+
+        if !alreadyShowing {
+            panel.alphaValue = 0
+            panel.level = host.level
+            panel.order(.above, relativeTo: host.windowNumber)
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.16
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().alphaValue = 1
+        }
+    }
+
+    private func fadeOut() {
+        guard let panel, panel.isVisible else {
+            state.item = nil
+            return
+        }
+        generation &+= 1
+        let expected = generation
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.14
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().alphaValue = 0
+        }, completionHandler: {
+            MainActor.assumeIsolated { [weak self] in
+                guard let self, self.generation == expected else { return }
+                self.panel?.orderOut(nil)
+                self.state.item = nil
+                self.detachHostObserver()
+            }
+        })
+    }
+
+    /// Anchor beside the host panel: to its right when the screen has room,
+    /// flipped to the left otherwise, vertically centered and clamped so the
+    /// window never spills off the visible frame.
+    private func position(_ panel: NSPanel, beside host: NSWindow) {
+        let size = Self.surfaceSize
+        let hostFrame = host.frame
+        let visible = (host.screen ?? NSScreen.main)?.visibleFrame ?? hostFrame
+        let gap: CGFloat = 10
+
+        var x = hostFrame.maxX + gap
+        if x + size.width > visible.maxX {
+            x = hostFrame.minX - size.width - gap
+        }
+        x = min(max(visible.minX, x), visible.maxX - size.width)
+
+        var y = hostFrame.midY - size.height / 2
+        y = min(max(visible.minY, y), visible.maxY - size.height)
+
+        panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
+    }
+
+    /// Built once and reused (same rationale as the Quick Paste panel: a fresh
+    /// hosting tree per dwell would make the first preview feel sluggish).
+    private func preparePanel() -> NSPanel {
+        if let panel { return panel }
+
+        let hosting = NSHostingController(rootView: HoverPreviewSurface(state: state))
+        hosting.view.wantsLayer = true
+
+        let panel = NSPanel(
+            contentRect: NSRect(origin: .zero, size: Self.surfaceSize),
+            styleMask: [.nonactivatingPanel, .borderless],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isFloatingPanel = true
+        panel.level = .floating
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.isReleasedWhenClosed = false
+        // The whole point: a borderless NSPanel reports canBecomeKey == false
+        // (we do NOT use KeyablePanel here), and ignoring the mouse means the
+        // host panel keeps hover/keyboard even if the preview overlaps it.
+        panel.ignoresMouseEvents = true
+        panel.contentViewController = hosting
+        self.panel = panel
+        return panel
+    }
+
+    /// The host panels close on losing key status; the preview must never
+    /// outlive them, even when no explicit hide() call reaches us (e.g. the
+    /// menu-bar window closing itself on a click elsewhere).
+    private func attachHostObserver(to host: NSWindow) {
+        guard hostWindow !== host else { return }
+        detachHostObserver()
+        hostWindow = host
+        hostResignObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification,
+            object: host,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.hide() }
+        }
+    }
+
+    private func detachHostObserver() {
+        if let hostResignObserver {
+            NotificationCenter.default.removeObserver(hostResignObserver)
+        }
+        hostResignObserver = nil
+        hostWindow = nil
+    }
+}

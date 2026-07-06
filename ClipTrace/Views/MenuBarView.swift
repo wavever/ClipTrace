@@ -207,6 +207,7 @@ struct MenuBarContent: View {
     @EnvironmentObject var vm: ClipboardViewModel
     @Environment(\.openWindow) private var openWindow
     @ObservedObject private var updater = UpdaterService.shared
+    @ObservedObject private var hoverPreview = HoverPreviewSettings.shared
     @StateObject private var historyStore = MenuBarHistoryStore()
     /// The panel hosting this view, captured so the open-main/settings actions
     /// can dismiss it deterministically — SwiftUI exposes no dismiss API for a
@@ -534,6 +535,10 @@ struct MenuBarContent: View {
         // fill it there instead.
         .frame(height: surfaceStyle.isIsland ? nil : Self.listHeight)
         .frame(maxHeight: surfaceStyle.isIsland ? .infinity : nil)
+        // The resign-key observer inside the controller covers normal panel
+        // dismissal; this covers the view being torn down while a preview is
+        // still pending or on screen.
+        .onDisappear { HoverPreviewController.shared.hide() }
     }
 
     @ViewBuilder
@@ -550,8 +555,26 @@ struct MenuBarContent: View {
             surfaceStyle: surfaceStyle,
             onCopy: { vm.copyToClipboard(item) },
             onCopyPlainText: { vm.copyAsPlainText(item) },
-            onTogglePin: { togglePin(item) }
+            onTogglePin: { togglePin(item) },
+            onHoverChange: { hovering in handleRowHover(item, hovering: hovering) }
         )
+    }
+
+    /// Dwell-to-preview: hovering a row for the configured delay pops the full
+    /// preview beside the panel; leaving without entering another row fades it
+    /// out. The controller matches exits by row so out-of-order hover events
+    /// during row-to-row moves can't kill the fresh timer.
+    private func handleRowHover(_ item: ClipboardItem, hovering: Bool) {
+        guard hoverPreview.menuBarEnabled else { return }
+        if hovering {
+            HoverPreviewController.shared.schedule(
+                item: item,
+                host: hostWindow,
+                after: hoverPreview.menuBarDelay
+            )
+        } else {
+            HoverPreviewController.shared.noteExit(itemID: item.id)
+        }
     }
 
     private var loadMoreTrigger: some View {
@@ -908,6 +931,10 @@ struct MenuBarRow: View {
     let onCopy: () -> Void
     var onCopyPlainText: (() -> Void)? = nil
     var onTogglePin: () -> Void = {}
+    /// Reports hover transitions outward so the host can drive the dwell
+    /// preview — the row itself has no access to the panel window the preview
+    /// window anchors to.
+    var onHoverChange: ((Bool) -> Void)? = nil
 
     @State private var isHovered = false
     @State private var copySucceeded = false
@@ -989,8 +1016,16 @@ struct MenuBarRow: View {
         )
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { triggerCopy() }
-        .onHover { isHovered = $0 }
-        .onDisappear { resetTask?.cancel() }
+        .onHover {
+            isHovered = $0
+            onHoverChange?($0)
+        }
+        .onDisappear {
+            resetTask?.cancel()
+            // LazyVStack recycling can drop a hovered row without a final
+            // onHover(false) — make sure the dwell timer dies with the row.
+            if isHovered { onHoverChange?(false) }
+        }
         .sheet(isPresented: $showQRCodePreview) {
             TextQRCodePreviewView(item: item, onClose: { showQRCodePreview = false })
         }

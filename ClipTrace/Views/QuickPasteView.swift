@@ -23,6 +23,10 @@ struct QuickPasteView: View {
     @State private var keyClaimToken = 0
 
     @ObservedObject private var keyStore = QuickPasteKeyStore.shared
+    @ObservedObject private var previewSettings = HoverPreviewSettings.shared
+    /// Panel hosting this view; the dwell preview anchors its floating window
+    /// beside it. Captured once — the panel is reused across invocations.
+    @State private var hostWindow: NSWindow?
 
     private var items: [ClipboardItem] { state.items }
     private var visualItems: [ClipboardItem] {
@@ -105,6 +109,30 @@ struct QuickPasteView: View {
         .onChange(of: state.session) { _, _ in
             resetSearchSession()
         }
+        .background(PanelWindowReader { hostWindow = $0 })
+        // Dwell preview: resting on a row — keyboard focus or pointer, the
+        // most recent one wins — pops the full preview beside the panel.
+        .onChange(of: focusedID) { _, newValue in
+            guard let newValue else { return }
+            schedulePreview(for: newValue)
+        }
+        .onChange(of: hoverID) { oldValue, newValue in
+            if let newValue {
+                schedulePreview(for: newValue)
+            } else if let oldValue {
+                HoverPreviewController.shared.noteExit(itemID: oldValue)
+            }
+        }
+    }
+
+    private func schedulePreview(for id: UUID) {
+        guard previewSettings.quickPasteEnabled else { return }
+        guard let item = visualItems.first(where: { $0.id == id }) else { return }
+        HoverPreviewController.shared.schedule(
+            item: item,
+            host: hostWindow,
+            after: previewSettings.quickPasteDelay
+        )
     }
 
     private var header: some View {
@@ -729,6 +757,35 @@ private extension View {
             keyboardShortcut(.escape, modifiers: [])
         } else {
             self
+        }
+    }
+}
+
+/// Invisible probe that reports the `NSWindow` hosting the panel back to
+/// SwiftUI (deferred a tick — `viewDidMoveToWindow` fires mid view-update).
+/// Mirrors the menu-bar panel's reader; both stay private to their views.
+private struct PanelWindowReader: NSViewRepresentable {
+    let onResolve: (NSWindow?) -> Void
+
+    func makeNSView(context: Context) -> Probe {
+        let probe = Probe()
+        probe.onResolve = onResolve
+        return probe
+    }
+
+    func updateNSView(_ view: Probe, context: Context) {
+        view.onResolve = onResolve
+    }
+
+    final class Probe: NSView {
+        var onResolve: ((NSWindow?) -> Void)?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            let window = window
+            DispatchQueue.main.async { [onResolve] in
+                onResolve?(window)
+            }
         }
     }
 }

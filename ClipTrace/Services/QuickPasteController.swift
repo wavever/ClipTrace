@@ -387,6 +387,9 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
     // MARK: - Close
 
     private func close() {
+        // The dwell preview floats beside this panel and must never outlive
+        // it — commit paths order the panel out without a resign-key tick.
+        HoverPreviewController.shared.hide()
         panel?.orderOut(nil)
     }
 

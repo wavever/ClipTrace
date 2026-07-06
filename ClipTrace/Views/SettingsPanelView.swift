@@ -486,6 +486,7 @@ private struct GeneralSection: View {
     @AppStorage("fdaOnboardingDismissed") private var fdaOnboardingDismissed = false
     @AppStorage("videoPreviewMode") private var videoPreviewModeRaw = VideoPreviewMode.video.rawValue
     @AppStorage("videoPreviewMuted") private var videoPreviewMuted = true
+    @ObservedObject private var hoverPreview = HoverPreviewSettings.shared
     @ObservedObject private var nav = AppNavigation.shared
     @EnvironmentObject private var vm: ClipboardViewModel
     @Environment(\.modelContext) private var modelContext
@@ -507,6 +508,16 @@ private struct GeneralSection: View {
             get: { VideoPreviewMode(rawValue: videoPreviewModeRaw) ?? .video },
             set: { videoPreviewModeRaw = $0.rawValue }
         )
+    }
+    private var hoverDelayOptions: [PaperMenuOption<Double>] {
+        [
+            PaperMenuOption(0.5, L("settings.preview.delay.halfSecond")),
+            PaperMenuOption(1.0, L("settings.preview.delay.oneSecond")),
+            PaperMenuOption(1.5, L("settings.preview.delay.oneAndHalfSeconds")),
+            PaperMenuOption(2.0, L("settings.preview.delay.twoSeconds")),
+            PaperMenuOption(3.0, L("settings.preview.delay.threeSeconds")),
+            PaperMenuOption(5.0, L("settings.preview.delay.fiveSeconds"))
+        ]
     }
     // Read/write the @Observable singleton directly so the swatch ring also
     // re-evaluates on selection, and external writes (e.g. CLI / tests) flow
@@ -689,6 +700,53 @@ private struct GeneralSection: View {
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .tint(.appAccent)
+                }
+                // Delay picker lives inside its toggle's row (and hides when
+                // the toggle is off): a separate "trigger delay" row under
+                // each switch read as an accidental duplicate.
+                SettingsRow(
+                    icon: "menubar.rectangle",
+                    iconTint: .appAccent,
+                    title: L("settings.preview.menuBarHover"),
+                    subtitle: L("settings.preview.menuBarHover.subtitle")
+                ) {
+                    HStack(spacing: 10) {
+                        if hoverPreview.menuBarEnabled {
+                            PaperMenuPicker(
+                                options: hoverDelayOptions,
+                                selection: $hoverPreview.menuBarDelay,
+                                width: 110
+                            )
+                            .transition(.opacity)
+                        }
+                        Toggle("", isOn: $hoverPreview.menuBarEnabled)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .tint(.appAccent)
+                    }
+                    .animation(.easeOut(duration: 0.15), value: hoverPreview.menuBarEnabled)
+                }
+                SettingsRow(
+                    icon: "bolt.fill",
+                    iconTint: .appAccent,
+                    title: L("settings.preview.quickPasteHover"),
+                    subtitle: L("settings.preview.quickPasteHover.subtitle")
+                ) {
+                    HStack(spacing: 10) {
+                        if hoverPreview.quickPasteEnabled {
+                            PaperMenuPicker(
+                                options: hoverDelayOptions,
+                                selection: $hoverPreview.quickPasteDelay,
+                                width: 110
+                            )
+                            .transition(.opacity)
+                        }
+                        Toggle("", isOn: $hoverPreview.quickPasteEnabled)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .tint(.appAccent)
+                    }
+                    .animation(.easeOut(duration: 0.15), value: hoverPreview.quickPasteEnabled)
                 }
             }
 
