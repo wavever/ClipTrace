@@ -439,17 +439,34 @@ final class HoverPreviewSettings: ObservableObject {
     }
 }
 
+/// Which host the preview floats beside. The surface adopts the host's own
+/// chrome so the pair reads as one unit: warm paper beside the menu-bar
+/// panel, translucent popover material beside the Quick Paste panel.
+enum HoverPreviewSurfaceStyle {
+    case paper
+    case popover
+
+    var cornerRadius: CGFloat {
+        switch self {
+        case .paper: return 14
+        case .popover: return 12   // matches the Quick Paste panel's chrome
+        }
+    }
+}
+
 /// Model behind the floating preview window, so the hosted SwiftUI tree can
 /// swap items in place (crossfade) instead of tearing the window down.
 @MainActor
 private final class HoverPreviewState: ObservableObject {
     @Published var item: ClipboardItem?
+    @Published var surfaceStyle: HoverPreviewSurfaceStyle = .paper
 }
 
 private struct HoverPreviewSurface: View {
     @ObservedObject var state: HoverPreviewState
 
     var body: some View {
+        let shape = RoundedRectangle(cornerRadius: state.surfaceStyle.cornerRadius, style: .continuous)
         ZStack {
             if let item = state.item {
                 PreviewPopover(item: item)
@@ -461,16 +478,30 @@ private struct HoverPreviewSurface: View {
             width: HoverPreviewController.surfaceSize.width,
             height: HoverPreviewController.surfaceSize.height
         )
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.appPaper)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(surfaceBackground)
+        .overlay(surfaceBorder(shape: shape))
+        .clipShape(shape)
         .animation(.easeOut(duration: 0.14), value: state.item?.id)
+    }
+
+    @ViewBuilder
+    private var surfaceBackground: some View {
+        switch state.surfaceStyle {
+        case .paper:
+            Color.appPaper
+        case .popover:
+            VisualEffectView(material: .popover, blendingMode: .behindWindow)
+        }
+    }
+
+    @ViewBuilder
+    private func surfaceBorder(shape: RoundedRectangle) -> some View {
+        switch state.surfaceStyle {
+        case .paper:
+            shape.strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+        case .popover:
+            shape.strokeBorder(.separator.opacity(0.4), lineWidth: 0.5)
+        }
     }
 }
 
@@ -503,7 +534,12 @@ final class HoverPreviewController {
     /// Ask for a preview of `item` after `delay`. While a preview is already
     /// on screen the swap happens immediately (QuickLook-style browsing);
     /// otherwise the dwell timer restarts, so sweeping across rows never fires.
-    func schedule(item: ClipboardItem, host: NSWindow?, after delay: TimeInterval) {
+    func schedule(
+        item: ClipboardItem,
+        host: NSWindow?,
+        after delay: TimeInterval,
+        style: HoverPreviewSurfaceStyle = .paper
+    ) {
         graceTask?.cancel()
         graceTask = nil
 
@@ -524,7 +560,7 @@ final class HoverPreviewController {
         if isPresented {
             dwellTask?.cancel()
             dwellTask = nil
-            present(item: item, host: host)
+            present(item: item, host: host, style: style)
             return
         }
 
@@ -532,7 +568,7 @@ final class HoverPreviewController {
         dwellTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard !Task.isCancelled else { return }
-            self?.present(item: item, host: host)
+            self?.present(item: item, host: host, style: style)
         }
     }
 
@@ -572,13 +608,14 @@ final class HoverPreviewController {
         }
     }
 
-    private func present(item: ClipboardItem, host: NSWindow?) {
+    private func present(item: ClipboardItem, host: NSWindow?, style: HoverPreviewSurfaceStyle) {
         guard let host, host.isVisible else { return }
         let panel = preparePanel()
         attachHostObserver(to: host)
         generation &+= 1
 
         let alreadyShowing = isPresented
+        state.surfaceStyle = style
         state.item = item
         position(panel, beside: host)
 

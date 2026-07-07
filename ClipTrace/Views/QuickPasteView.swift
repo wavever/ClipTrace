@@ -131,7 +131,8 @@ struct QuickPasteView: View {
         HoverPreviewController.shared.schedule(
             item: item,
             host: hostWindow,
-            after: previewSettings.quickPasteDelay
+            after: previewSettings.quickPasteDelay,
+            style: .popover
         )
     }
 
