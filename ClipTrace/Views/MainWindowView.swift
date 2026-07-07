@@ -1236,6 +1236,22 @@ struct MainWindowContent: View {
                 },
                 onPreviewQRCode: dismissThen { qrPreviewTarget = item },
                 onScanCodes: dismissThen { barcodeScanTarget = item },
+                onBase64Encode: dismissThen {
+                    if vm.copyBase64Encoded(item) {
+                        ToastCenter.shared.show(L("action.base64Encoded"), systemImage: "doc.on.doc")
+                    }
+                },
+                onBase64Decode: dismissThen {
+                    if vm.copyBase64Decoded(item) {
+                        ToastCenter.shared.show(L("action.base64Decoded"), systemImage: "doc.on.doc")
+                    } else {
+                        ToastCenter.shared.show(
+                            L("action.base64DecodeFailed"),
+                            systemImage: "exclamationmark.triangle.fill",
+                            tint: .red
+                        )
+                    }
+                },
                 onRunRule: { rule in
                     rowContextMenu.close()
                     vm.runRuleManually(rule, on: item, context: modelContext)
@@ -1376,6 +1392,8 @@ private struct ClipboardRowContextMenu: View {
     let onCopyPlainText: () -> Void
     let onPreviewQRCode: () -> Void
     let onScanCodes: () -> Void
+    let onBase64Encode: () -> Void
+    let onBase64Decode: () -> Void
     let onRunRule: (ScriptingRule) -> Void
     let onRename: () -> Void
     let onToggleGroup: (ClipboardGroup) -> Void
@@ -1401,6 +1419,8 @@ private struct ClipboardRowContextMenu: View {
         onCopyPlainText: @escaping () -> Void,
         onPreviewQRCode: @escaping () -> Void,
         onScanCodes: @escaping () -> Void,
+        onBase64Encode: @escaping () -> Void,
+        onBase64Decode: @escaping () -> Void,
         onRunRule: @escaping (ScriptingRule) -> Void,
         onRename: @escaping () -> Void,
         onToggleGroup: @escaping (ClipboardGroup) -> Void,
@@ -1422,6 +1442,8 @@ private struct ClipboardRowContextMenu: View {
         self.onCopyPlainText = onCopyPlainText
         self.onPreviewQRCode = onPreviewQRCode
         self.onScanCodes = onScanCodes
+        self.onBase64Encode = onBase64Encode
+        self.onBase64Decode = onBase64Decode
         self.onRunRule = onRunRule
         self.onRename = onRename
         self.onToggleGroup = onToggleGroup
@@ -1453,6 +1475,16 @@ private struct ClipboardRowContextMenu: View {
         item.itemType == .text &&
         !item.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
+    private var canBase64Encode: Bool {
+        guard let text = ClipboardViewModel.transformableText(of: item) else { return false }
+        return !text.isEmpty
+    }
+    /// Offer decoding only when the content actually decodes to UTF-8 text,
+    /// so the row never leads to a dead-end error for ordinary prose.
+    private var canBase64Decode: Bool {
+        guard let text = ClipboardViewModel.transformableText(of: item) else { return false }
+        return ClipboardViewModel.base64Decoded(text) != nil
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
@@ -1463,6 +1495,20 @@ private struct ClipboardRowContextMenu: View {
             }
             if canScanCodes {
                 PaperMenuActionRow(icon: "qrcode.viewfinder", title: L("action.scanCodes"), action: onScanCodes)
+            }
+            if canBase64Encode {
+                PaperMenuActionRow(
+                    icon: "chevron.left.forwardslash.chevron.right",
+                    title: L("action.base64Encode"),
+                    action: onBase64Encode
+                )
+            }
+            if canBase64Decode {
+                PaperMenuActionRow(
+                    icon: "abc",
+                    title: L("action.base64Decode"),
+                    action: onBase64Decode
+                )
             }
 
             if !enabledRules.isEmpty {

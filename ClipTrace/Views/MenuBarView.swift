@@ -556,6 +556,16 @@ struct MenuBarContent: View {
             surfaceStyle: surfaceStyle,
             onCopy: { vm.copyToClipboard(item) },
             onCopyPlainText: { vm.copyAsPlainText(item) },
+            onBase64Encode: { _ = vm.copyBase64Encoded(item) },
+            onBase64Decode: {
+                if !vm.copyBase64Decoded(item) {
+                    ToastCenter.shared.show(
+                        L("action.base64DecodeFailed"),
+                        systemImage: "exclamationmark.triangle.fill",
+                        tint: .red
+                    )
+                }
+            },
             onTogglePin: { togglePin(item) },
             onHoverChange: { hovering in handleRowHover(item, hovering: hovering) }
         )
@@ -931,6 +941,8 @@ struct MenuBarRow: View {
     var surfaceStyle: MenuBarSurfaceStyle = .paper
     let onCopy: () -> Void
     var onCopyPlainText: (() -> Void)? = nil
+    var onBase64Encode: (() -> Void)? = nil
+    var onBase64Decode: (() -> Void)? = nil
     var onTogglePin: () -> Void = {}
     /// Reports hover transitions outward so the host can drive the dwell
     /// preview — the row itself has no access to the panel window the preview
@@ -1044,6 +1056,18 @@ struct MenuBarRow: View {
                     showQRCodePreview = true
                 }
             }
+            if let onBase64Encode, canBase64Encode {
+                Button(L("action.base64Encode"), systemImage: "chevron.left.forwardslash.chevron.right") {
+                    onBase64Encode()
+                    triggerCopySuccessFlash()
+                }
+            }
+            if let onBase64Decode, canBase64Decode {
+                Button(L("action.base64Decode"), systemImage: "abc") {
+                    onBase64Decode()
+                    triggerCopySuccessFlash()
+                }
+            }
             Divider()
             Button(item.isPinned ? L("action.unpin") : L("action.pin"),
                    systemImage: item.isPinned ? "pin.slash" : "pin") {
@@ -1055,6 +1079,14 @@ struct MenuBarRow: View {
     private var canPreviewQRCode: Bool {
         item.itemType == .text &&
         !item.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+    private var canBase64Encode: Bool {
+        guard let text = ClipboardViewModel.transformableText(of: item) else { return false }
+        return !text.isEmpty
+    }
+    private var canBase64Decode: Bool {
+        guard let text = ClipboardViewModel.transformableText(of: item) else { return false }
+        return ClipboardViewModel.base64Decoded(text) != nil
     }
 
     /// Flash the "copied" check without re-issuing the underlying copy — the

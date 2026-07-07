@@ -571,6 +571,65 @@ class ClipboardViewModel: ObservableObject {
         ClipboardMonitor.markInternalWrite()
     }
 
+    /// Base64-encode the clip's plain text onto the pasteboard. Returns false
+    /// when the item has no usable text (image/file clips).
+    @discardableResult
+    func copyBase64Encoded(_ item: ClipboardItem) -> Bool {
+        guard let text = Self.transformableText(of: item), !text.isEmpty else { return false }
+        writeTransformedString(Data(text.utf8).base64EncodedString())
+        return true
+    }
+
+    /// Decode the clip's text as Base64 onto the pasteboard. Returns false
+    /// when the content isn't valid Base64 (or doesn't decode to UTF-8 text)
+    /// so callers can surface an error instead of writing garbage.
+    @discardableResult
+    func copyBase64Decoded(_ item: ClipboardItem) -> Bool {
+        guard let text = Self.transformableText(of: item),
+              let decoded = Self.base64Decoded(text) else { return false }
+        writeTransformedString(decoded)
+        return true
+    }
+
+    /// The plain-text rendition transforms operate on; nil for clips with no
+    /// meaningful text (images, files, videos).
+    static func transformableText(of item: ClipboardItem) -> String? {
+        switch item.itemType {
+        case .text, .url:
+            return item.content
+        case .rtf:
+            return rtfPlainText(from: item.content) ?? item.content
+        case .image, .file, .video:
+            return nil
+        }
+    }
+
+    /// Lenient Base64 decode: tolerates surrounding/internal whitespace (MIME
+    /// wraps at 76 columns), the URL-safe alphabet, and missing padding — all
+    /// common in strings copied out of tokens, logs, and payloads.
+    static func base64Decoded(_ raw: String) -> String? {
+        var normalized = raw
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+            .filter { !$0.isWhitespace }
+        guard normalized.count >= 4 else { return nil }
+        switch normalized.count % 4 {
+        case 2: normalized += "=="
+        case 3: normalized += "="
+        case 1: return nil
+        default: break
+        }
+        guard let data = Data(base64Encoded: normalized) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private func writeTransformedString(_ output: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(output, forType: .string)
+        ClipboardMonitor.markInternalWrite()
+    }
+
     /// Decode the stored RTF blob back to plain text. Returns nil if the
     /// content isn't valid RTF, in which case callers should fall back to
     /// the raw content.
