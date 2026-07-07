@@ -154,6 +154,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var isQuittingAfterConfirmation = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        applyClassicDockIconIfNeeded()
         syncActivationPolicyFromDefaults()
         applyInitialAppearance()
         setupGlobalHotKeys()
@@ -189,6 +190,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         ClipboardRuntime.shared.stop()
+    }
+
+    /// The bundled AppIcon bakes a Tahoe-grid paper plate into the artwork so
+    /// macOS 26 doesn't jail the die-cut design onto a grey backing plate.
+    /// Pre-26 systems render bundle icons verbatim, so that plate reads as a
+    /// stray white background — swap the runtime icon (Dock, ⌘Tab, About,
+    /// Sparkle dialogs) back to the classic die-cut art there. Finder and
+    /// Launchpad still show the baked icon; fixing those too needs the Icon
+    /// Composer dual-icon route, which requires an Xcode 26 release toolchain.
+    private func applyClassicDockIconIfNeeded() {
+        if #unavailable(macOS 26.0) {
+            NSApp.applicationIconImage = NSImage(named: "AppIconClassic")
+        }
     }
 
     /// Keep the app alive in the menu bar after the main window is closed.

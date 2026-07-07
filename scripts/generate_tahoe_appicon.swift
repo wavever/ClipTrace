@@ -11,7 +11,9 @@
 // Tahoe re-masks it seamlessly and older systems keep the same design language.
 //
 // Usage: swift scripts/generate_tahoe_appicon.swift [path/to/AppIcon.appiconset]
-// The current icon_512x512@2x.png inside the set is used as the source art.
+// The die-cut master preserved in AppIconClassic.imageset is the source art.
+// Do NOT read the set's own icon_512x512@2x.png back as the source: it is
+// already plated, so regenerating from it would plate the plate.
 
 import AppKit
 import ImageIO
@@ -22,7 +24,9 @@ let setPath = CommandLine.arguments.count > 1
     ? CommandLine.arguments[1]
     : "ClipTrace/Assets.xcassets/AppIcon.appiconset"
 let setURL = URL(fileURLWithPath: setPath)
-let sourceURL = setURL.appendingPathComponent("icon_512x512@2x.png")
+let sourceURL = URL(
+    fileURLWithPath: "ClipTrace/Assets.xcassets/AppIconClassic.imageset/AppIconClassic.png"
+)
 
 guard let srcData = try? Data(contentsOf: sourceURL),
       let srcSource = CGImageSourceCreateWithData(srcData as CFData, nil),
