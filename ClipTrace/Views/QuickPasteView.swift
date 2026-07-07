@@ -166,14 +166,32 @@ struct QuickPasteView: View {
     }
 
     private var groupStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(groupFilters, id: \.id) { filter in
-                    groupChip(filter)
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(groupFilters, id: \.id) { filter in
+                        groupChip(filter)
+                    }
+                }
+                .redirectsVerticalWheelToHorizontal()
+            }
+            // 8pt on the scroll view, not its content: chips, search box and
+            // the list rows' card edge share one line on *both* sides — with
+            // the inset on the content, overflowing chips would scroll under
+            // the panel edge past that line before being clipped.
+            .padding(.horizontal, 8)
+            .padding(.bottom, 8)
+            // ←/→ wraps through groups that may overflow the strip; follow the
+            // selection so the active chip is always visible. Also snap there
+            // when the reused panel reopens with a group still selected.
+            .onChange(of: state.selectedGroupFilter) { _, newValue in
+                withAnimation(.easeOut(duration: 0.16)) {
+                    proxy.scrollTo(newValue.id)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 8)
+            .onAppear {
+                proxy.scrollTo(state.selectedGroupFilter.id)
+            }
         }
     }
 
@@ -227,7 +245,9 @@ struct QuickPasteView: View {
                 .strokeBorder(searchFocused ? Color.appAccent.opacity(0.55) : Color.clear, lineWidth: 1)
         )
         .animation(.easeOut(duration: 0.15), value: searchFocused)
-        .padding(.horizontal, 12)
+        // 8pt like the group strip and the list's card inset — the three
+        // stacked surfaces (chips / search box / row cards) share one edge.
+        .padding(.horizontal, 8)
         .padding(.bottom, 8)
     }
 

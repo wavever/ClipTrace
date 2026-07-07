@@ -472,6 +472,7 @@ struct MenuBarContent: View {
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 8)
+            .redirectsVerticalWheelToHorizontal()
         }
     }
 

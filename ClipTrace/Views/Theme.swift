@@ -729,6 +729,72 @@ private struct PaperMenuItem: View {
     }
 }
 
+extension View {
+    /// Place on the content *inside* a horizontal `ScrollView`. SwiftUI's
+    /// horizontal scroller only reacts to horizontal wheel deltas, which
+    /// leaves mouse wheels (and vertical trackpad swipes) unable to move it;
+    /// this bridges the dominant vertical delta into horizontal travel.
+    func redirectsVerticalWheelToHorizontal() -> some View {
+        background(WheelToHorizontalBridge())
+    }
+}
+
+/// Probe view that resolves the AppKit `NSScrollView` backing the enclosing
+/// SwiftUI `ScrollView` and redirects vertical wheel events over it into
+/// horizontal scrolling. Uses a local event monitor because the scroll view
+/// instance belongs to SwiftUI and can't have its `scrollWheel` overridden.
+private struct WheelToHorizontalBridge: NSViewRepresentable {
+    func makeNSView(context: Context) -> BridgeView { BridgeView() }
+
+    func updateNSView(_ nsView: BridgeView, context: Context) {}
+
+    final class BridgeView: NSView {
+        private var monitor: Any?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+                self.monitor = nil
+            }
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+                guard let self, self.redirect(event) else { return event }
+                return nil   // consumed — don't let the outer vertical list scroll too
+            }
+        }
+
+        deinit {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+        }
+
+        /// Returns true when the event was translated into horizontal travel:
+        /// cursor over the strip, vertical delta dominant, and the strip
+        /// actually overflows. Everything else keeps native behavior.
+        private func redirect(_ event: NSEvent) -> Bool {
+            guard event.window === window,
+                  let scrollView = enclosingScrollView,
+                  abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX)
+            else { return false }
+            let locationInScroll = scrollView.convert(event.locationInWindow, from: nil)
+            guard scrollView.bounds.contains(locationInScroll) else { return false }
+
+            let clip = scrollView.contentView
+            let maxX = max(0, (scrollView.documentView?.frame.width ?? 0) - clip.bounds.width)
+            guard maxX > 0 else { return false }
+
+            // Notched mice report coarse line deltas; scale them so one notch
+            // moves roughly a chip's width.
+            let delta = event.scrollingDeltaY * (event.hasPreciseScrollingDeltas ? 1 : 8)
+            var origin = clip.bounds.origin
+            origin.x = min(max(0, origin.x - delta), maxX)
+            clip.setBoundsOrigin(origin)
+            scrollView.reflectScrolledClipView(clip)
+            return true
+        }
+    }
+}
+
 struct PaperTextFieldBackground: ViewModifier {
     var cornerRadius: CGFloat = 7
     var focused: Bool = false
