@@ -3591,14 +3591,17 @@ struct ToolbarIconButton: View {
 // MARK: - Hover tooltip
 
 /// Lightweight hover tooltip that pops up faster than macOS's default
-/// `.help(...)` (which sits behind a ~1.5s system delay). Renders a small
-/// rounded label below the icon after `delay` seconds of sustained hover.
+/// `.help(...)` (which sits behind a ~1.5s system delay). Shows a small
+/// rounded label below the control after `delay` seconds of sustained hover.
+/// The bubble lives in its own floating panel (`HoverTipController`), not a
+/// view overlay: an overlay is clipped by whatever container the trigger
+/// happens to sit in, while a panel floats above every view in the app.
 private struct HoverTipModifier: ViewModifier {
     let text: String
     let delay: TimeInterval
 
     @State private var hovering = false
-    @State private var showTip = false
+    @State private var anchorView: NSView?
 
     func body(content: Content) -> some View {
         content
@@ -3607,23 +3610,111 @@ private struct HoverTipModifier: ViewModifier {
                 if isHovering {
                     Task { @MainActor in
                         try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                        guard hovering else { return }
-                        withAnimation(.easeOut(duration: 0.12)) { showTip = true }
+                        guard hovering, let anchorView, anchorView.window != nil else { return }
+                        HoverTipController.shared.show(text: text, anchoredTo: anchorView)
                     }
                 } else {
-                    withAnimation(.easeOut(duration: 0.1)) { showTip = false }
+                    HoverTipController.shared.hide(for: anchorView)
                 }
             }
-            .overlay(alignment: .bottom) {
-                if showTip {
-                    HoverTipBubble(text: text)
-                        .fixedSize()
-                        .offset(y: 24)
-                        .transition(.opacity)
-                        .allowsHitTesting(false)
-                        .zIndex(999)
-                }
+            .background(HoverTipAnchor { anchorView = $0 })
+            .onDisappear {
+                hovering = false
+                HoverTipController.shared.hide(for: anchorView)
             }
+    }
+}
+
+/// Invisible probe filling the trigger's bounds, so the controller can resolve
+/// the on-screen rect the bubble hangs from.
+private struct HoverTipAnchor: NSViewRepresentable {
+    let onResolve: (NSView) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async { onResolve(view) }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+/// Owns the single floating tooltip panel. One panel is shared app-wide —
+/// only one control is hovered at a time — and it is mouse-transparent and
+/// never key, so it can't steal events from the control it annotates.
+@MainActor
+final class HoverTipController {
+    static let shared = HoverTipController()
+
+    private var panel: NSPanel?
+    private weak var anchor: NSView?
+
+    private init() {}
+
+    func show(text: String, anchoredTo view: NSView) {
+        guard let window = view.window else { return }
+        dismissPanel()
+        anchor = view
+
+        let hosting = NSHostingView(rootView: HoverTipBubble(text: text))
+        hosting.layoutSubtreeIfNeeded()
+        let size = hosting.fittingSize
+        hosting.frame = NSRect(origin: .zero, size: size)
+
+        let rectInWindow = view.convert(view.bounds, to: nil)
+        let anchorOnScreen = window.convertToScreen(rectInWindow)
+
+        let gap: CGFloat = 5
+        var origin = NSPoint(
+            x: anchorOnScreen.midX - size.width / 2,
+            y: anchorOnScreen.minY - gap - size.height
+        )
+        if let screen = window.screen ?? NSScreen.main {
+            let visible = screen.visibleFrame
+            if origin.y < visible.minY { origin.y = anchorOnScreen.maxY + gap }   // flip above
+            origin.x = min(max(origin.x, visible.minX + 4), visible.maxX - size.width - 4)
+        }
+
+        let panel = NSPanel(
+            contentRect: NSRect(origin: origin, size: size),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.level = .popUpMenu
+        panel.ignoresMouseEvents = true
+        panel.contentView = hosting
+
+        window.addChildWindow(panel, ordered: .above)
+        panel.alphaValue = 0
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.12
+            panel.animator().alphaValue = 1
+        }
+        self.panel = panel
+    }
+
+    /// Hide only when `view` still owns the tip — a stale exit event from one
+    /// control must not kill the tip another control just opened.
+    func hide(for view: NSView?) {
+        if let view, anchor !== view { return }
+        anchor = nil
+        dismissPanel()
+    }
+
+    private func dismissPanel() {
+        guard let panel else { return }
+        self.panel = nil
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.1
+            panel.animator().alphaValue = 0
+        }, completionHandler: {
+            panel.parent?.removeChildWindow(panel)
+            panel.orderOut(nil)
+        })
     }
 }
 
