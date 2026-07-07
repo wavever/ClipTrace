@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Sparkle
 
@@ -37,6 +38,13 @@ final class UpdaterService: ObservableObject {
     private let userDriver: ClipTraceUpdaterUserDriver
     private let delegate = ClipTraceUpdaterDelegate()
     private var observation: NSKeyValueObservation?
+    private var keyWindowObserver: NSObjectProtocol?
+    private var lastSilentProbeAt: Date?
+
+    /// Minimum spacing between the silent open-triggered probes below. Keeps
+    /// rapid panel open/close cycles from hammering the appcast while still
+    /// catching a fresh release on the next meaningful open.
+    private static let silentProbeInterval: TimeInterval = 5 * 60
 
     private init() {
         userDriver = ClipTraceUpdaterUserDriver(
@@ -67,6 +75,34 @@ final class UpdaterService: ObservableObject {
                 self.canCheck = value
             }
         }
+
+        // The daily Sparkle schedule alone leaves the reminder pill dark for
+        // up to a day after a release. Any app surface becoming key (main
+        // window, menu-bar panel, quick paste) re-probes silently so the pill
+        // lights up on the open that follows a release, not the next morning.
+        keyWindowObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.probeForUpdatesInBackground()
+            }
+        }
+        probeForUpdatesInBackground()
+    }
+
+    /// Silent appcast probe: drives `updateAvailable` through the delegate
+    /// without any Sparkle UI. Non-user-initiated, so Sparkle still honors a
+    /// version the user chose to skip.
+    func probeForUpdatesInBackground() {
+        guard !updater.sessionInProgress else { return }
+        if let lastSilentProbeAt,
+           Date().timeIntervalSince(lastSilentProbeAt) < Self.silentProbeInterval {
+            return
+        }
+        lastSilentProbeAt = Date()
+        updater.checkForUpdateInformation()
     }
 
     /// User-initiated update check. Sparkle drives the dialogs from here:
@@ -146,6 +182,10 @@ private final class ClipTraceUpdaterDelegate: NSObject, SPUUpdaterDelegate, SPUS
     }
 
     func updater(_ updater: SPUUpdater, willInstallUpdate item: SUAppcastItem) {
+        // Sparkle terminates the app right after this to hand off to the
+        // installer; the quit-confirmation dialog would cancel the relaunch,
+        // so flag the termination as update-driven before it arrives.
+        AppDelegate.isTerminatingForUpdate = true
         clearUpdateAvailability()
     }
 

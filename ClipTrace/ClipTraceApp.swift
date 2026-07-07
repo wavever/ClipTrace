@@ -153,6 +153,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var quitConfirmationPanel: NSPanel?
     private var isQuittingAfterConfirmation = false
 
+    /// Set by the Sparkle delegate right before an update install terminates
+    /// the app. Installing an update already implies "quit and relaunch", so
+    /// the confirm-before-quit dialog must not interrupt (returning
+    /// `.terminateCancel` there would abort the installation).
+    static var isTerminatingForUpdate = false
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         applyClassicDockIconIfNeeded()
         syncActivationPolicyFromDefaults()
@@ -242,6 +248,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// but the screen never moves there. The preference takes effect again as
     /// soon as the main window closes (`windowWillClose` re-syncs).
     static func desiredActivationPolicy() -> NSApplication.ActivationPolicy {
+        if Self.isTerminatingForUpdate { return .terminateNow }
         let defaults = UserDefaults.standard
         if defaults.object(forKey: "showInDock") == nil {
             defaults.set(true, forKey: "showInDock")
