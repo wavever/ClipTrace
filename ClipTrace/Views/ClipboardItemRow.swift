@@ -21,6 +21,8 @@ struct ClipboardItemRow: View, Equatable {
     var onPreview: () -> Void = {}
     var onAddTag: (String) -> Void = { _ in }
     var onRemoveTag: (String) -> Void = { _ in }
+    var onBase64Encode: () -> Void = {}
+    var onBase64Decode: () -> Void = {}
 
     @State private var isHovered = false
     @State private var showTagEditor = false
@@ -278,6 +280,15 @@ struct ClipboardItemRow: View, Equatable {
         !item.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// Cheap type gate for the encoding menu — the costly "is this valid
+    /// Base64" probe runs only when the menu opens, never per render.
+    private var hasEncodableText: Bool {
+        switch item.itemType {
+        case .text, .url, .rtf: return !item.content.isEmpty
+        default: return false
+        }
+    }
+
     private var rowDot: some View {
         Circle()
             .fill(.tertiary)
@@ -329,6 +340,13 @@ struct ClipboardItemRow: View, Equatable {
                     systemName: "qrcode",
                     help: L("action.qrPreview"),
                     action: { showQRCodePreview = true }
+                )
+            }
+            if hasEncodableText {
+                EncodingMenuButton(
+                    item: item,
+                    onEncode: onBase64Encode,
+                    onDecode: onBase64Decode
                 )
             }
             HoverIconButton(
@@ -645,5 +663,88 @@ private struct Checkerboard: Shape {
             }
         }
         return path
+    }
+}
+
+// MARK: - Encoding menu
+
+/// Hover-bar entry for text transforms (Base64 today). One glyph opening a
+/// paper dropdown keeps the crowded action bar at a single icon while leaving
+/// room for more encodings later.
+private struct EncodingMenuButton: View {
+    let item: ClipboardItem
+    let onEncode: () -> Void
+    let onDecode: () -> Void
+
+    @StateObject private var controller = PaperDropdownController()
+
+    var body: some View {
+        HoverIconButton(
+            systemName: "chevron.left.forwardslash.chevron.right",
+            help: L("action.encoding")
+        ) {
+            // Decode legality costs a full-content scan — probe it only when
+            // the menu actually opens, never on row render.
+            let canDecode = ClipboardViewModel.transformableText(of: item)
+                .flatMap(ClipboardViewModel.base64Decoded) != nil
+            controller.toggle(width: 180) {
+                EncodingMenuPanel(
+                    canDecode: canDecode,
+                    onEncode: { controller.close(); onEncode() },
+                    onDecode: { controller.close(); onDecode() }
+                )
+            }
+        }
+        .background(EncodingDropdownAnchor(controller: controller))
+    }
+}
+
+private struct EncodingMenuPanel: View {
+    let canDecode: Bool
+    let onEncode: () -> Void
+    let onDecode: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            PaperMenuActionRow(
+                icon: "chevron.left.forwardslash.chevron.right",
+                title: L("action.base64Encode"),
+                action: onEncode
+            )
+            if canDecode {
+                PaperMenuActionRow(
+                    icon: "abc",
+                    title: L("action.base64Decode"),
+                    action: onDecode
+                )
+            }
+        }
+        .padding(5)
+        .frame(width: 180, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.appPaper)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+/// Zero-size companion handing the dropdown controller its anchor `NSView`
+/// (same pattern as the filter dropdowns in the main window toolbar).
+private struct EncodingDropdownAnchor: NSViewRepresentable {
+    let controller: PaperDropdownController
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        MainActor.assumeIsolated { controller.anchorView = view }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        MainActor.assumeIsolated { controller.anchorView = nsView }
     }
 }

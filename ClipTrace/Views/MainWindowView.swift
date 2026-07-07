@@ -1133,6 +1133,22 @@ struct MainWindowContent: View {
             onRemoveTag: { tag in
                 vm.removeTag(tag, from: item)
                 try? modelContext.save()
+            },
+            onBase64Encode: {
+                if vm.copyBase64Encoded(item) {
+                    ToastCenter.shared.show(L("action.base64Encoded"), systemImage: "doc.on.doc")
+                }
+            },
+            onBase64Decode: {
+                if vm.copyBase64Decoded(item) {
+                    ToastCenter.shared.show(L("action.base64Decoded"), systemImage: "doc.on.doc")
+                } else {
+                    ToastCenter.shared.show(
+                        L("action.base64DecodeFailed"),
+                        systemImage: "exclamationmark.triangle.fill",
+                        tint: .red
+                    )
+                }
             }
         )
         // Gate the heavy row body on its value inputs (id + selection) so a
