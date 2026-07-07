@@ -160,7 +160,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     static var isTerminatingForUpdate = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        applyClassicDockIconIfNeeded()
+        applyDockIconTreatment()
         syncActivationPolicyFromDefaults()
         applyInitialAppearance()
         setupGlobalHotKeys()
@@ -202,13 +202,40 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// macOS 26 doesn't jail the die-cut design onto a grey backing plate.
     /// Pre-26 systems render bundle icons verbatim, so that plate reads as a
     /// stray white background — swap the runtime icon (Dock, ⌘Tab, About,
-    /// Sparkle dialogs) back to the classic die-cut art there. Finder and
-    /// Launchpad still show the baked icon; fixing those too needs the Icon
-    /// Composer dual-icon route, which requires an Xcode 26 release toolchain.
-    private func applyClassicDockIconIfNeeded() {
-        if #unavailable(macOS 26.0) {
+    /// Sparkle dialogs) back to the classic die-cut art there.
+    private func applyDockIconTreatment() {
+        if #available(macOS 26.0, *) {
+            applyTahoeDockIcon()
+        } else {
             NSApp.applicationIconImage = NSImage(named: "AppIconClassic")
         }
+    }
+
+    /// macOS 26 composites every legacy (non–Icon Composer) app icon onto a
+    /// system backing plate — white in light mode — with the artwork shrunk
+    /// inside, no matter how well it conforms to the classic icon grid. The
+    /// Dock tile is the one surface the app may draw itself, so render the
+    /// baked icon scaled such that its own paper plate (824pt of the 1024
+    /// canvas) fills the tile: full-bleed footprint with ≈22.5% corner radius,
+    /// which is exactly the native Tahoe squircle. Finder and Launchpad still
+    /// show the plated icon; fixing those needs the Icon Composer dual-icon
+    /// route, which requires an Xcode 26 release toolchain.
+    @available(macOS 26.0, *)
+    private func applyTahoeDockIcon() {
+        guard let icon = Self.bakedAppIcon() else { return }
+        NSApp.dockTile.contentView = TahoeDockIconView(icon: icon)
+        NSApp.dockTile.display()
+    }
+
+    /// The raw baked icon (paper plate on transparent margins) straight from
+    /// the bundle — `NSWorkspace`/`applicationIconImage` would hand back the
+    /// system-plated composite on macOS 26.
+    private static func bakedAppIcon() -> NSImage? {
+        if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let image = NSImage(contentsOf: url) {
+            return image
+        }
+        return NSImage(named: "AppIcon")
     }
 
     /// Keep the app alive in the menu bar after the main window is closed.
@@ -221,6 +248,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// default we ask once before fully stopping the clipboard monitor; the
     /// Settings switch can opt out for users who prefer immediate quit.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if Self.isTerminatingForUpdate { return .terminateNow }
         if isQuittingAfterConfirmation { return .terminateNow }
         guard shouldConfirmBeforeQuit else { return .terminateNow }
         showQuitConfirmation()
@@ -248,7 +276,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// but the screen never moves there. The preference takes effect again as
     /// soon as the main window closes (`windowWillClose` re-syncs).
     static func desiredActivationPolicy() -> NSApplication.ActivationPolicy {
-        if Self.isTerminatingForUpdate { return .terminateNow }
         let defaults = UserDefaults.standard
         if defaults.object(forKey: "showInDock") == nil {
             defaults.set(true, forKey: "showInDock")
@@ -477,6 +504,38 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 private final class QuitConfirmationPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
+}
+
+/// Dock-tile view for macOS 26: draws the baked icon zoomed so its 824pt
+/// paper plate spans the whole tile, matching the full-bleed squircle of
+/// native Tahoe icons instead of the white system backing plate the Dock
+/// puts behind legacy icons.
+private final class TahoeDockIconView: NSView {
+    private let icon: NSImage
+
+    init(icon: NSImage) {
+        self.icon = icon
+        super.init(frame: .zero)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let side = min(bounds.width, bounds.height)
+        guard side > 0 else { return }
+        // 1024-canvas plate occupies [100, 924]; scaling it onto the full tile
+        // also scales its 185.4pt corners to ≈22.5% of the side — the Tahoe
+        // squircle ratio — so the shape blends in beside native icons.
+        let drawSide = side * (1024.0 / 824.0)
+        let target = NSRect(
+            x: bounds.midX - drawSide / 2,
+            y: bounds.midY - drawSide / 2,
+            width: drawSide,
+            height: drawSide
+        )
+        NSGraphicsContext.current?.imageInterpolation = .high
+        icon.draw(in: target)
+    }
 }
 
 private struct QuitConfirmationHost: View {
