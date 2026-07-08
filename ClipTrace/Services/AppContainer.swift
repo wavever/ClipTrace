@@ -160,6 +160,17 @@ enum AppContainer {
             .appendingPathComponent("Library/Application Support", isDirectory: true)
     }
 
+    /// Escape hatch (`defaults write com.wavever.cliptrace skipLegacyStoreScan
+    /// -bool true`): legacy-store recovery probes other bundles' sandbox
+    /// containers, and on machines where that consent was never granted macOS
+    /// parks the `open()` behind a TCC prompt — turning an unattended
+    /// (agent/CI) rebuild-and-relaunch loop into a launch that never reaches
+    /// its first window. Machines whose store already migrated lose nothing
+    /// by skipping the scan.
+    private static var legacyScanDisabled: Bool {
+        UserDefaults.standard.bool(forKey: "skipLegacyStoreScan")
+    }
+
     private static func recoverLegacyStoreIfNeeded() throws {
         let fileManager = FileManager.default
         let destination = storeURL
@@ -170,6 +181,8 @@ enum AppContainer {
         if let destinationCount, destinationCount > 0 {
             return
         }
+
+        if legacyScanDisabled { return }
 
         guard let source = bestLegacyStore(excluding: destination) else {
             return
@@ -191,6 +204,7 @@ enum AppContainer {
     }
 
     private static func mergeLegacyStoresIfNeeded(into container: ModelContainer) {
+        if legacyScanDisabled { return }
         let sources = legacyStoreCandidates(excluding: storeURL)
             .compactMap { url -> (url: URL, count: Int)? in
                 guard let count = clipboardItemCount(at: url), count > 0 else { return nil }
