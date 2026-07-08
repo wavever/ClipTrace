@@ -802,6 +802,26 @@ extension L10n {
         "onboarding.openPrefs": "打开系统设置",
         "onboarding.later": "稍后再说",
 
+        // feature tour（首次进入的主界面引导）
+        "tour.welcome.title": "欢迎使用 剪迹",
+        "tour.welcome.body": "复制过的内容都会安全地留在这里——完全本地、离线。花半分钟认识几个最重要的功能吧。",
+        "tour.welcome.start": "开始导览",
+        "tour.search.title": "搜索与语义查找",
+        "tour.search.body": "支持关键词与标签筛选，还能按「意思」搜索——记不清原文也能找到。按 ⌘F 随时聚焦搜索框。",
+        "tour.filters.title": "范围、筛选与分组",
+        "tour.filters.body": "在「全部」与「收藏」之间切换，按类型或来源应用过滤，还可以把常用内容整理进分组。",
+        "tour.actions.title": "片段、多选与回收站",
+        "tour.actions.body": "⌘N 新建片段随手保存常用内容，多选支持批量合并与删除；误删的条目可以在回收站找回，统计与设置也在这里。",
+        "tour.list.title": "剪贴卡片",
+        "tour.list.body": "悬停卡片会浮现常用操作，右键打开完整菜单；↑↓ 移动、回车复制、空格预览、⌫ 删除。",
+        "tour.capture.title": "监听开关",
+        "tour.capture.body": "处理密码等敏感内容时，在这里随时暂停剪贴板监听，完成后一键恢复。",
+        "tour.quickpaste.title": "快速粘贴面板",
+        "tour.quickpaste.body": "在任何应用里按 ⌥⌘V 呼出轻量面板，选中即自动粘贴；⇧⌘V 打开这个主窗口。快捷键可在设置中修改。",
+        "tour.next": "下一步",
+        "tour.done": "开始使用",
+        "tour.skip": "跳过",
+
         // file chooser
         "file.openWithChooserTitleFormat": "选择应用打开 %@",
         "file.openWithChooserPrompt": "选择",
@@ -1528,6 +1548,26 @@ extension L10n {
         "onboarding.step3": "Toggle the switch on (you may need to unlock)",
         "onboarding.openPrefs": "Open System Settings",
         "onboarding.later": "Later",
+
+        // feature tour (first-run guide to the main window)
+        "tour.welcome.title": "Welcome to ClipTrace",
+        "tour.welcome.body": "Everything you copy stays safely here — fully local and offline. Take half a minute to meet the essentials.",
+        "tour.welcome.start": "Start tour",
+        "tour.search.title": "Search & semantic find",
+        "tour.search.body": "Filter by keyword or tag, or search by meaning — find things even when you forget the exact words. Press ⌘F to focus the field anytime.",
+        "tour.filters.title": "Scope, filters & groups",
+        "tour.filters.body": "Switch between All and Favorites, filter by type or source app, and organize frequent clips into groups.",
+        "tour.actions.title": "Snippets, multi-select & Trash",
+        "tour.actions.body": "Press ⌘N to save frequent content as a snippet, multi-select to merge or delete in bulk, and recover deleted clips from the Trash — stats and settings live here too.",
+        "tour.list.title": "Clip cards",
+        "tour.list.body": "Hover a card for quick actions, right-click for the full menu; ↑↓ to move, Return to copy, Space to preview, ⌫ to delete.",
+        "tour.capture.title": "Monitoring toggle",
+        "tour.capture.body": "Handling passwords or other sensitive content? Pause clipboard monitoring here and resume with one click.",
+        "tour.quickpaste.title": "Quick Paste panel",
+        "tour.quickpaste.body": "Press ⌥⌘V in any app to summon a lightweight panel — pick an item and it pastes itself. ⇧⌘V opens this main window. Both shortcuts are configurable in Settings.",
+        "tour.next": "Next",
+        "tour.done": "Get started",
+        "tour.skip": "Skip",
 
         // file chooser
         "file.openWithChooserTitleFormat": "Choose app to open %@",

@@ -112,6 +112,9 @@ struct MainWindowContent: View {
     @ObservedObject private var contentProtection = ContentProtectionStore.shared
 
     @AppStorage("fdaOnboardingDismissed") private var fdaOnboardingDismissed = false
+    /// One-shot main-window feature tour; persisted so it never replays after
+    /// being finished or skipped.
+    @AppStorage("mainFeatureTourSeen") private var mainFeatureTourSeen = false
     @AppStorage("pinnedCollapsed") private var pinnedCollapsed = false
     @State private var isMergingSelection = false
     /// Non-nil when the user picked "Rename" from a row's context menu —
@@ -147,6 +150,12 @@ struct MainWindowContent: View {
 
     private var filteredItems: [ClipboardItem] {
         vm.filteredItems(allItems)
+    }
+
+    /// The feature tour waits until the FDA card is out of the way and only
+    /// runs on the list screen, where all of its spotlight targets live.
+    private var isTourActive: Bool {
+        !mainFeatureTourSeen && fdaOnboardingDismissed && nav.screen == .list
     }
 
     var body: some View {
@@ -235,6 +244,19 @@ struct MainWindowContent: View {
         .animation(.spring(response: 0.34, dampingFraction: 0.84), value: confirm.request?.id)
         .animation(.spring(response: 0.34, dampingFraction: 0.84), value: ruleEditor.editing?.id)
         .animation(.easeOut(duration: 0.22), value: fdaOnboardingDismissed)
+        // Hosted as an overlay on the whole ZStack because the spotlight
+        // anchors bubble up from the toolbar/header/list beneath — one shared
+        // dim layer can then cut a hole wherever the current target sits.
+        .overlayPreferenceValue(FeatureTourAnchorKey.self) { anchors in
+            if isTourActive {
+                FeatureTourOverlay(anchors: anchors) {
+                    withAnimation(.easeOut(duration: 0.22)) { mainFeatureTourSeen = true }
+                }
+                .ignoresSafeArea()
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.22), value: isTourActive)
         .onAppear {
             refreshDerivedCaches()
         }
@@ -441,6 +463,7 @@ struct MainWindowContent: View {
                     }
                 }
                 .animation(.spring(response: 0.32, dampingFraction: 0.82), value: vm.isSelectionMode)
+                .featureTourAnchor(.list)
             }
         }
         // Sits behind everything else — captures Space/↑/↓/Return/⌫ when no
@@ -453,8 +476,10 @@ struct MainWindowContent: View {
             // The list now stays mounted behind Settings/Stats/Trash, so only
             // arm the key catcher on the list screen — a persistent catcher
             // would hold first-responder there and let Space/⌫/arrows act on the
-            // hidden list (a stray ⌫ could even delete a clip).
-            if nav.screen == .list {
+            // hidden list (a stray ⌫ could even delete a clip). Same reasoning
+            // during the feature tour: keys would act on the dimmed list and
+            // pop dialogs on top of the tour.
+            if nav.screen == .list && !isTourActive {
                 PreviewKeyCatcher(
                     items: { navigableItems },
                 focusedID: { vm.focusedItemID },
@@ -748,6 +773,7 @@ struct MainWindowContent: View {
             }
 
             CaptureToggle(isPaused: $vm.isCapturePaused)
+                .featureTourAnchor(.capture)
         }
         .padding(.horizontal, 18)
         .padding(.top, 16)
@@ -757,19 +783,25 @@ struct MainWindowContent: View {
 
     private var toolbar: some View {
         HStack(spacing: 12) {
-            ScopeSegmentedControl(selected: $vm.selectedScope)
+            // Grouped so the feature tour can spotlight the whole
+            // scope/filter/group cluster as one target; inner spacing matches
+            // the outer HStack so the layout is unchanged.
+            HStack(spacing: 12) {
+                ScopeSegmentedControl(selected: $vm.selectedScope)
 
-            ToolbarFilterButton(
-                selectedType: $vm.selectedType,
-                selectedSourceApp: $vm.selectedSourceApp,
-                sourceApps: allKnownSourceAppsCache
-            )
+                ToolbarFilterButton(
+                    selectedType: $vm.selectedType,
+                    selectedSourceApp: $vm.selectedSourceApp,
+                    sourceApps: allKnownSourceAppsCache
+                )
 
-            GroupFilterMenu(
-                groups: groups.sortedForDisplay(),
-                selection: $vm.selectedGroupFilter,
-                onManageGroups: { showGroupManager = true }
-            )
+                GroupFilterMenu(
+                    groups: groups.sortedForDisplay(),
+                    selection: $vm.selectedGroupFilter,
+                    onManageGroups: { showGroupManager = true }
+                )
+            }
+            .featureTourAnchor(.filters)
 
             // Sort control — only meaningful inside 收藏, where the list no
             // longer has to stay strictly reverse-chronological.
@@ -800,37 +832,44 @@ struct MainWindowContent: View {
                     .frame(width: 0, height: 0)
                     .accessibilityHidden(true)
             )
+            .featureTourAnchor(.search)
 
-            ToolbarIconButton(systemName: "square.and.pencil", help: L("toolbar.newSnippet")) {
-                vm.showSnippetEditor = true
-            }
-            .keyboardShortcut("n", modifiers: .command)
+            // Grouped for the same reason as the filter cluster above: the
+            // feature tour spotlights snippet/multi-select/trash/stats/settings
+            // as one target.
+            HStack(spacing: 12) {
+                ToolbarIconButton(systemName: "square.and.pencil", help: L("toolbar.newSnippet")) {
+                    vm.showSnippetEditor = true
+                }
+                .keyboardShortcut("n", modifiers: .command)
 
-            ToolbarIconButton(
-                systemName: vm.isSelectionMode ? "checkmark.circle.fill" : "checkmark.circle",
-                help: vm.isSelectionMode ? L("toolbar.exitSelection") : L("toolbar.multiSelect")
-            ) {
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
-                    if vm.isSelectionMode {
-                        vm.exitSelectionMode()
-                    } else {
-                        vm.enterSelectionMode()
+                ToolbarIconButton(
+                    systemName: vm.isSelectionMode ? "checkmark.circle.fill" : "checkmark.circle",
+                    help: vm.isSelectionMode ? L("toolbar.exitSelection") : L("toolbar.multiSelect")
+                ) {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                        if vm.isSelectionMode {
+                            vm.exitSelectionMode()
+                        } else {
+                            vm.enterSelectionMode()
+                        }
                     }
                 }
-            }
 
-            ToolbarIconButton(systemName: "trash", help: L("toolbar.trash")) {
-                nav.showTrash()
-            }
+                ToolbarIconButton(systemName: "trash", help: L("toolbar.trash")) {
+                    nav.showTrash()
+                }
 
-            ToolbarIconButton(systemName: "chart.bar.xaxis", help: L("toolbar.stats")) {
-                nav.showStats()
-            }
+                ToolbarIconButton(systemName: "chart.bar.xaxis", help: L("toolbar.stats")) {
+                    nav.showStats()
+                }
 
-            ToolbarIconButton(systemName: "gearshape", help: L("toolbar.settings")) {
-                nav.showSettings()
+                ToolbarIconButton(systemName: "gearshape", help: L("toolbar.settings")) {
+                    nav.showSettings()
+                }
+                .keyboardShortcut(",", modifiers: .command)
             }
-            .keyboardShortcut(",", modifiers: .command)
+            .featureTourAnchor(.actions)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
