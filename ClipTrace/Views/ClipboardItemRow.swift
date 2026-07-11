@@ -430,6 +430,258 @@ struct ClipboardItemRow: View, Equatable {
     }
 }
 
+/// A denser, image-forward counterpart to `ClipboardItemRow` for the main
+/// window's adaptive grid. Full commands remain available from the shared
+/// paper context menu; the four most frequent actions stay one hover away.
+struct ClipboardItemGridCard: View, Equatable {
+    let item: ClipboardItem
+    var groupNames: [String] = []
+    var isSelectionMode: Bool = false
+    var isSelected: Bool = false
+    var protectionVersion: Int = 0
+    var onCopy: () -> Void = {}
+    var onPreview: () -> Void = {}
+    var onToggleFavorite: () -> Void = {}
+    var onTogglePin: () -> Void = {}
+
+    @State private var isHovered = false
+    @State private var detectedColorCache: Color?
+    @State private var detectedColorComputed = false
+
+    static func == (lhs: ClipboardItemGridCard, rhs: ClipboardItemGridCard) -> Bool {
+        lhs.item.id == rhs.item.id
+            && lhs.groupNames == rhs.groupNames
+            && lhs.isSelected == rhs.isSelected
+            && lhs.isSelectionMode == rhs.isSelectionMode
+            && lhs.protectionVersion == rhs.protectionVersion
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            previewSurface
+
+            ZStack(alignment: .leading) {
+                HStack(spacing: 5) {
+                    if let firstGroup = groupNames.first {
+                        Image(systemName: "folder.fill")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Color.appAccent)
+                        Text(firstGroup)
+                            .foregroundStyle(Color.appAccent)
+                            .lineLimit(1)
+                        rowDot
+                    }
+                    Text(item.sourceApp)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Text(item.formattedDate)
+                        .monospacedDigit()
+                        .fixedSize()
+                }
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .opacity(isHovered && !isSelectionMode ? 0 : 1)
+
+                if !isSelectionMode {
+                    HStack(spacing: 3) {
+                        HoverIconButton(systemName: "doc.on.doc", help: L("action.copy"), action: onCopy)
+                        HoverIconButton(systemName: "eye", help: L("action.preview"), action: onPreview)
+                        HoverIconButton(
+                            systemName: item.isPinned ? "pin.fill" : "pin",
+                            help: item.isPinned ? L("action.unpin") : L("action.pin"),
+                            tint: item.isPinned ? .orange : nil,
+                            action: onTogglePin
+                        )
+                        HoverIconButton(
+                            systemName: item.isFavorite ? "star.fill" : "star",
+                            help: item.isFavorite ? L("action.unfavorite") : L("action.favorite"),
+                            tint: item.isFavorite ? .yellow : nil,
+                            action: onToggleFavorite
+                        )
+                    }
+                    .opacity(isHovered ? 1 : 0)
+                }
+            }
+            .frame(height: 28)
+            .animation(.easeOut(duration: 0.12), value: isHovered)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, minHeight: 242, maxHeight: 242, alignment: .topLeading)
+        .background {
+            if staticSelected {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.appAccent.opacity(0.10))
+            }
+        }
+        .paperCard(cornerRadius: 14, isHovered: isHovered, isSelected: staticSelected)
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.12)) { isHovered = hovering }
+        }
+        .task(id: item.id) {
+            guard !detectedColorComputed else { return }
+            detectedColorComputed = true
+            if item.itemType == .text {
+                detectedColorCache = ColorValueParser.color(from: item.content)
+            }
+        }
+    }
+
+    private var previewSurface: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.appChipFill)
+
+            if let detectedColor = detectedColorCache {
+                ZStack {
+                    Color.white
+                    Checkerboard(squareSize: 9)
+                        .fill(Color.secondary.opacity(0.25))
+                    detectedColor
+                }
+            } else if showsLargeThumbnail {
+                GeometryReader { proxy in
+                    ThumbnailView(
+                        item: item,
+                        width: proxy.size.width,
+                        height: proxy.size.height,
+                        cornerRadius: 10,
+                        contentMode: item.itemType == .image ? .fit : .fill
+                    )
+                }
+            } else {
+                ZStack(alignment: .bottomTrailing) {
+                    Image(systemName: item.itemType.icon)
+                        .font(.system(size: 56, weight: .ultraLight))
+                        .foregroundStyle(Color.appAccent.opacity(0.08))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                        .padding(10)
+
+                    Text(previewText)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.primary.opacity(0.76))
+                        .lineLimit(9)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 39)
+                        .padding(.bottom, 10)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 184)
+        .overlay(alignment: .top) {
+            previewBadges
+                .padding(8)
+        }
+        .overlay(alignment: .bottomLeading) {
+            if item.itemType == .image {
+                imageTitleOverlay
+                    .padding(8)
+            }
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.appCardBorder.opacity(0.8), lineWidth: 0.5)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private var previewBadges: some View {
+        HStack(spacing: 6) {
+            if isSelectionMode {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 17, weight: .regular))
+                    .foregroundStyle(isSelected ? Color.appAccent : Color.secondary.opacity(0.7))
+                    .contentTransition(.symbolEffect(.replace))
+                    .padding(4)
+                    .background(Circle().fill(Color.appPaper.opacity(0.92)))
+            }
+
+            Label(item.descriptiveTag, systemImage: item.itemType.icon)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(Color.appPaper.opacity(0.92))
+                )
+
+            Spacer(minLength: 4)
+
+            if item.isPinned || item.isFavorite || rowProtection.isProtected {
+                HStack(spacing: 6) {
+                    if item.isPinned {
+                        Image(systemName: "pin.fill")
+                            .foregroundStyle(.orange)
+                    }
+                    if item.isFavorite {
+                        Image(systemName: "star.fill")
+                            .foregroundStyle(.yellow)
+                    }
+                    if rowProtection.isProtected {
+                        Image(systemName: "lock.shield.fill")
+                            .foregroundStyle(Color.appAccent)
+                            .help(L("protection.badge.tooltip"))
+                    }
+                }
+                .font(.system(size: 10, weight: .semibold))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 5)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(Color.appPaper.opacity(0.92))
+                )
+            }
+        }
+    }
+
+    private var staticSelected: Bool {
+        isSelected && isSelectionMode
+    }
+
+    private var showsLargeThumbnail: Bool {
+        switch item.itemType {
+        case .image, .video, .file: return true
+        case .text, .url, .rtf: return false
+        }
+    }
+
+    private var rowProtection: ContentProtectionResult {
+        ContentProtector.redact(item.preview ?? item.content)
+    }
+
+    private var previewText: String {
+        item.gridPreviewContent
+    }
+
+    private var rowDot: some View {
+        Circle()
+            .fill(.tertiary)
+            .frame(width: 2.5, height: 2.5)
+            .opacity(0.7)
+    }
+
+    private var imageTitleOverlay: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "photo")
+            Text(item.gridImageTitle)
+                .lineLimit(1)
+        }
+        .font(.system(size: 10, weight: .semibold))
+        .foregroundStyle(Color.white)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(
+            Capsule(style: .continuous)
+                .fill(Color.appMetal.opacity(0.82))
+        )
+    }
+}
+
 struct HoverIconButton: View {
     let systemName: String
     let help: String

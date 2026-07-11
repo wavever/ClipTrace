@@ -62,6 +62,7 @@ ClipTrace is an open-source macOS clipboard manager with offline semantic search
 - Soft-delete trash with restore, permanent delete, and retention controls
 - Global hotkeys for the main window and snippets
 - Efficient image storage — clipboard images are kept compressed with external binary storage, so memory and disk usage stay low even with a long image history
+- Switch between list and grid layouts: the main window uses a responsive grid, while Quick Paste and the menu bar panel offer independently configurable two-column grids in Settings. Grid image previews preserve their aspect ratio and show the image name as an in-place overlay.
 
 ### Search and Organization
 

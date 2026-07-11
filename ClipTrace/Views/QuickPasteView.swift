@@ -9,7 +9,7 @@ struct QuickPasteView: View {
     /// concatenation order at commit time.
     @State private var selectedIDs: [UUID] = []
     @State private var hoverID: UUID? = nil
-    /// Row highlighted by the keyboard flow (↑/↓). Distinct from `selectedIDs`:
+    /// Card highlighted by the arrow-key flow. Distinct from `selectedIDs`:
     /// focus just marks where the cursor is; the commit key acts on it.
     @State private var focusedID: UUID? = nil
     /// Live text in the search field. Trails into `state.searchQuery` after a
@@ -21,6 +21,7 @@ struct QuickPasteView: View {
     /// Bumped to hand first-responder back to the key catcher when search
     /// focus ends — otherwise ↑/↓ would go nowhere after Esc.
     @State private var keyClaimToken = 0
+    @AppStorage("quickPasteContentLayout") private var contentLayoutRaw = PanelContentLayout.list.rawValue
 
     @ObservedObject private var keyStore = QuickPasteKeyStore.shared
     @ObservedObject private var previewSettings = HoverPreviewSettings.shared
@@ -42,6 +43,10 @@ struct QuickPasteView: View {
     private var selectedItems: [ClipboardItem] {
         selectedIDs.compactMap { id in items.first(where: { $0.id == id }) }
     }
+    private var contentLayout: PanelContentLayout {
+        PanelContentLayout(rawValue: contentLayoutRaw) ?? .list
+    }
+    private var usesGrid: Bool { contentLayout == .grid }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -62,10 +67,10 @@ struct QuickPasteView: View {
         .background(
             QuickPasteKeyCatcher(
                 claimFocusToken: keyClaimToken,
-                onLeft: { switchGroup(by: -1) },
-                onRight: { switchGroup(by: 1) },
-                onUp: { moveFocus(by: -1) },
-                onDown: { moveFocus(by: 1) },
+                onLeft: { usesGrid ? moveFocusHorizontally(by: -1) : switchGroup(by: -1) },
+                onRight: { usesGrid ? moveFocusHorizontally(by: 1) : switchGroup(by: 1) },
+                onUp: { moveFocusVertically(by: -1) },
+                onDown: { moveFocusVertically(by: 1) },
                 onToggleSelect: { toggleFocusedSelection() },
                 onCommit: { plainText in commitFromKeyboard(plainText: plainText) }
             )
@@ -159,8 +164,9 @@ struct QuickPasteView: View {
     /// "↑↓ move · Space select · ↩ paste" — surfaces the keyboard flow and the
     /// (possibly customized) toggle/commit keys right in the panel.
     private var keyboardHint: String {
-        let group = sortedGroups.isEmpty ? nil : "←→ \(L("quickpaste.hint.kbdGroup"))"
-        let move = "↑↓ \(L("quickpaste.hint.kbdMove"))"
+        let group = usesGrid || sortedGroups.isEmpty ? nil : "←→ \(L("quickpaste.hint.kbdGroup"))"
+        let arrows = usesGrid ? "←↑↓→" : "↑↓"
+        let move = "\(arrows) \(L("quickpaste.hint.kbdMove"))"
         let toggle = "\(keyStore.toggleSelectShortcut.description) \(L("quickpaste.hint.kbdToggle"))"
         let paste = "\(keyStore.commitShortcut.description) \(L("quickpaste.hint.kbdPaste"))"
         return [group, move, toggle, paste].compactMap(\.self).joined(separator: "  ·  ")
@@ -217,7 +223,7 @@ struct QuickPasteView: View {
                 .background(
                     SearchArrowRouter(
                         isActive: { searchFocused },
-                        onMove: { delta in moveFocus(by: delta) }
+                        onMove: { delta in moveFocusVertically(by: delta) }
                     )
                 )
             if !searchDraft.isEmpty {
@@ -255,17 +261,32 @@ struct QuickPasteView: View {
     private var list: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 4) {
+                Group {
                     if items.isEmpty {
                         emptyState
+                    } else if usesGrid {
+                        LazyVGrid(
+                            columns: [
+                                GridItem(.flexible(), spacing: 6, alignment: .top),
+                                GridItem(.flexible(), spacing: 6, alignment: .top)
+                            ],
+                            spacing: 6
+                        ) {
+                            ForEach(items, id: \.id) { item in
+                                gridCard(for: item)
+                            }
+                        }
                     } else {
-                        ForEach(items, id: \.id) { item in
-                            row(for: item)
+                        LazyVStack(spacing: 4) {
+                            ForEach(items, id: \.id) { item in
+                                row(for: item)
+                            }
                         }
                     }
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
+                .id(contentLayout)
             }
             .onChange(of: focusedID) { _, newValue in
                 guard let newValue else { return }
@@ -413,6 +434,142 @@ struct QuickPasteView: View {
         }
     }
 
+    private func gridCard(for item: ClipboardItem) -> some View {
+        let order = selectedIDs.firstIndex(of: item.id).map { $0 + 1 }
+        let isSelected = order != nil
+        let isHover = hoverID == item.id
+        let isFocused = focusedID == item.id
+        let previewContent = item.gridPreviewContent
+
+        return VStack(alignment: .leading, spacing: 5) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color.appChipFill)
+
+                if showsGridThumbnail(item) {
+                    GeometryReader { proxy in
+                        ThumbnailView(
+                            item: item,
+                            width: proxy.size.width,
+                            height: proxy.size.height,
+                            cornerRadius: 7,
+                            contentMode: item.itemType == .image ? .fit : .fill
+                        )
+                    }
+                } else {
+                    ZStack(alignment: .bottomTrailing) {
+                        Image(systemName: item.itemType.icon)
+                            .font(.system(size: 38, weight: .ultraLight))
+                            .foregroundStyle(Color.appAccent.opacity(0.08))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                            .padding(7)
+                        Text(previewContent)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.primary.opacity(0.78))
+                            .lineLimit(6)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            .padding(7)
+                    }
+                }
+
+                if item.itemType == .image {
+                    VStack {
+                        Spacer(minLength: 0)
+                        HStack(spacing: 4) {
+                            Image(systemName: "photo")
+                            Text(item.gridImageTitle)
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Color.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
+                        .background(Color.appMetal.opacity(0.82))
+                    }
+                }
+            }
+            .frame(height: 99)
+            .overlay(alignment: .topLeading) {
+                ZStack {
+                    Circle()
+                        .fill(isSelected ? Color.appAccent : Color.appPaper.opacity(0.92))
+                        .frame(width: 22, height: 22)
+                    if let order {
+                        Text("\(order)")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.white)
+                    } else {
+                        Image(systemName: item.itemType.icon)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(5)
+            }
+            .overlay(alignment: .topTrailing) {
+                if item.isPinned {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.orange)
+                        .padding(6)
+                        .background(Circle().fill(Color.appPaper.opacity(0.92)))
+                        .padding(5)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+
+            HStack(spacing: 4) {
+                Text(item.sourceApp.isEmpty ? L("common.unknownSource") : item.sourceApp)
+                    .lineLimit(1)
+                Spacer(minLength: 2)
+                Text(item.formattedDate)
+                    .monospacedDigit()
+                    .fixedSize()
+            }
+            .font(.system(size: 9.5))
+            .foregroundStyle(.tertiary)
+        }
+        .padding(6)
+        .frame(maxWidth: .infinity, minHeight: 128, maxHeight: 128, alignment: .topLeading)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isSelected
+                      ? Color.appAccent.opacity(0.12)
+                      : (isHover ? Color.secondary.opacity(0.10) : Color.clear))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(isFocused ? Color.appAccent : Color.appCardBorder.opacity(0.55), lineWidth: isFocused ? 1.5 : 0.5)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.12)) {
+                hoverID = hovering ? item.id : nil
+            }
+        }
+        .onTapGesture(count: 2) {
+            state.onCommit([item], false)
+        }
+        .onTapGesture {
+            focusedID = item.id
+            toggle(item.id)
+        }
+        .contextMenu {
+            Button(item.isPinned ? L("action.unpin") : L("action.pin"),
+                   systemImage: item.isPinned ? "pin.slash" : "pin") {
+                state.onTogglePin(item)
+            }
+        }
+    }
+
+    private func showsGridThumbnail(_ item: ClipboardItem) -> Bool {
+        switch item.itemType {
+        case .image, .video, .file: return true
+        case .text, .url, .rtf: return false
+        }
+    }
+
     private var footer: some View {
         HStack(spacing: 8) {
             Button {
@@ -508,12 +665,41 @@ struct QuickPasteView: View {
         }
     }
 
-    private func moveFocus(by delta: Int) {
+    private func moveFocusVertically(by delta: Int) {
         let ordered = visualItems
         guard !ordered.isEmpty else { return }
         let current = ordered.firstIndex(where: { $0.id == focusedID }) ?? 0
-        let next = min(max(0, current + delta), ordered.count - 1)
+        guard usesGrid else {
+            let next = min(max(0, current + delta), ordered.count - 1)
+            focusedID = ordered[next].id
+            return
+        }
+
+        let columns = 2
+        let row = current / columns
+        let lastRow = (ordered.count - 1) / columns
+        let next: Int
+        if delta < 0 {
+            next = row > 0 ? current - columns : current
+        } else if row < lastRow {
+            next = min(current + columns, ordered.count - 1)
+        } else {
+            next = current
+        }
         focusedID = ordered[next].id
+    }
+
+    private func moveFocusHorizontally(by delta: Int) {
+        let ordered = visualItems
+        guard !ordered.isEmpty else { return }
+        let current = ordered.firstIndex(where: { $0.id == focusedID }) ?? 0
+        let column = current % 2
+        let candidate = current + delta
+        let canMove = delta < 0
+            ? column > 0
+            : column == 0 && candidate < ordered.count
+        guard canMove else { return }
+        focusedID = ordered[candidate].id
     }
 
     /// Commit triggered by the commit key or the Paste button. Honors an
@@ -576,7 +762,7 @@ struct QuickPasteView: View {
 
 /// Invisible AppKit view that drives the QuickPaste panel's keyboard flow.
 ///
-/// `↑` / `↓` move the focused row; the user-customizable toggle-select key
+/// Arrow keys move the focused item; the user-customizable toggle-select key
 /// adds/removes it from the multi-selection, and the commit key pastes (both
 /// read live from `QuickPasteKeyStore`). Matching runs in both `keyDown`
 /// (plain keys) and `performKeyEquivalent` (modifier combos) so any recorded

@@ -3,8 +3,10 @@ import AppKit
 
 struct ThumbnailView: View {
     let item: ClipboardItem
-    let size: CGFloat
+    let width: CGFloat
+    let height: CGFloat
     let cornerRadius: CGFloat
+    let contentMode: ContentMode
     /// When set, overrides the per-type placeholder tint for both the glyph and
     /// its background. The menu bar passes `.primary` so the icon matches the
     /// row's text and stays legible on its translucent dark backdrop, where the
@@ -12,13 +14,37 @@ struct ThumbnailView: View {
     let placeholderTint: Color?
 
     @State private var image: NSImage?
-    @State private var didAttemptLoad = false
-
-    init(item: ClipboardItem, size: CGFloat = 36, cornerRadius: CGFloat = 6, placeholderTint: Color? = nil) {
+    init(
+        item: ClipboardItem,
+        size: CGFloat = 36,
+        cornerRadius: CGFloat = 6,
+        placeholderTint: Color? = nil,
+        contentMode: ContentMode = .fill
+    ) {
         self.item = item
-        self.size = size
+        self.width = size
+        self.height = size
         self.cornerRadius = cornerRadius
         self.placeholderTint = placeholderTint
+        self.contentMode = contentMode
+    }
+
+    /// Rectangular thumbnails let image-forward surfaces use their full width
+    /// while the square initializer above keeps compact list rows unchanged.
+    init(
+        item: ClipboardItem,
+        width: CGFloat,
+        height: CGFloat,
+        cornerRadius: CGFloat = 6,
+        placeholderTint: Color? = nil,
+        contentMode: ContentMode = .fill
+    ) {
+        self.item = item
+        self.width = width
+        self.height = height
+        self.cornerRadius = cornerRadius
+        self.placeholderTint = placeholderTint
+        self.contentMode = contentMode
     }
 
     // Per-type warm muted palette. Replaces the previous saturated system
@@ -68,8 +94,8 @@ struct ThumbnailView: View {
             if let image {
                 Image(nsImage: image)
                     .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: size, height: size)
+                    .aspectRatio(contentMode: contentMode)
+                    .frame(width: width, height: height)
                     .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
                     .overlay(
                         RoundedRectangle(cornerRadius: cornerRadius)
@@ -78,18 +104,17 @@ struct ThumbnailView: View {
             } else {
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .fill(iconColor.opacity(0.12))
-                    .frame(width: size, height: size)
+                    .frame(width: width, height: height)
                     .overlay {
                         Image(systemName: item.itemType.icon)
-                            .font(.system(size: size * 0.45))
+                            .font(.system(size: min(width, height) * 0.38))
                             .foregroundStyle(iconColor)
                     }
             }
         }
-        .task(id: item.id) {
-            guard !didAttemptLoad, canHaveThumbnail else { return }
-            didAttemptLoad = true
-            let target = CGSize(width: size * 2, height: size * 2)
+        .task(id: taskID) {
+            guard canHaveThumbnail else { return }
+            let target = CGSize(width: width * 2, height: height * 2)
             // Build the Sendable snapshot on the main actor where the SwiftData
             // model is safe to touch, then hand off to the loader's actor for
             // decode/resize.
@@ -100,5 +125,11 @@ struct ThumbnailView: View {
             }
             image = await ThumbnailLoader.shared.thumbnail(request, size: target)
         }
+    }
+
+    /// Resize-driven reloads are cache-backed, so a window resize upgrades the
+    /// preview resolution without repeatedly decoding at the same dimensions.
+    private var taskID: String {
+        "\(item.id.uuidString)-\(Int(width.rounded()))x\(Int(height.rounded()))"
     }
 }

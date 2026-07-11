@@ -215,6 +215,7 @@ struct MenuBarContent: View {
     /// when the main window opens on another Space.
     @State private var hostWindow: NSWindow?
     @FocusState private var searchFocused: Bool
+    @AppStorage("menuBarContentLayout") private var contentLayoutRaw = PanelContentLayout.list.rawValue
 
     private static let listHeight: CGFloat = 460
 
@@ -258,6 +259,14 @@ struct MenuBarContent: View {
 
     private var allItems: [ClipboardItem] {
         historyStore.items
+    }
+    private var contentLayout: PanelContentLayout {
+        PanelContentLayout(rawValue: contentLayoutRaw) ?? .list
+    }
+    /// The Dynamic Island surface is intentionally always linear: its narrow,
+    /// variable width is a different interaction target from the menu panel.
+    private var usesGrid: Bool {
+        contentLayout == .grid && !surfaceStyle.isIsland
     }
 
     var body: some View {
@@ -522,13 +531,28 @@ struct MenuBarContent: View {
     private func itemList(items: [ClipboardItem], canLoadMore: Bool) -> some View {
         ScrollView {
             LazyVStack(spacing: 2) {
-                menuRows(items: items)
+                if usesGrid {
+                    LazyVGrid(
+                        columns: [
+                            GridItem(.flexible(), spacing: 6, alignment: .top),
+                            GridItem(.flexible(), spacing: 6, alignment: .top)
+                        ],
+                        spacing: 6
+                    ) {
+                        menuRows(items: items)
+                    }
+                } else {
+                    LazyVStack(spacing: 2) {
+                        menuRows(items: items)
+                    }
+                }
 
                 if canLoadMore {
                     loadMoreTrigger
                 }
             }
             .padding(6)
+            .id(contentLayout)
         }
         // Use a fixed height, not just `maxHeight`: the menu panel must grow
         // even when the current history has fewer rows than the visible area.
@@ -554,6 +578,7 @@ struct MenuBarContent: View {
             item: item,
             groupName: nil,
             surfaceStyle: surfaceStyle,
+            presentation: usesGrid ? .grid : .list,
             onCopy: { vm.copyToClipboard(item) },
             onCopyPlainText: { vm.copyAsPlainText(item) },
             onBase64Encode: { _ = vm.copyBase64Encoded(item) },
@@ -939,6 +964,7 @@ struct MenuBarRow: View {
     let item: ClipboardItem
     var groupName: String? = nil
     var surfaceStyle: MenuBarSurfaceStyle = .paper
+    var presentation: PanelContentLayout = .list
     let onCopy: () -> Void
     var onCopyPlainText: (() -> Void)? = nil
     var onBase64Encode: (() -> Void)? = nil
@@ -955,79 +981,33 @@ struct MenuBarRow: View {
     @State private var resetTask: Task<Void, Never>?
 
     var body: some View {
-        HStack(spacing: 9) {
-            ThumbnailView(item: item, size: 26, cornerRadius: 5, placeholderTint: surfaceStyle.thumbnailTint)
-
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 4) {
-                    if item.isPinned {
-                        Image(systemName: "pin.fill")
-                            .font(.system(size: 8))
-                            .foregroundStyle(.orange)
-                    }
-                    if item.isFavorite {
-                        Image(systemName: "star.fill")
-                            .font(.system(size: 8))
-                            .foregroundStyle(.yellow)
-                    }
-                    Text(item.effectiveCustomTitle ?? item.redactedForDisplay(item.preview ?? item.content))
-                        .font(.system(size: 12))
-                        .foregroundStyle(surfaceStyle.primaryText)
-                        .lineLimit(1)
-                }
-                HStack(spacing: 4) {
-                    if item.sourceApp == L("remote.universalClipboard") {
-                        Image(systemName: "iphone.and.arrow.forward")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(Color.appAccent)
-                    }
-                    Text("\(item.sourceApp) · \(item.formattedDate)")
-                        .font(.system(size: 10))
-                        .foregroundStyle(surfaceStyle.secondaryText)
-                        .lineLimit(1)
-                    if let groupName {
-                        Text("·")
-                            .font(.system(size: 10))
-                            .foregroundStyle(surfaceStyle.tertiaryText)
-                        HStack(spacing: 2) {
-                            Image(systemName: "folder.fill")
-                                .font(.system(size: 8, weight: .semibold))
-                            Text(groupName)
-                        }
-                        .font(.system(size: 10))
-                        .foregroundStyle(Color.appAccent)
-                        .lineLimit(1)
-                    }
-                }
-            }
-
-            Spacer(minLength: 6)
-
-            if isHovered || copySucceeded {
-                Button {
-                    triggerCopy()
-                } label: {
-                    Image(systemName: copySucceeded ? "checkmark" : "doc.on.doc")
-                        .font(.system(size: 11, weight: copySucceeded ? .bold : .regular))
-                        .foregroundStyle(copySucceeded ? Color.appAccent : surfaceStyle.secondaryText)
-                        .frame(width: 22, height: 22)
-                        .background(
-                            RoundedRectangle(cornerRadius: 5)
-                                .fill(copySucceeded ? surfaceStyle.controlFillActive : surfaceStyle.controlFill)
-                        )
-                }
-                .buttonStyle(.plain)
-                .help(copySucceeded ? L("common.copied") : L("common.copy"))
-                .transition(.opacity)
+        Group {
+            if presentation == .grid {
+                gridContent
+            } else {
+                listContent
             }
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, presentation == .grid ? 6 : 8)
         .padding(.vertical, 6)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: presentation == .grid ? 124 : nil,
+            maxHeight: presentation == .grid ? 124 : nil,
+            alignment: .topLeading
+        )
         .background(
-            RoundedRectangle(cornerRadius: 6)
+            RoundedRectangle(cornerRadius: presentation == .grid ? 8 : 6)
                 .fill(isHovered ? surfaceStyle.rowHoverFill : .clear)
         )
-        .contentShape(Rectangle())
+        .overlay(
+            RoundedRectangle(cornerRadius: presentation == .grid ? 8 : 6)
+                .strokeBorder(
+                    presentation == .grid ? Color.appCardBorder.opacity(0.55) : Color.clear,
+                    lineWidth: 0.5
+                )
+        )
+        .contentShape(RoundedRectangle(cornerRadius: presentation == .grid ? 8 : 6))
         .onTapGesture(count: 2) { triggerCopy() }
         .onHover {
             isHovered = $0
@@ -1073,6 +1053,180 @@ struct MenuBarRow: View {
                    systemImage: item.isPinned ? "pin.slash" : "pin") {
                 onTogglePin()
             }
+        }
+    }
+
+    private var listContent: some View {
+        HStack(spacing: 9) {
+            ThumbnailView(item: item, size: 26, cornerRadius: 5, placeholderTint: surfaceStyle.thumbnailTint)
+
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
+                    if item.isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.system(size: 8))
+                            .foregroundStyle(.orange)
+                    }
+                    if item.isFavorite {
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 8))
+                            .foregroundStyle(.yellow)
+                    }
+                    Text(displayTitle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(surfaceStyle.primaryText)
+                        .lineLimit(1)
+                }
+                HStack(spacing: 4) {
+                    if item.sourceApp == L("remote.universalClipboard") {
+                        Image(systemName: "iphone.and.arrow.forward")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Color.appAccent)
+                    }
+                    Text("\(item.sourceApp) · \(item.formattedDate)")
+                        .font(.system(size: 10))
+                        .foregroundStyle(surfaceStyle.secondaryText)
+                        .lineLimit(1)
+                    if let groupName {
+                        Text("·")
+                            .font(.system(size: 10))
+                            .foregroundStyle(surfaceStyle.tertiaryText)
+                        HStack(spacing: 2) {
+                            Image(systemName: "folder.fill")
+                                .font(.system(size: 8, weight: .semibold))
+                            Text(groupName)
+                        }
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.appAccent)
+                        .lineLimit(1)
+                    }
+                }
+            }
+
+            Spacer(minLength: 6)
+
+            if isHovered || copySucceeded {
+                copyButton
+            }
+        }
+    }
+
+    private var gridContent: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(surfaceStyle.controlFill)
+
+                if showsGridThumbnail {
+                    GeometryReader { proxy in
+                        ThumbnailView(
+                            item: item,
+                            width: proxy.size.width,
+                            height: proxy.size.height,
+                            cornerRadius: 7,
+                            placeholderTint: surfaceStyle.thumbnailTint,
+                            contentMode: item.itemType == .image ? .fit : .fill
+                        )
+                    }
+                } else {
+                    ZStack(alignment: .bottomTrailing) {
+                        Image(systemName: item.itemType.icon)
+                            .font(.system(size: 38, weight: .ultraLight))
+                            .foregroundStyle(Color.appAccent.opacity(0.08))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                            .padding(6)
+                        Text(gridPreviewText)
+                            .font(.system(size: 10))
+                            .foregroundStyle(surfaceStyle.primaryText.opacity(0.80))
+                            .lineLimit(5)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            .padding(.horizontal, 7)
+                            .padding(.top, 28)
+                            .padding(.bottom, 5)
+                    }
+                }
+
+                if item.itemType == .image {
+                    VStack {
+                        Spacer(minLength: 0)
+                        HStack(spacing: 4) {
+                            Image(systemName: "photo")
+                            Text(item.gridImageTitle)
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Color.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
+                        .background(Color.appMetal.opacity(0.82))
+                    }
+                }
+            }
+            .frame(height: 96)
+            .overlay(alignment: .topLeading) {
+                HStack(spacing: 5) {
+                    Image(systemName: item.itemType.icon)
+                    if item.isPinned { Image(systemName: "pin.fill").foregroundStyle(.orange) }
+                    if item.isFavorite { Image(systemName: "star.fill").foregroundStyle(.yellow) }
+                }
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(surfaceStyle.secondaryText)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(surfaceStyle.background.opacity(0.92)))
+                .padding(5)
+            }
+            .overlay(alignment: .topTrailing) {
+                if isHovered || copySucceeded {
+                    copyButton.padding(4)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+
+            HStack(spacing: 3) {
+                Text(item.sourceApp)
+                    .lineLimit(1)
+                Spacer(minLength: 2)
+                Text(item.formattedDate)
+                    .monospacedDigit()
+                    .fixedSize()
+            }
+            .font(.system(size: 9))
+            .foregroundStyle(surfaceStyle.tertiaryText)
+        }
+    }
+
+    private var copyButton: some View {
+        Button {
+            triggerCopy()
+        } label: {
+            Image(systemName: copySucceeded ? "checkmark" : "doc.on.doc")
+                .font(.system(size: 11, weight: copySucceeded ? .bold : .regular))
+                .foregroundStyle(copySucceeded ? Color.appAccent : surfaceStyle.secondaryText)
+                .frame(width: 22, height: 22)
+                .background(
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(copySucceeded ? surfaceStyle.controlFillActive : surfaceStyle.controlFill)
+                )
+        }
+        .buttonStyle(.plain)
+        .help(copySucceeded ? L("common.copied") : L("common.copy"))
+        .transition(.opacity)
+    }
+
+    private var displayTitle: String {
+        item.effectiveCustomTitle ?? item.redactedForDisplay(item.preview ?? item.content)
+    }
+
+    private var gridPreviewText: String {
+        item.gridPreviewContent
+    }
+
+    private var showsGridThumbnail: Bool {
+        switch item.itemType {
+        case .image, .video, .file: return true
+        case .text, .url, .rtf: return false
         }
     }
 

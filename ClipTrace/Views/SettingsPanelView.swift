@@ -486,6 +486,8 @@ private struct GeneralSection: View {
     @AppStorage("fdaOnboardingDismissed") private var fdaOnboardingDismissed = false
     @AppStorage("videoPreviewMode") private var videoPreviewModeRaw = VideoPreviewMode.video.rawValue
     @AppStorage("videoPreviewMuted") private var videoPreviewMuted = true
+    @AppStorage("menuBarContentLayout") private var menuBarContentLayoutRaw = PanelContentLayout.list.rawValue
+    @AppStorage("quickPasteContentLayout") private var quickPasteContentLayoutRaw = PanelContentLayout.list.rawValue
     @ObservedObject private var hoverPreview = HoverPreviewSettings.shared
     @ObservedObject private var nav = AppNavigation.shared
     @EnvironmentObject private var vm: ClipboardViewModel
@@ -507,6 +509,18 @@ private struct GeneralSection: View {
         Binding(
             get: { VideoPreviewMode(rawValue: videoPreviewModeRaw) ?? .video },
             set: { videoPreviewModeRaw = $0.rawValue }
+        )
+    }
+    private var menuBarContentLayoutBinding: Binding<PanelContentLayout> {
+        Binding(
+            get: { PanelContentLayout(rawValue: menuBarContentLayoutRaw) ?? .list },
+            set: { menuBarContentLayoutRaw = $0.rawValue }
+        )
+    }
+    private var quickPasteContentLayoutBinding: Binding<PanelContentLayout> {
+        Binding(
+            get: { PanelContentLayout(rawValue: quickPasteContentLayoutRaw) ?? .list },
+            set: { quickPasteContentLayoutRaw = $0.rawValue }
         )
     }
     private var hoverDelayOptions: [PaperMenuOption<Double>] {
@@ -671,6 +685,44 @@ private struct GeneralSection: View {
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .tint(.appAccent)
+                }
+            }
+
+            SettingsGroup(
+                icon: "rectangle.grid.2x2",
+                title: L("settings.panelLayout.title"),
+                tint: .appAccent
+            ) {
+                SettingsRow(
+                    icon: "menubar.rectangle",
+                    iconTint: .appAccent,
+                    title: L("settings.panelLayout.menuBar"),
+                    subtitle: L("settings.panelLayout.menuBar.subtitle")
+                ) {
+                    SettingsSegmented(
+                        selection: menuBarContentLayoutBinding,
+                        options: PanelContentLayout.allCases.map {
+                            .init(value: $0, title: $0.displayName, icon: $0.icon)
+                        },
+                        tint: .appAccent
+                    )
+                    .frame(width: 220)
+                }
+
+                SettingsRow(
+                    icon: "keyboard",
+                    iconTint: .appAccent,
+                    title: L("settings.panelLayout.quickPaste"),
+                    subtitle: L("settings.panelLayout.quickPaste.subtitle")
+                ) {
+                    SettingsSegmented(
+                        selection: quickPasteContentLayoutBinding,
+                        options: PanelContentLayout.allCases.map {
+                            .init(value: $0, title: $0.displayName, icon: $0.icon)
+                        },
+                        tint: .appAccent
+                    )
+                    .frame(width: 220)
                 }
             }
 

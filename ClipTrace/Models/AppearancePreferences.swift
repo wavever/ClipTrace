@@ -51,6 +51,30 @@ enum AppearanceTheme: String, CaseIterable, Identifiable {
     }
 }
 
+/// Independent presentation preference shared by the two compact clipboard
+/// panels. The main window owns a separate layout key because its adaptive
+/// grid has different density and navigation semantics.
+enum PanelContentLayout: String, CaseIterable, Identifiable {
+    case list
+    case grid
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .list: return L("settings.panelLayout.list")
+        case .grid: return L("settings.panelLayout.grid")
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .list: return "list.bullet"
+        case .grid: return "square.grid.2x2"
+        }
+    }
+}
+
 /// User-pickable theme accent. We bypass the asset catalog `AccentColor` slot
 /// because we want runtime switching (no rebuild) and a curated palette that
 /// reads warmer than the macOS system blue. Each case stores its own light /

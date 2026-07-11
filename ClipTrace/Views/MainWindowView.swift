@@ -2,6 +2,34 @@ import SwiftUI
 import SwiftData
 import AppKit
 
+/// Main-window history density. Stored as a raw value so the user's preferred
+/// presentation survives relaunches without adding another settings model.
+private enum MainContentLayout: String {
+    case list
+    case grid
+}
+
+/// Kept in one place because the adaptive grid and keyboard navigator must
+/// agree on how many cards fit in a row at the current window width.
+private enum MainGridMetrics {
+    static let minimumCardWidth: CGFloat = 210
+    static let maximumCardWidth: CGFloat = 320
+    static let spacing: CGFloat = 10
+
+    static func columnCount(for width: CGFloat) -> Int {
+        guard width > 0 else { return 1 }
+        return max(1, Int((width + spacing) / (minimumCardWidth + spacing)))
+    }
+}
+
+private struct MainGridWidthPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 /// Thin wrapper that owns the pagination state and hands the current page
 /// size to `MainWindowContent`. Splitting the view here lets the inner view
 /// rebuild its `@Query` with a fresh `fetchLimit` whenever `pageSize` bumps,
@@ -116,6 +144,8 @@ struct MainWindowContent: View {
     /// being finished or skipped.
     @AppStorage("mainFeatureTourSeen") private var mainFeatureTourSeen = false
     @AppStorage("pinnedCollapsed") private var pinnedCollapsed = false
+    @AppStorage("mainContentLayout") private var contentLayout: MainContentLayout = .list
+    @State private var gridColumnCount = 1
     @State private var isMergingSelection = false
     /// Non-nil when the user picked "Rename" from a row's context menu —
     /// drives the rename sheet at the root level so it survives row-view churn.
@@ -466,7 +496,7 @@ struct MainWindowContent: View {
                 .featureTourAnchor(.list)
             }
         }
-        // Sits behind everything else — captures Space/↑/↓/Return/⌫ when no
+        // Sits behind everything else — captures Space/arrows/Return/⌫ when no
         // editable control owns focus, so QL preview, row navigation, copy,
         // and delete all work from the keyboard even though the actual list
         // rows are SwiftUI views. `navigableItems` (not the raw filtered list)
@@ -482,25 +512,29 @@ struct MainWindowContent: View {
             if nav.screen == .list && !isTourActive {
                 PreviewKeyCatcher(
                     items: { navigableItems },
-                focusedID: { vm.focusedItemID },
-                setFocused: { id in
-                    // Animate just the focus move so the sliding highlight
-                    // springs from the old row to the new one. The scroll-follow
-                    // is a separate, layout-settled step (see `cardList`'s
-                    // onChange): doing it here, synchronously inside the key
-                    // event, raced the layout and stranded the list during fast
-                    // key-repeat. Coherence is automatic anyway — the highlight
-                    // tracks the row's real frame, so it glides with the scroll
-                    // however the scroll is triggered.
-                    withAnimation(Self.focusSpring) { vm.focusedItemID = id }
-                },
-                copyAction: { item in
-                    vm.copyToClipboard(item)
-                    ToastCenter.shared.show(L("common.copied"))
-                },
-                deleteAction: { item in
-                    deleteFocusedAndAdvance(item)
-                }
+                    focusedID: { vm.focusedItemID },
+                    setFocused: { id in
+                        // Animate just the focus move so the sliding highlight
+                        // springs from the old row to the new one. The scroll-follow
+                        // is a separate, layout-settled step (see `cardList`'s
+                        // onChange): doing it here, synchronously inside the key
+                        // event, raced the layout and stranded the list during fast
+                        // key-repeat. Coherence is automatic anyway — the highlight
+                        // tracks the row's real frame, so it glides with the scroll
+                        // however the scroll is triggered.
+                        withAnimation(Self.focusSpring) { vm.focusedItemID = id }
+                    },
+                    navigationColumns: {
+                        contentLayout == .grid ? gridColumnCount : 1
+                    },
+                    navigationSectionCounts: { navigableSectionCounts },
+                    copyAction: { item in
+                        vm.copyToClipboard(item)
+                        ToastCenter.shared.show(L("common.copied"))
+                    },
+                    deleteAction: { item in
+                        deleteFocusedAndAdvance(item)
+                    }
                 )
                 .frame(width: 0, height: 0)
                 .allowsHitTesting(false)
@@ -834,6 +868,8 @@ struct MainWindowContent: View {
             )
             .featureTourAnchor(.search)
 
+            MainLayoutPicker(selection: $contentLayout)
+
             // Grouped for the same reason as the filter cluster above: the
             // feature tour spotlights snippet/multi-select/trash/stats/settings
             // as one target.
@@ -965,6 +1001,17 @@ struct MainWindowContent: View {
         return pinnedCollapsed ? split.others : split.pinned + split.others
     }
 
+    /// Section lengths let grid navigation cross the pinned header without
+    /// pretending the first normal card continues the pinned row. Each section
+    /// starts at column zero in `LazyVGrid`, so the key catcher mirrors that.
+    private var navigableSectionCounts: [Int] {
+        let split = splitItems(for: filteredItems)
+        guard !split.pinned.isEmpty, !pinnedCollapsed else {
+            return split.others.isEmpty ? [] : [split.others.count]
+        }
+        return [split.pinned.count, split.others.count].filter { $0 > 0 }
+    }
+
     /// Copy used by both the row trash button and the context-menu delete:
     /// pops the shared confirm dialog, then soft-deletes (to trash) or
     /// hard-deletes depending on the trash setting.
@@ -1017,15 +1064,58 @@ struct MainWindowContent: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 8) {
-                    if !split.pinned.isEmpty {
-                        pinnedHeader(count: split.pinned.count)
-                        if !pinnedCollapsed {
-                            rows(for: split.pinned)
+                    Group {
+                        if contentLayout == .grid {
+                            LazyVGrid(
+                                columns: [
+                                    GridItem(
+                                        .adaptive(
+                                            minimum: MainGridMetrics.minimumCardWidth,
+                                            maximum: MainGridMetrics.maximumCardWidth
+                                        ),
+                                        spacing: MainGridMetrics.spacing,
+                                        alignment: .top
+                                    )
+                                ],
+                                alignment: .leading,
+                                spacing: MainGridMetrics.spacing
+                            ) {
+                                if !split.pinned.isEmpty {
+                                    Section {
+                                        if !pinnedCollapsed {
+                                            rows(for: split.pinned)
+                                        }
+                                    } header: {
+                                        pinnedHeader(count: split.pinned.count)
+                                    }
+                                }
+                                rows(for: split.others)
+                            }
+                            .background {
+                                GeometryReader { proxy in
+                                    Color.clear.preference(
+                                        key: MainGridWidthPreferenceKey.self,
+                                        value: proxy.size.width
+                                    )
+                                }
+                            }
+                        } else {
+                            LazyVStack(spacing: 8) {
+                                if !split.pinned.isEmpty {
+                                    pinnedHeader(count: split.pinned.count)
+                                    if !pinnedCollapsed {
+                                        rows(for: split.pinned)
+                                    }
+                                }
+                                rows(for: split.others)
+                            }
                         }
                     }
-                    rows(for: split.others)
+                    .id(contentLayout)
+                    .transition(.opacity.combined(with: .scale(scale: 0.985)))
+
                     // Load-more sentinel: a near-invisible footer that, when it
-                    // scrolls into view inside the LazyVStack, asks the parent to
+                    // scrolls into view below either layout, asks the parent to
                     // grow the page size. `.id(pageSize)` makes each new page
                     // produce a fresh sentinel so its one-shot `.onAppear` re-arms
                     // after every successful expansion.
@@ -1039,6 +1129,10 @@ struct MainWindowContent: View {
                 .padding(.bottom, vm.isSelectionMode ? 80 : 14)
             }
             .scrollContentBackground(.hidden)
+            .onPreferenceChange(MainGridWidthPreferenceKey.self) { width in
+                let count = MainGridMetrics.columnCount(for: width)
+                if gridColumnCount != count { gridColumnCount = count }
+            }
             // Single sliding focus highlight, positioned from the focused row's
             // live frame. Because it tracks the real frame every layout pass, it
             // stays glued to the row through a scroll (matching the content's
@@ -1115,86 +1209,86 @@ struct MainWindowContent: View {
 
     @ViewBuilder
     private func cardRow(for item: ClipboardItem) -> some View {
-        ClipboardItemRow(
-            item: item,
-            groupNames: groupNames(for: item),
-            isSelectionMode: vm.isSelectionMode,
-            // In normal browsing mode the same "selected" affordance doubles
-            // as the keyboard-focus marker for arrow-nav + Space preview.
-            isSelected: vm.isSelectionMode ? vm.isSelected(item) : (vm.focusedItemID == item.id),
-            protectionVersion: contentProtection.version,
-            onCopy: {
-                vm.copyToClipboard(item)
-                ToastCenter.shared.show(L("common.copied"))
-            },
-            onDelete: { requestDeleteItem(item) },
-            onToggleFavorite: {
-                let willFavorite = !item.isFavorite
-                vm.toggleFavorite(item)
-                ToastCenter.shared.show(
-                    willFavorite ? L("action.favorited") : L("action.unfavorited"),
-                    systemImage: "star.fill",
-                    tint: .yellow
+        Group {
+            if contentLayout == .grid {
+                ClipboardItemGridCard(
+                    item: item,
+                    groupNames: groupNames(for: item),
+                    isSelectionMode: vm.isSelectionMode,
+                    isSelected: vm.isSelectionMode ? vm.isSelected(item) : (vm.focusedItemID == item.id),
+                    protectionVersion: contentProtection.version,
+                    onCopy: {
+                        vm.copyToClipboard(item)
+                        ToastCenter.shared.show(L("common.copied"))
+                    },
+                    onPreview: { showQuickLook(for: item) },
+                    onToggleFavorite: { toggleFavorite(item) },
+                    onTogglePin: { togglePin(item) }
                 )
-            },
-            onTogglePin: {
-                let willPin = !item.isPinned
-                vm.togglePin(item)
-                ToastCenter.shared.show(
-                    willPin ? L("action.pinned") : L("action.unpinned"),
-                    systemImage: "pin.fill",
-                    tint: .orange
+                .equatable()
+            } else {
+                ClipboardItemRow(
+                    item: item,
+                    groupNames: groupNames(for: item),
+                    isSelectionMode: vm.isSelectionMode,
+                    // In normal browsing mode the same "selected" affordance doubles
+                    // as the keyboard-focus marker for arrow-nav + Space preview.
+                    isSelected: vm.isSelectionMode ? vm.isSelected(item) : (vm.focusedItemID == item.id),
+                    protectionVersion: contentProtection.version,
+                    onCopy: {
+                        vm.copyToClipboard(item)
+                        ToastCenter.shared.show(L("common.copied"))
+                    },
+                    onDelete: { requestDeleteItem(item) },
+                    onToggleFavorite: { toggleFavorite(item) },
+                    onTogglePin: { togglePin(item) },
+                    onRevealInFinder: {
+                        if let url = item.resolvedFileURL {
+                            NSWorkspace.shared.activateFileViewerSelecting([url])
+                        }
+                    },
+                    onOpenFile: {
+                        if let url = item.resolvedFileURL {
+                            NSWorkspace.shared.open(url)
+                        }
+                    },
+                    onOpenURL: {
+                        openInBrowser(item.content)
+                    },
+                    onSaveImage: {
+                        ExportService.shared.exportItem(item)
+                    },
+                    onPreview: {
+                        showQuickLook(for: item)
+                    },
+                    onAddTag: { tag in
+                        vm.addTag(tag, to: item)
+                        try? modelContext.save()
+                    },
+                    onRemoveTag: { tag in
+                        vm.removeTag(tag, from: item)
+                        try? modelContext.save()
+                    },
+                    onBase64Encode: {
+                        if vm.copyBase64Encoded(item) {
+                            ToastCenter.shared.show(L("action.base64Encoded"), systemImage: "doc.on.doc")
+                        }
+                    },
+                    onBase64Decode: {
+                        if vm.copyBase64Decoded(item) {
+                            ToastCenter.shared.show(L("action.base64Decoded"), systemImage: "doc.on.doc")
+                        } else {
+                            ToastCenter.shared.show(
+                                L("action.base64DecodeFailed"),
+                                systemImage: "exclamationmark.triangle.fill",
+                                tint: .red
+                            )
+                        }
+                    }
                 )
-            },
-            onRevealInFinder: {
-                if let url = item.resolvedFileURL {
-                    NSWorkspace.shared.activateFileViewerSelecting([url])
-                }
-            },
-            onOpenFile: {
-                if let url = item.resolvedFileURL {
-                    NSWorkspace.shared.open(url)
-                }
-            },
-            onOpenURL: {
-                openInBrowser(item.content)
-            },
-            onSaveImage: {
-                ExportService.shared.exportItem(item)
-            },
-            onPreview: {
-                showQuickLook(for: item)
-            },
-            onAddTag: { tag in
-                vm.addTag(tag, to: item)
-                try? modelContext.save()
-            },
-            onRemoveTag: { tag in
-                vm.removeTag(tag, from: item)
-                try? modelContext.save()
-            },
-            onBase64Encode: {
-                if vm.copyBase64Encoded(item) {
-                    ToastCenter.shared.show(L("action.base64Encoded"), systemImage: "doc.on.doc")
-                }
-            },
-            onBase64Decode: {
-                if vm.copyBase64Decoded(item) {
-                    ToastCenter.shared.show(L("action.base64Decoded"), systemImage: "doc.on.doc")
-                } else {
-                    ToastCenter.shared.show(
-                        L("action.base64DecodeFailed"),
-                        systemImage: "exclamationmark.triangle.fill",
-                        tint: .red
-                    )
-                }
+                .equatable()
             }
-        )
-        // Gate the heavy row body on its value inputs (id + selection) so a
-        // focus move only re-renders the two rows that actually change, not
-        // every visible row. Keeps arrow-key scrolling smooth — see the
-        // `==` on ClipboardItemRow.
-        .equatable()
+        }
         // Custom paper-styled right-click menu (see `openRowContextMenu`) in
         // place of the cold system `NSMenu`. The catcher only intercepts
         // right/control-clicks; every other event falls through so hover and
@@ -1233,6 +1327,26 @@ struct MainWindowContent: View {
         // during a scroll — it moves at exactly the content's speed because it
         // *is* the content's position, not a second animation racing it.
         .anchorPreference(key: RowBoundsKey.self, value: .bounds) { [item.id: $0] }
+    }
+
+    private func toggleFavorite(_ item: ClipboardItem) {
+        let willFavorite = !item.isFavorite
+        vm.toggleFavorite(item)
+        ToastCenter.shared.show(
+            willFavorite ? L("action.favorited") : L("action.unfavorited"),
+            systemImage: "star.fill",
+            tint: .yellow
+        )
+    }
+
+    private func togglePin(_ item: ClipboardItem) {
+        let willPin = !item.isPinned
+        vm.togglePin(item)
+        ToastCenter.shared.show(
+            willPin ? L("action.pinned") : L("action.unpinned"),
+            systemImage: "pin.fill",
+            tint: .orange
+        )
     }
 
     private func pinnedHeader(count: Int) -> some View {
@@ -3663,6 +3777,54 @@ private struct SelectionBarButton: View {
 }
 
 // MARK: - Toolbar icon button
+
+private struct MainLayoutPicker: View {
+    @Binding var selection: MainContentLayout
+
+    var body: some View {
+        HStack(spacing: 2) {
+            layoutButton(.list, systemName: "list.bullet", help: L("toolbar.layout.list"))
+            layoutButton(.grid, systemName: "square.grid.2x2", help: L("toolbar.layout.grid"))
+        }
+        .padding(2)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.appChipFill)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color.appCardBorder, lineWidth: 0.5)
+        )
+        .accessibilityElement(children: .contain)
+    }
+
+    private func layoutButton(
+        _ layout: MainContentLayout,
+        systemName: String,
+        help: String
+    ) -> some View {
+        let selected = selection == layout
+        return Button {
+            guard !selected else { return }
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+                selection = layout
+            }
+        } label: {
+            Image(systemName: systemName)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(selected ? Color.appAccent : Color.secondary)
+                .frame(width: 26, height: 26)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(selected ? Color.appAccent.opacity(0.14) : Color.clear)
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(help)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .hoverTip(help)
+    }
+}
 
 struct ToolbarIconButton: View {
     let systemName: String

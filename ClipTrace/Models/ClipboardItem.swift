@@ -431,4 +431,31 @@ extension ClipboardItem {
     var contentProtectionResult: ContentProtectionResult {
         ContentProtector.redact(content)
     }
+
+    /// Full display-safe content used directly by text/link grid previews.
+    /// Grid cards deliberately have no separate title row, so returning the
+    /// complete text here avoids both duplication and lossy excerpt rules.
+    var gridPreviewContent: String {
+        let redacted = redactedForDisplay(preview ?? content)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return redacted.isEmpty ? descriptiveTag : redacted
+    }
+
+    /// Caption overlaid on image previews. User labels and real filenames are
+    /// more useful than the stored image placeholder; the first display line
+    /// remains a safe fallback for pasteboard images without a file URL.
+    var gridImageTitle: String {
+        if let custom = effectiveCustomTitle { return custom }
+        if let url = resolvedFileURL { return url.lastPathComponent }
+
+        let redacted = redactedForDisplay(preview ?? content)
+        let firstMeaningfulLine = redacted
+            .components(separatedBy: .newlines)
+            .first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }?
+            .trimmingCharacters(in: .whitespaces)
+        if let firstMeaningfulLine, !firstMeaningfulLine.isEmpty {
+            return firstMeaningfulLine
+        }
+        return descriptiveTag
+    }
 }
