@@ -22,19 +22,34 @@ ClipTrace does not include:
 - Analytics
 - Telemetry
 - Crash reporting SDKs
-- Remote clipboard sync
 - Cloud semantic search
 - Advertising or tracking SDKs
 
-Clipboard history is not uploaded by ClipTrace.
+Clipboard history is not uploaded unless you explicitly enable and configure a sync destination.
 
 ## Network Access
 
-ClipTrace has one intended background network feature:
+ClipTrace has these intended background network features:
 
 - Sparkle update checks read the appcast configured by `SUFeedURL`.
+- When sync is enabled, ClipTrace connects only to the WebDAV or S3-compatible endpoint you configure. iCloud Drive and local-folder sync write through the corresponding local filesystem location, whose provider may then transfer those files.
 
 Other explicit user actions may open project links, issue pages, or release pages in the browser. The clipboard monitor, semantic search, OCR processing, and MCP server do not require outbound network access.
+
+## Optional Encrypted Sync
+
+Sync is disabled by default. You can opt into iCloud Drive, WebDAV, S3-compatible object storage, or a local folder such as one managed by Dropbox, OneDrive, Syncthing, or a network drive.
+
+- Sync snapshots, incremental journals, conflict copies, and every attachment are encrypted locally with AES-256-GCM before being written or uploaded.
+- ClipTrace generates a random 256-bit recovery key and stores it in macOS Keychain. WebDAV passwords and S3 secret/session credentials are also stored in Keychain, not UserDefaults.
+- A second Mac must be configured with the same recovery key. ClipTrace and the storage provider cannot recover a lost key.
+- WebDAV Basic authentication should normally be used over HTTPS. The app warns before using a plain HTTP endpoint because transport credentials are not protected by HTTP.
+- S3 requests use AWS Signature Version 4. HTTPS should be used outside a trusted LAN because HTTP does not protect signed requests or transferred metadata from observation.
+- Sync includes clipboard history, OCR text, images, organization metadata, trash state, and regular-file attachments up to 25 MB each. Semantic vectors, statistics, and device preferences are not synced.
+- Attachment filenames are derived with a keyed HMAC, and content hashes remain inside the encrypted manifest.
+- Storage providers can observe encrypted object sizes, update timing, and object counts. S3 providers additionally receive the configured bucket, object prefix, access-key identifier, and SigV4 request metadata.
+
+Enabling sync changes the privacy boundary: encrypted files leave the local Application Support database and enter the storage location you selected. The storage provider can still observe encrypted file sizes, transfer timing, and the approximate number of attachments.
 
 ## Semantic Search
 
@@ -72,6 +87,7 @@ ClipTrace includes several privacy controls:
 - Trash and permanently delete entries
 - Strip tracking parameters from copied URLs
 - Hide the window from screen recording and screen sharing
+- Keep sync disabled, or choose and remove a sync destination
 - Disable MCP entirely, or disable individual MCP tools
 
 ## Security Reports

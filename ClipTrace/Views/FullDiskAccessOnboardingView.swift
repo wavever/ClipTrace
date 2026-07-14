@@ -1,7 +1,17 @@
 import SwiftUI
 import AppKit
 
-struct FullDiskAccessOnboardingView: View {
+/// Shared shell for the first-run permission cards (Accessibility, Full Disk
+/// Access): gradient icon + title header, explanation, numbered steps, and the
+/// open-settings / later button pair. Each permission supplies only strings
+/// and its open-settings action.
+private struct PermissionOnboardingCard: View {
+    let icon: String
+    let title: String
+    let subtitle: String
+    let message: String
+    let steps: [String]
+    let onOpenSettings: () -> Void
     let onDismiss: () -> Void
 
     var body: some View {
@@ -18,15 +28,15 @@ struct FullDiskAccessOnboardingView: View {
                         )
                         .frame(width: 40, height: 40)
                         .shadow(color: .appAccent.opacity(0.3), radius: 6, y: 2)
-                    Image(systemName: "lock.shield.fill")
+                    Image(systemName: icon)
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(.white)
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(L("onboarding.title"))
+                    Text(title)
                         .font(.system(size: 16, weight: .bold))
-                    Text(L("onboarding.subtitle"))
+                    Text(subtitle)
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
@@ -46,19 +56,16 @@ struct FullDiskAccessOnboardingView: View {
                 .help(L("common.close"))
             }
 
-            Text(L("onboarding.body"))
+            Text(message)
                 .font(.system(size: 12.5))
                 .foregroundStyle(.primary.opacity(0.85))
                 .fixedSize(horizontal: false, vertical: true)
                 .lineSpacing(2)
 
-            steps
+            stepList
 
             HStack(spacing: 10) {
-                Button {
-                    Self.openFullDiskAccessPane()
-                    onDismiss()
-                } label: {
+                Button(action: onOpenSettings) {
                     HStack(spacing: 6) {
                         Image(systemName: "arrow.up.right.square.fill")
                             .font(.system(size: 12, weight: .semibold))
@@ -104,11 +111,20 @@ struct FullDiskAccessOnboardingView: View {
         .shadow(color: .black.opacity(0.35), radius: 24, y: 10)
     }
 
-    private var steps: some View {
+    private var stepList: some View {
         VStack(alignment: .leading, spacing: 6) {
-            stepRow(index: 1, text: L("onboarding.step1"))
-            stepRow(index: 2, text: L("onboarding.step2"))
-            stepRow(index: 3, text: L("onboarding.step3"))
+            ForEach(Array(steps.enumerated()), id: \.offset) { index, text in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("\(index + 1)")
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .frame(width: 18, height: 18)
+                        .background(Circle().fill(Color.appAccent))
+                    Text(text)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(.primary.opacity(0.85))
+                }
+            }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -117,18 +133,53 @@ struct FullDiskAccessOnboardingView: View {
                 .fill(.secondary.opacity(0.10))
         )
     }
+}
 
-    private func stepRow(index: Int, text: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text("\(index)")
-                .font(.system(size: 11, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
-                .frame(width: 18, height: 18)
-                .background(Circle().fill(Color.appAccent))
-            Text(text)
-                .font(.system(size: 12.5))
-                .foregroundStyle(.primary.opacity(0.85))
-        }
+/// First-run reminder that auto-paste needs the Accessibility permission —
+/// without it Quick Paste can only copy, never send the ⌘V for the user.
+struct AccessibilityOnboardingView: View {
+    let onDismiss: () -> Void
+
+    var body: some View {
+        PermissionOnboardingCard(
+            icon: "accessibility",
+            title: L("axOnboarding.title"),
+            subtitle: L("axOnboarding.subtitle"),
+            message: L("axOnboarding.body"),
+            steps: [
+                L("axOnboarding.step1"),
+                L("axOnboarding.step2"),
+                L("axOnboarding.step3")
+            ],
+            onOpenSettings: {
+                AutoPasteService.openAccessibilityPane()
+                onDismiss()
+            },
+            onDismiss: onDismiss
+        )
+    }
+}
+
+struct FullDiskAccessOnboardingView: View {
+    let onDismiss: () -> Void
+
+    var body: some View {
+        PermissionOnboardingCard(
+            icon: "lock.shield.fill",
+            title: L("onboarding.title"),
+            subtitle: L("onboarding.subtitle"),
+            message: L("onboarding.body"),
+            steps: [
+                L("onboarding.step1"),
+                L("onboarding.step2"),
+                L("onboarding.step3")
+            ],
+            onOpenSettings: {
+                Self.openFullDiskAccessPane()
+                onDismiss()
+            },
+            onDismiss: onDismiss
+        )
     }
 
     static func openFullDiskAccessPane() {

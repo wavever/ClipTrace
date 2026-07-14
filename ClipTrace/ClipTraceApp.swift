@@ -24,6 +24,8 @@ final class ClipboardRuntime {
 
     private let context = AppContainer.shared.mainContext
     private var started = false
+    private var syncObserver: NSObjectProtocol?
+    private var syncFailureObserver: NSObjectProtocol?
 
     private init() {}
 
@@ -35,12 +37,51 @@ final class ClipboardRuntime {
         // before the first new clip arrives.
         WidgetBridge.shared.refreshNow(context: context)
         ImagePayloadStore.migrateStoredImagesInBackground(context: context)
+        syncObserver = NotificationCenter.default.addObserver(
+            forName: .clipTraceSyncDidComplete,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                ToastCenter.shared.show(
+                    L("sync.toast.succeeded"),
+                    systemImage: "checkmark.circle.fill",
+                    tint: .appAccent
+                )
+                guard let self else { return }
+                await self.viewModel.backfillOCR(context: self.context)
+                await self.viewModel.backfillEmbeddings(context: self.context)
+            }
+        }
+        syncFailureObserver = NotificationCenter.default.addObserver(
+            forName: .clipTraceSyncDidFail,
+            object: nil,
+            queue: .main
+        ) { notification in
+            Task { @MainActor in
+                let reason = notification.object as? String ?? L("main.sync.status.failed")
+                ToastCenter.shared.show(
+                    L("main.sync.status.failedDetail", reason),
+                    systemImage: "exclamationmark.triangle.fill",
+                    tint: .appDanger,
+                    duration: 4
+                )
+            }
+        }
     }
 
     func stop() {
         guard started else { return }
         started = false
         viewModel.stopMonitoring()
+        if let syncObserver {
+            NotificationCenter.default.removeObserver(syncObserver)
+            self.syncObserver = nil
+        }
+        if let syncFailureObserver {
+            NotificationCenter.default.removeObserver(syncFailureObserver)
+            self.syncFailureObserver = nil
+        }
     }
 }
 
@@ -165,6 +206,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         applyInitialAppearance()
         setupGlobalHotKeys()
         ClipboardRuntime.shared.start()
+        SyncService.shared.start()
         DispatchQueue.main.async {
             QuickPasteController.shared.prewarm()
         }
@@ -195,7 +237,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        SyncService.shared.stop()
         ClipboardRuntime.shared.stop()
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        SyncService.shared.syncIfDue()
     }
 
     /// The bundled AppIcon bakes a Tahoe-grid paper plate into the artwork so

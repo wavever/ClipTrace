@@ -59,6 +59,11 @@
 		A10047 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10047; };
 		A10048 /* AppContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10048; };
 		A10400 /* ImagePayloadStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10400; };
+		A10500 /* SyncModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10500; };
+		A10501 /* SyncSecurity.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10501; };
+		A10502 /* SyncTransports.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10502; };
+		A10503 /* SyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10503; };
+		A10504 /* SyncSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10504; };
 		A10100 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = V10001 /* InfoPlist.strings */; };
 		A20001 /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = P10001 /* KeyboardShortcuts */; };
 		A20002 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = P10002 /* Sparkle */; };
@@ -125,6 +130,11 @@
 		B10047 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		B10048 /* AppContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppContainer.swift; sourceTree = "<group>"; };
 		B10400 /* ImagePayloadStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePayloadStore.swift; sourceTree = "<group>"; };
+		B10500 /* SyncModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncModels.swift; sourceTree = "<group>"; };
+		B10501 /* SyncSecurity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncSecurity.swift; sourceTree = "<group>"; };
+		B10502 /* SyncTransports.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncTransports.swift; sourceTree = "<group>"; };
+		B10503 /* SyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncService.swift; sourceTree = "<group>"; };
+		B10504 /* SyncSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncSettingsView.swift; sourceTree = "<group>"; };
 		B10100 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		B10101 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
 		B10099 /* ClipTrace.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClipTrace.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -213,6 +223,7 @@
 				B10028 /* CopyStats.swift */,
 				B10021 /* AppNavigation.swift */,
 				B10040 /* AppearancePreferences.swift */,
+				B10500 /* SyncModels.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -241,6 +252,7 @@
 				B10039 /* DynamicIslandView.swift */,
 				B10046 /* PreviewKeyCatcher.swift */,
 				B10047 /* Theme.swift */,
+				B10504 /* SyncSettingsView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -268,6 +280,9 @@
 				B10030 /* URLSanitizer.swift */,
 				B10048 /* AppContainer.swift */,
 				B10400 /* ImagePayloadStore.swift */,
+				B10501 /* SyncSecurity.swift */,
+				B10502 /* SyncTransports.swift */,
+				B10503 /* SyncService.swift */,
 				B10033 /* MCPServer.swift */,
 				B10034 /* AppShortcuts.swift */,
 				B10035 /* AutoPasteService.swift */,
@@ -488,6 +503,11 @@
 				A10047 /* Theme.swift in Sources */,
 				A10048 /* AppContainer.swift in Sources */,
 				A10400 /* ImagePayloadStore.swift in Sources */,
+				A10500 /* SyncModels.swift in Sources */,
+				A10501 /* SyncSecurity.swift in Sources */,
+				A10502 /* SyncTransports.swift in Sources */,
+				A10503 /* SyncService.swift in Sources */,
+				A10504 /* SyncSettingsView.swift in Sources */,
 				A10210 /* WidgetSnapshot.swift in Sources */,
 				A10211 /* WidgetBridge.swift in Sources */,
 			);

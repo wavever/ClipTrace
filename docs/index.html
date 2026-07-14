@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>剪迹 · ClipTrace — Local-first clipboard history for macOS & AI</title>
-<meta name="description" content="ClipTrace (剪迹) is an open-source macOS clipboard manager with offline semantic search and a built-in Model Context Protocol server. Local-first, private, and ready for Claude Desktop, Claude Code, and Cursor." />
+<title>剪迹 · ClipTrace — Local-first clipboard history for macOS &amp; AI</title>
+<meta name="description" content="ClipTrace (剪迹) is an open-source macOS clipboard manager with offline semantic search, encrypted conflict-resilient sync, and a built-in Model Context Protocol server." />
 <meta name="theme-color" content="#F6F7F3" />
 <meta name="color-scheme" content="light" />
 <link rel="canonical" href="https://wavever.github.io/ClipTrace/" />
@@ -12,7 +12,7 @@
 <link rel="apple-touch-icon" href="assets/icon-192.png" />
 <link rel="preload" as="image" href="assets/screenshot-main-1400.webp" type="image/webp" fetchpriority="high" />
 <meta property="og:title" content="剪迹 · ClipTrace" />
-<meta property="og:description" content="Local-first clipboard history for macOS and AI tools. Offline semantic search, built-in MCP server, privacy by default." />
+<meta property="og:description" content="Local-first clipboard history with offline semantic search, conflict-resilient encrypted sync, and a built-in MCP server." />
 <meta property="og:url" content="https://wavever.github.io/ClipTrace/" />
 <meta property="og:image" content="https://wavever.github.io/ClipTrace/assets/screenshot-main.png" />
 <meta property="og:image:width" content="2000" />
@@ -21,12 +21,12 @@
 <meta property="og:site_name" content="ClipTrace" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="剪迹 · ClipTrace" />
-<meta name="twitter:description" content="Local-first clipboard history for macOS and AI tools. Offline semantic search, built-in MCP server, privacy by default." />
+<meta name="twitter:description" content="Local-first clipboard history with offline semantic search, conflict-resilient encrypted sync, and a built-in MCP server." />
 <meta name="twitter:image" content="https://wavever.github.io/ClipTrace/assets/screenshot-main.png" />
 
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,400..600&family=Hanken+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,400..600&amp;family=Hanken+Grotesk:wght@400;500;600;700&amp;family=IBM+Plex+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="styles.css" />
 <script type="application/ld+json">
 {
@@ -37,7 +37,7 @@
   "operatingSystem": "macOS 14.0+",
   "applicationCategory": "UtilitiesApplication",
   "softwareRequirements": "macOS 14.0 Sonoma or later",
-  "description": "Open-source local-first clipboard history for macOS with offline semantic search and a built-in Model Context Protocol server.",
+  "description": "Open-source local-first clipboard history for macOS with offline semantic search, conflict-resilient encrypted sync, and a built-in Model Context Protocol server.",
   "url": "https://wavever.github.io/ClipTrace/",
   "downloadUrl": "https://github.com/wavever/ClipTrace/releases/latest",
   "codeRepository": "https://github.com/wavever/ClipTrace",
@@ -70,6 +70,7 @@
   <nav class="nav-links" aria-label="Primary">
     <a href="#capture" data-en="Capture" data-zh="捕获">Capture</a>
     <a href="#search" data-en="Search" data-zh="搜索">Search</a>
+    <a href="#sync" data-en="Sync" data-zh="同步">Sync</a>
     <a href="#mcp" data-en="AI &amp; MCP" data-zh="AI / MCP">AI &amp; MCP</a>
     <a href="#privacy" data-en="Privacy" data-zh="隐私">Privacy</a>
   </nav>
@@ -93,9 +94,10 @@
   <span class="spine-node" data-target="hero"><i>01</i></span>
   <span class="spine-node" data-target="capture"><i>02</i></span>
   <span class="spine-node" data-target="search"><i>03</i></span>
-  <span class="spine-node" data-target="mcp"><i>04</i></span>
-  <span class="spine-node" data-target="privacy"><i>05</i></span>
-  <span class="spine-node" data-target="download"><i>06</i></span>
+  <span class="spine-node" data-target="sync"><i>04</i></span>
+  <span class="spine-node" data-target="mcp"><i>05</i></span>
+  <span class="spine-node" data-target="privacy"><i>06</i></span>
+  <span class="spine-node" data-target="download"><i>07</i></span>
 </aside>
 
 <main id="top">
@@ -113,9 +115,9 @@
       </h1>
 
       <p class="hero-sub reveal" style="--d:.3s"
-         data-en="An open-source clipboard manager for macOS — <strong>local-first</strong>, searchable by meaning, and ready to hand your history to AI tools without ever touching the cloud."
-         data-zh="一个开源的 macOS 剪贴板管理工具 —— <strong>本地优先</strong>、可按语义检索，并能把历史交给 AI 工具使用，全程不经过云端。">
-        An open-source clipboard manager for macOS — <strong>local-first</strong>, searchable by meaning, and ready to hand your history to AI tools without ever touching the cloud.
+         data-en="An open-source clipboard manager for macOS — <strong>local-first</strong>, searchable by meaning, ready for local AI tools, with end-to-end encrypted sync when you want it."
+         data-zh="一个开源的 macOS 剪贴板管理工具 —— <strong>本地优先</strong>、可按语义检索、可接入本地 AI 工具，并在你需要时提供端到端加密同步。">
+        An open-source clipboard manager for macOS — <strong>local-first</strong>, searchable by meaning, ready for local AI tools, with end-to-end encrypted sync when you want it.
       </p>
 
       <div class="hero-cta reveal" style="--d:.4s">
@@ -130,9 +132,9 @@
       </div>
 
       <ul class="hero-meta reveal" style="--d:.5s">
-        <li><span class="dot"></span><span data-en="100% on-device" data-zh="完全在本机">100% on-device</span></li>
+        <li><span class="dot"></span><span data-en="On-device processing" data-zh="处理均在本机">On-device processing</span></li>
         <li><span class="dot"></span><span data-en="MIT licensed" data-zh="MIT 开源">MIT licensed</span></li>
-        <li><span class="dot"></span><span data-en="No account, no cloud" data-zh="无账号 · 无云端">No account, no cloud</span></li>
+        <li><span class="dot"></span><span data-en="No account · cloud optional" data-zh="无需账号 · 云端可选">No account · cloud optional</span></li>
       </ul>
     </div>
 
@@ -176,7 +178,7 @@
     <span class="strip-star">✦</span>
     <span data-en="Built-in MCP server" data-zh="内置 MCP 服务器">Built-in MCP server</span>
     <span class="strip-star">✦</span>
-    <span data-en="Menu bar · Quick Paste · Snippets" data-zh="菜单栏 · 快速粘贴 · 片段">Menu bar · Quick Paste · Snippets</span>
+    <span data-en="End-to-end encrypted multi-device sync" data-zh="端到端加密的多设备同步">End-to-end encrypted multi-device sync</span>
     <span class="strip-star">✦</span>
     <span data-en="Text · Images · Video · Files · URLs · Rich text" data-zh="文字 · 图片 · 视频 · 文件 · 链接 · 富文本">Text · Images · Video · Files · URLs · Rich text</span>
     <span class="strip-star">✦</span>
@@ -184,7 +186,7 @@
     <span class="strip-star">✦</span>
     <span data-en="Built-in MCP server" data-zh="内置 MCP 服务器">Built-in MCP server</span>
     <span class="strip-star">✦</span>
-    <span data-en="Menu bar · Quick Paste · Snippets" data-zh="菜单栏 · 快速粘贴 · 片段">Menu bar · Quick Paste · Snippets</span>
+    <span data-en="End-to-end encrypted multi-device sync" data-zh="端到端加密的多设备同步">End-to-end encrypted multi-device sync</span>
     <span class="strip-star">✦</span>
   </div>
 </section>
@@ -315,11 +317,103 @@
   </div>
 </section>
 
+<!-- ============ ENCRYPTED SYNC ============ -->
+<section class="section sync-spot" id="sync">
+  <div class="sync-inner">
+    <div class="sync-grid">
+      <div class="sync-copy reveal">
+        <span class="sec-no">04</span>
+        <p class="kicker" data-en="Encrypted multi-device sync" data-zh="加密的多设备同步">Encrypted multi-device sync</p>
+        <h2 data-en="Your history can travel. Plaintext never does." data-zh="历史可以流动，明文不会。">Your history can travel. Plaintext never does.</h2>
+        <p class="sync-lead"
+           data-en="Optional sync sends encrypted operations instead of replacing one Mac's database with another. Choose automatic or one-click manual sync; the home toolbar shows progress and explicit success or failure feedback."
+           data-zh="可选同步传输的是加密增量操作，而不是拿一台 Mac 的数据库覆盖另一台。可选择自动或一键手动同步；首页工具栏会展示进度，并明确提示成功或失败。">
+          Optional sync sends encrypted operations instead of replacing one Mac's database with another. Choose automatic or one-click manual sync; the home toolbar shows progress and explicit success or failure feedback.
+        </p>
+
+        <dl class="sync-proof">
+          <div>
+            <dt>AES-256-GCM</dt>
+            <dd data-en="Encrypted before leaving this Mac" data-zh="离开本机前完成加密">Encrypted before leaving this Mac</dd>
+          </div>
+          <div>
+            <dt data-en="HLC + field versions" data-zh="HLC + 字段版本">HLC + field versions</dt>
+            <dd data-en="Different edits survive together" data-zh="不同修改可以同时保留">Different edits survive together</dd>
+          </div>
+          <div>
+            <dt data-en="Immutable journal" data-zh="不可变增量日志">Immutable journal</dt>
+            <dd data-en="Concurrent writers remain discoverable" data-zh="并发写入不会悄然丢失">Concurrent writers remain discoverable</dd>
+          </div>
+          <div>
+            <dt data-en="Your storage" data-zh="使用你的存储">Your storage</dt>
+            <dd data-en="iCloud Drive · WebDAV · S3 · folders" data-zh="iCloud 云盘 · WebDAV · S3 · 文件夹">iCloud Drive · WebDAV · S3 · folders</dd>
+          </div>
+        </dl>
+
+        <a class="text-link sync-link" href="https://github.com/wavever/ClipTrace/blob/main/docs/sync-architecture.md" target="_blank" rel="noopener"
+           data-en="Read how conflicts converge →" data-zh="了解冲突如何收敛 →">Read how conflicts converge →</a>
+      </div>
+
+      <div class="sync-visual reveal" style="--d:.12s" role="img" aria-labelledby="syncVisualLabel">
+        <span class="sr-only" id="syncVisualLabel"
+              data-en="Two Macs merging encrypted clipboard changes through the user's storage"
+              data-zh="两台 Mac 通过用户自己的存储合并加密剪贴板修改">Two Macs merging encrypted clipboard changes through the user's storage</span>
+
+        <svg class="sync-routes" viewBox="0 0 620 430" preserveAspectRatio="none" aria-hidden="true">
+          <path class="sync-route route-a" d="M122 92 C218 92 230 185 310 208" />
+          <path class="sync-route route-b" d="M122 325 C218 325 232 240 310 218" />
+          <path class="sync-route route-store" d="M438 213 C492 213 505 213 548 213" />
+        </svg>
+
+        <div class="sync-peer peer-a">
+          <span class="peer-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          </span>
+          <span><b>Mac A</b><small data-en="title edited" data-zh="修改标题">title edited</small></span>
+        </div>
+
+        <div class="sync-peer peer-b">
+          <span class="peer-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          </span>
+          <span><b>Mac B</b><small data-en="favorite added" data-zh="添加收藏">favorite added</small></span>
+        </div>
+
+        <div class="sync-core">
+          <div class="sync-core-head">
+            <span class="sync-lock" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><path d="M12 14v3"/></svg>
+            </span>
+            <span>
+              <small data-en="End-to-end encrypted" data-zh="端到端加密">End-to-end encrypted</small>
+              <strong data-en="Field-level merge" data-zh="字段级合并">Field-level merge</strong>
+            </span>
+          </div>
+          <div class="sync-core-row"><i></i><span data-en="operation journal" data-zh="增量操作日志">operation journal</span><em data-en="sealed" data-zh="已密封">sealed</em></div>
+          <div class="sync-core-row"><i></i><span data-en="conditional snapshot" data-zh="条件写入快照">conditional snapshot</span><em data-en="committed" data-zh="已提交">committed</em></div>
+          <p class="sync-merge-result" data-en="✓ both edits preserved" data-zh="✓ 两边修改均已保留">✓ both edits preserved</p>
+        </div>
+
+        <div class="sync-peer peer-store">
+          <span class="peer-icon storage" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><ellipse cx="12" cy="5.5" rx="8" ry="3"/><path d="M4 5.5v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/><path d="M4 11.5v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>
+          </span>
+          <span><b data-en="Your storage" data-zh="你的存储">Your storage</b><small data-en="ciphertext only" data-zh="仅有密文">ciphertext only</small></span>
+        </div>
+
+        <div class="sync-backends" aria-label="Supported sync backends">
+          <span>iCloud Drive</span><i>·</i><span>WebDAV</span><i>·</i><span>S3</span><i>·</i><span data-en="Local folder" data-zh="本地文件夹">Local folder</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ============ MCP / AI (dark terminal band) ============ -->
 <section class="section mcp" id="mcp">
   <div class="mcp-inner">
     <div class="mcp-head reveal">
-      <span class="sec-no light">04</span>
+      <span class="sec-no light">05</span>
       <p class="kicker light" data-en="AI-native" data-zh="为 AI 而生">AI-native</p>
       <h2 data-en="Your clipboard, as a tool your AI can call." data-zh="把剪贴板，变成 AI 能调用的工具。">Your clipboard, as a tool your AI can call.</h2>
       <p class="mcp-lead" data-en="The app binary doubles as a <strong>Model Context Protocol</strong> stdio server. Point Claude Desktop, Claude Code, or Cursor at it and they can search, read, tag and organize your clipboard — locally, with the tools you allow." data-zh="应用 binary 同时是一个 <strong>Model Context Protocol</strong> stdio 服务器。让 Claude Desktop、Claude Code 或 Cursor 接入，它们就能在本地检索、读取、打标签、整理你的剪贴板 —— 只用你允许的工具。">The app binary doubles as a <strong>Model Context Protocol</strong> stdio server. Point Claude Desktop, Claude Code, or Cursor at it and they can search, read, tag and organize your clipboard — locally, with the tools you allow.</p>
@@ -368,16 +462,16 @@
 <!-- ============ PRIVACY ============ -->
 <section class="section privacy" id="privacy">
   <div class="section-head reveal">
-    <span class="sec-no">05</span>
+    <span class="sec-no">06</span>
     <div>
       <p class="kicker" data-en="Privacy by construction" data-zh="从设计上保护隐私">Privacy by construction</p>
-      <h2 data-en="It stays on your Mac — because there's nowhere else for it to go." data-zh="它留在你的 Mac 上 —— 因为它本就无处可去。">It stays on your Mac — because there's nowhere else for it to go.</h2>
+      <h2 data-en="Local by default. Encrypted when you choose to sync." data-zh="默认留在本机，选择同步时全程加密。">Local by default. Encrypted when you choose to sync.</h2>
     </div>
   </div>
 
   <div class="privacy-grid">
     <div class="privacy-lead reveal">
-      <p data-en="Clipboard history, OCR text, tags and embeddings never leave the device. There's no account to create and no server to trust. When you do want control, every dial is in your hands:" data-zh="剪贴板历史、OCR 文本、标签与语义向量从不离开设备。没有账号要注册，也没有服务器需要信任。当你想要掌控时，每一个开关都在你手里：">Clipboard history, OCR text, tags and embeddings never leave the device. There's no account to create and no server to trust. When you do want control, every dial is in your hands:</p>
+      <p data-en="Clipboard history, OCR text, tags and embeddings stay on this Mac by default. Optional sync writes only encrypted data to the destination you configure; semantic vectors and device preferences remain local. Every privacy dial stays in your hands:" data-zh="剪贴板历史、OCR 文本、标签与语义向量默认留在这台 Mac。可选同步只会把密文写入你配置的存储位置；语义向量与设备偏好始终保留在本机。每一个隐私开关都在你手里：">Clipboard history, OCR text, tags and embeddings stay on this Mac by default. Optional sync writes only encrypted data to the destination you configure; semantic vectors and device preferences remain local. Every privacy dial stays in your hands:</p>
       <a class="text-link" href="https://github.com/wavever/ClipTrace/blob/main/PRIVACY.md" target="_blank" rel="noopener" data-en="Read the privacy notes →" data-zh="阅读隐私说明 →">Read the privacy notes →</a>
     </div>
 
@@ -386,6 +480,7 @@
       <li data-en="Exclude specific source apps" data-zh="排除指定来源 App">Exclude specific source apps</li>
       <li data-en="Honor sensitive pasteboard markers" data-zh="尊重敏感 pasteboard 标记">Honor sensitive pasteboard markers</li>
       <li data-en="Strip URL tracking parameters" data-zh="剥离 URL 跟踪参数">Strip URL tracking parameters</li>
+      <li data-en="Choose if and where encrypted sync writes" data-zh="决定是否同步以及密文写入何处">Choose if and where encrypted sync writes</li>
       <li data-en="Disable any or all MCP tools" data-zh="关闭部分或全部 MCP 工具">Disable any or all MCP tools</li>
       <li data-en="Hide the window from screen recording" data-zh="窗口可隐藏于录屏与共享">Hide the window from screen recording</li>
       <li data-en="Delete history — soft or for good" data-zh="删除历史 —— 软删除或彻底删除">Delete history — soft or for good</li>
@@ -442,12 +537,14 @@
     <nav class="foot-col">
       <h4 data-en="Product" data-zh="产品">Product</h4>
       <a href="#capture" data-en="Features" data-zh="功能">Features</a>
+      <a href="#sync" data-en="Encrypted Sync" data-zh="加密同步">Encrypted Sync</a>
       <a href="#mcp" data-en="AI &amp; MCP" data-zh="AI / MCP">AI &amp; MCP</a>
       <a href="https://github.com/wavever/ClipTrace/releases/latest" target="_blank" rel="noopener" data-en="Releases" data-zh="版本发布">Releases</a>
     </nav>
 
     <nav class="foot-col">
       <h4 data-en="Docs" data-zh="文档">Docs</h4>
+      <a href="https://github.com/wavever/ClipTrace/blob/main/docs/sync-architecture.md" target="_blank" rel="noopener" data-en="Sync Architecture" data-zh="同步架构">Sync Architecture</a>
       <a href="https://github.com/wavever/ClipTrace/blob/main/PRIVACY.md" target="_blank" rel="noopener" data-en="Privacy" data-zh="隐私说明">Privacy</a>
       <a href="https://github.com/wavever/ClipTrace/blob/main/SECURITY.md" target="_blank" rel="noopener" data-en="Security" data-zh="安全策略">Security</a>
       <a href="https://github.com/wavever/ClipTrace/blob/main/ROADMAP.md" target="_blank" rel="noopener" data-en="Roadmap" data-zh="路线图">Roadmap</a>

@@ -20,16 +20,32 @@
   <img src="https://img.shields.io/badge/macOS-14%2B-blue" alt="macOS 14+" />
 </p>
 
-ClipTrace is an open-source macOS clipboard manager with offline semantic search and a built-in [Model Context Protocol](https://modelcontextprotocol.io/) server. It lets you search clipboard history locally, organize useful clips, and optionally let AI clients such as Claude Desktop, Claude Code, or Cursor query your clipboard without uploading it to a cloud service.
+ClipTrace is an open-source macOS clipboard manager with offline semantic search and a built-in [Model Context Protocol](https://modelcontextprotocol.io/) server. It lets you search clipboard history locally, organize useful clips, and optionally let AI clients such as Claude Desktop, Claude Code, or Cursor query your clipboard. Cloud sync is off by default and only connects to a destination you configure.
 
 ## Why ClipTrace?
 
-- **Local-first by default** - clipboard history, OCR text, tags, and embeddings stay on your Mac.
+- **Local-first by default** - clipboard history, OCR text, tags, and embeddings stay on your Mac unless you explicitly enable encrypted sync.
+- **Conflict-resilient encrypted sync** - optionally sync through iCloud Drive, WebDAV, S3-compatible storage, or a local folder without exposing clipboard plaintext.
 - **Offline semantic search** - Apple `NLEmbedding` powers meaning-based search without hosted embedding APIs.
 - **AI-native workflow** - the app binary can run as an MCP stdio server with searchable and writable clipboard tools.
 - **Native macOS utility** - menu bar app, global hotkeys, Quick Paste, previews, snippets, and SwiftUI interface.
 - **Content protection** - sensitive values such as phone numbers and API keys are redacted across the UI, exports, and MCP by default, while the original stays on your Mac for reuse.
 - **Privacy controls** - pause capture, exclude source apps, ignore sensitive pasteboard markers, strip URL trackers, disable MCP tools, and delete history.
+
+## Highlight: Encrypted Sync That Merges, Not Overwrites
+
+ClipTrace does not replace one Mac's entire database with another. It sends encrypted incremental operations, merges each field independently, and keeps a recoverable copy when two devices change non-mergeable content.
+
+Choose automatic sync or keep it manual. The main window always exposes a compact sync state: one-click sync when automation is off, an immediate in-progress indicator, and explicit success or failure feedback when the run finishes.
+
+| What happens | How ClipTrace protects it |
+|---|---|
+| Two Macs edit different fields | Hybrid logical clocks and field versions preserve both changes |
+| Both devices write at once | Immutable encrypted journals survive the snapshot race |
+| Tags or group membership change independently | Convergent set merging combines additions and preserves removals |
+| A device returns with stale data | Acknowledged tombstones prevent deleted clips from silently reappearing |
+
+Everything is encrypted locally with AES-256-GCM before it reaches iCloud Drive, WebDAV, S3-compatible storage, or your chosen sync folder. The losing version is retained as an encrypted conflict copy for 30 days, while old journals and orphan attachments are cleaned conservatively. [Read the sync architecture →](docs/sync-architecture.md)
 
 ## Preview
 
@@ -95,6 +111,18 @@ ClipTrace is an open-source macOS clipboard manager with offline semantic search
 - JSON export with type, date, favorite, and pinned filters
 - Per-item export to original formats such as text and PNG
 - Copy statistics, 14-day chart, and GitHub-style yearly heatmap
+
+### Encrypted Sync
+
+- Optional bidirectional sync through iCloud Drive, WebDAV, S3-compatible object storage, or a local folder (including folders managed by Dropbox, OneDrive, Syncthing, and network drives)
+- Manual or automatic sync with a compact main-window status, immediate progress feedback, and clear success or failure notifications
+- AES-256-GCM end-to-end encryption before data leaves the Mac; WebDAV passwords, S3 secret credentials, and the 256-bit recovery key are stored in Keychain
+- Hybrid logical clocks merge independently edited fields; tags and group membership use convergent set merging, while losing content is retained as a 30-day conflict copy
+- Encrypted incremental journals protect concurrent writers and compact into conditional-write snapshots; acknowledged deletion tombstones, old journals, and orphan attachments are garbage-collected conservatively
+- Syncs history, images, tags, groups, favorites, pins, trash state, and individual file attachments up to 25 MB; device settings, statistics, and semantic vectors remain local
+- Another Mac needs the same recovery key. Losing it makes existing remote data unrecoverable.
+- Existing v1 manifests are upgraded in place on the next successful sync; the recovery key and remote `.cliptrace-sync-v1` location do not change.
+- See [Sync Architecture](docs/sync-architecture.md) for merge, commit, migration, and retention invariants.
 
 ## MCP Server
 

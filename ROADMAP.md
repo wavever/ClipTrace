@@ -7,6 +7,7 @@ This roadmap is directional, not a promise. ClipTrace is local-first, privacy-fi
 - Keep clipboard monitoring reliable after window lifecycle changes.
 - Make the open-source project easy to build, inspect, and contribute to.
 - Improve trust materials: privacy docs, security reporting, release signing notes, and contribution guidance.
+- Continue validating the end-to-end encrypted sync engine across more WebDAV and S3-compatible services.
 
 ## Near Term
 
@@ -32,6 +33,11 @@ This roadmap is directional, not a promise. ClipTrace is local-first, privacy-fi
 
 ## Mid Term
 
+### Sync
+
+- Add a native CloudKit transport after the project moves to Developer ID signing and can ship the required iCloud container entitlements.
+- Evaluate direct Dropbox, OneDrive, or Google Drive APIs only where their delta feeds add value beyond the existing local-folder backend.
+
 ### Power User Workflows
 
 - Sequential paste stack.
@@ -55,5 +61,4 @@ This roadmap is directional, not a promise. ClipTrace is local-first, privacy-fi
 
 - Optional encrypted private clips.
 - Shortcuts.app integration.
-- Optional iCloud sync only if privacy controls are strong enough.
 - Companion apps only after the macOS app is stable.

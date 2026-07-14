@@ -2203,6 +2203,8 @@ private struct DataSection: View {
 
     var body: some View {
         VStack(spacing: 18) {
+            SyncSettingsView()
+
             SettingsGroup(icon: "trash", title: L("settings.data.trash.title"), tint: .appAccent) {
                 SettingsRow(
                     icon: "trash.circle",

@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import AppKit
+import QuartzCore
 
 /// Main-window history density. Stored as a raw value so the user's preferred
 /// presentation survives relaunches without adding another settings model.
@@ -83,6 +84,7 @@ struct MainWindowContent: View {
     @Query private var groups: [ClipboardGroup]
     @Environment(\.modelContext) private var modelContext
     @ObservedObject private var updater = UpdaterService.shared
+    @ObservedObject private var sync = SyncService.shared
 
     let pageSize: Int
     let canLoadMore: Bool
@@ -140,11 +142,19 @@ struct MainWindowContent: View {
     @ObservedObject private var contentProtection = ContentProtectionStore.shared
 
     @AppStorage("fdaOnboardingDismissed") private var fdaOnboardingDismissed = false
+    /// Accessibility (auto-paste) first-run reminder. Dismissal is remembered,
+    /// and the card never shows once the permission is already granted.
+    @AppStorage("axOnboardingDismissed") private var axOnboardingDismissed = false
+    /// Live AX trust snapshot; refreshed when the app regains focus so the
+    /// card melts away right after the user flips the toggle in Settings.
+    @State private var axTrusted = AutoPasteService.isTrusted
     /// One-shot main-window feature tour; persisted so it never replays after
     /// being finished or skipped.
     @AppStorage("mainFeatureTourSeen") private var mainFeatureTourSeen = false
     @AppStorage("pinnedCollapsed") private var pinnedCollapsed = false
     @AppStorage("mainContentLayout") private var contentLayout: MainContentLayout = .list
+    @AppStorage(SyncPreferenceKeys.provider) private var syncProviderRaw = SyncProvider.off.rawValue
+    @AppStorage(SyncPreferenceKeys.automatic) private var automaticSync = true
     @State private var gridColumnCount = 1
     @State private var isMergingSelection = false
     /// Non-nil when the user picked "Rename" from a row's context menu —
@@ -182,10 +192,20 @@ struct MainWindowContent: View {
         vm.filteredItems(allItems)
     }
 
-    /// The feature tour waits until the FDA card is out of the way and only
-    /// runs on the list screen, where all of its spotlight targets live.
+    /// Accessibility reminder is the front of the first-run queue; it also
+    /// disappears on its own once the permission shows up as granted.
+    private var showAXOnboarding: Bool {
+        !axOnboardingDismissed && !axTrusted
+    }
+
+    /// The feature tour waits until both permission cards are out of the way
+    /// and only runs on the list screen, where its spotlight targets live.
     private var isTourActive: Bool {
-        !mainFeatureTourSeen && fdaOnboardingDismissed && nav.screen == .list
+        !mainFeatureTourSeen && fdaOnboardingDismissed && !showAXOnboarding && nav.screen == .list
+    }
+
+    private var hasSelectedSyncProvider: Bool {
+        (SyncProvider(rawValue: syncProviderRaw) ?? .off) != .off
     }
 
     var body: some View {
@@ -208,7 +228,31 @@ struct MainWindowContent: View {
                     .transition(.opacity)
             }
 
-            if !fdaOnboardingDismissed {
+            // First-run overlays surface one at a time, in priority order:
+            // Accessibility (auto-paste is the core flow) → Full Disk Access
+            // → the feature tour (hosted further down as an overlay).
+            if showAXOnboarding {
+                Color.black.opacity(0.45)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            axOnboardingDismissed = true
+                        }
+                    }
+                    .transition(.opacity)
+                    .zIndex(2)
+
+                AccessibilityOnboardingView {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        axOnboardingDismissed = true
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                .zIndex(3)
+            }
+
+            if !fdaOnboardingDismissed && !showAXOnboarding {
                 Color.black.opacity(0.45)
                     .ignoresSafeArea()
                     .onTapGesture {
@@ -274,6 +318,13 @@ struct MainWindowContent: View {
         .animation(.spring(response: 0.34, dampingFraction: 0.84), value: confirm.request?.id)
         .animation(.spring(response: 0.34, dampingFraction: 0.84), value: ruleEditor.editing?.id)
         .animation(.easeOut(duration: 0.22), value: fdaOnboardingDismissed)
+        .animation(.easeOut(duration: 0.22), value: showAXOnboarding)
+        // Re-check AX trust whenever the app regains focus — coming back from
+        // System Settings with the permission granted dismisses the card
+        // without another click.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            axTrusted = AutoPasteService.isTrusted
+        }
         // Hosted as an overlay on the whole ZStack because the spotlight
         // anchors bubble up from the toolbar/header/list beneath — one shared
         // dim layer can then cut a hole wherever the current target sits.
@@ -806,6 +857,16 @@ struct MainWindowContent: View {
                     .transition(.scale(scale: 0.86).combined(with: .opacity))
             }
 
+            if hasSelectedSyncProvider {
+                MainSyncStatusControl(
+                    activity: sync.activity,
+                    lastSuccess: sync.lastSuccess,
+                    automatic: automaticSync,
+                    onSync: { sync.syncNow() }
+                )
+                .transition(.scale(scale: 0.86).combined(with: .opacity))
+            }
+
             CaptureToggle(isPaused: $vm.isCapturePaused)
                 .featureTourAnchor(.capture)
         }
@@ -813,6 +874,8 @@ struct MainWindowContent: View {
         .padding(.top, 16)
         .padding(.bottom, 12)
         .animation(.easeOut(duration: 0.18), value: updater.updateAvailable)
+        .animation(.spring(response: 0.3, dampingFraction: 0.82), value: hasSelectedSyncProvider)
+        .animation(.spring(response: 0.3, dampingFraction: 0.82), value: automaticSync)
     }
 
     private var toolbar: some View {
@@ -2279,6 +2342,271 @@ private struct HeaderStatDivider: View {
     }
 }
 
+/// Compact sync affordance in the home header. Automatic mode is deliberately
+/// read-only so a status glance cannot accidentally start overlapping work;
+/// manual mode turns the same paper pill into an explicit sync button.
+private struct MainSyncStatusControl: View {
+    let activity: SyncActivityState
+    let lastSuccess: Date?
+    let automatic: Bool
+    let onSync: () -> Void
+
+    @State private var hovering = false
+    @State private var showSuccessCheck = false
+    @State private var successMarker = UUID()
+
+    private var isSyncing: Bool { activity == .syncing }
+
+    var body: some View {
+        Group {
+            if automatic || isSyncing {
+                iconSurface
+                    .accessibilityLabel(statusLabel)
+                    .hoverTip(statusTip)
+            } else {
+                Button(action: onSync) {
+                    iconSurface
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(L("main.sync.button"))
+                .hoverTip(statusTip)
+                .onHover { value in
+                    withAnimation(.easeOut(duration: 0.12)) { hovering = value }
+                }
+            }
+        }
+        .onChange(of: activity) { _, newValue in
+            updateAnimation(for: newValue)
+        }
+        .onDisappear {
+            successMarker = UUID()
+        }
+    }
+
+    private var iconSurface: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.appChipFill)
+
+            if isSyncing {
+                SyncSpinnerIcon(accent: AccentThemeStore.shared.palette.nsColor)
+            } else if showSuccessCheck {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Color.appAccent)
+                    .transition(.scale(scale: 0.55).combined(with: .opacity))
+            } else if isFailure {
+                failedSyncIcon
+            } else {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .transition(.scale(scale: 0.78).combined(with: .opacity))
+            }
+        }
+        .frame(width: 30, height: 30)
+        .overlay(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(
+                    hovering && !automatic ? tint.opacity(0.42) : Color.appCardBorder,
+                    lineWidth: hovering && !automatic ? 1 : 0.75
+                )
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .animation(.spring(response: 0.28, dampingFraction: 0.72), value: showSuccessCheck)
+    }
+
+    private var failedSyncIcon: some View {
+        ZStack(alignment: .bottomTrailing) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(Color.appAccent)
+                .frame(width: 16, height: 16)
+
+            ZStack {
+                Circle()
+                    .fill(Color.appChipFill)
+                    .frame(width: 10, height: 10)
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: 8.5, weight: .bold))
+                    .foregroundStyle(Color.appDanger)
+            }
+            .offset(x: 2.5, y: 2.5)
+        }
+        .frame(width: 18, height: 18)
+    }
+
+    private var tint: Color {
+        if case .failed = activity { return .appDanger }
+        if activity == .idle && lastSuccess == nil { return .secondary }
+        return .appAccent
+    }
+
+    private var isFailure: Bool {
+        if case .failed = activity { return true }
+        return false
+    }
+
+    private var statusLabel: String {
+        switch activity {
+        case .syncing:
+            return L("main.sync.status.syncing")
+        case .failed:
+            return L("main.sync.status.failed")
+        case .succeeded:
+            return L("main.sync.status.synced")
+        case .idle:
+            return lastSuccess == nil
+                ? L("main.sync.status.waiting")
+                : L("main.sync.status.synced")
+        }
+    }
+
+    private var statusTip: String {
+        if case .failed(let message) = activity {
+            return L("main.sync.status.failedDetail", message)
+        }
+        if let lastSuccess {
+            return L("main.sync.status.lastSuccess", Self.dateFormatter.string(from: lastSuccess))
+        }
+        return automatic ? L("main.sync.status.automaticHelp") : L("main.sync.button.help")
+    }
+
+    private func updateAnimation(for newValue: SyncActivityState) {
+        let marker = UUID()
+        successMarker = marker
+
+        if newValue == .succeeded {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.68)) {
+                showSuccessCheck = true
+            }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 1_400_000_000)
+                guard successMarker == marker else { return }
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.78)) {
+                    showSuccessCheck = false
+                }
+            }
+        } else {
+            showSuccessCheck = false
+        }
+    }
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return formatter
+    }()
+}
+
+/// A layer-backed AppKit spinner starts as soon as it enters the hierarchy and
+/// keeps rotating on Core Animation's render side while sync work uses the
+/// main actor. No per-frame SwiftUI state or view reconstruction is involved.
+private struct SyncSpinnerIcon: NSViewRepresentable {
+    let accent: NSColor
+
+    func makeNSView(context: Context) -> LayerSpinnerView {
+        let view = LayerSpinnerView()
+        view.setAccent(accent)
+        view.startAnimating()
+        return view
+    }
+
+    func updateNSView(_ nsView: LayerSpinnerView, context: Context) {
+        nsView.setAccent(accent)
+        nsView.startAnimating()
+    }
+
+    static func dismantleNSView(_ nsView: LayerSpinnerView, coordinator: ()) {
+        nsView.stopAnimating()
+    }
+
+    final class LayerSpinnerView: NSView {
+        private static let animationKey = "cliptrace.sync.rotation"
+        private let spinnerLayer = CAShapeLayer()
+        private var accent = NSColor.controlAccentColor
+
+        init() {
+            super.init(frame: CGRect(x: 0, y: 0, width: 16, height: 16))
+            wantsLayer = true
+            spinnerLayer.fillColor = nil
+            spinnerLayer.lineWidth = 1.8
+            spinnerLayer.lineCap = .round
+            spinnerLayer.strokeStart = 0.06
+            spinnerLayer.strokeEnd = 0.78
+            layer?.addSublayer(spinnerLayer)
+            updateStrokeColor()
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        override func layout() {
+            super.layout()
+            let diameter = min(14, min(bounds.width, bounds.height))
+            let ringFrame = CGRect(
+                x: bounds.midX - diameter / 2,
+                y: bounds.midY - diameter / 2,
+                width: diameter,
+                height: diameter
+            )
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            spinnerLayer.frame = ringFrame
+            spinnerLayer.path = CGPath(
+                ellipseIn: spinnerLayer.bounds.insetBy(dx: 1.2, dy: 1.2),
+                transform: nil
+            )
+            CATransaction.commit()
+        }
+
+        override func viewDidChangeEffectiveAppearance() {
+            super.viewDidChangeEffectiveAppearance()
+            updateStrokeColor()
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window == nil {
+                stopAnimating()
+            } else {
+                startAnimating()
+            }
+        }
+
+        func startAnimating() {
+            layoutSubtreeIfNeeded()
+            guard spinnerLayer.animation(forKey: Self.animationKey) == nil else { return }
+            let animation = CABasicAnimation(keyPath: "transform.rotation.z")
+            animation.fromValue = 0
+            animation.toValue = Double.pi * 2
+            animation.duration = 0.72
+            animation.repeatCount = .infinity
+            animation.timingFunction = CAMediaTimingFunction(name: .linear)
+            animation.isRemovedOnCompletion = false
+            spinnerLayer.add(animation, forKey: Self.animationKey)
+        }
+
+        func stopAnimating() {
+            spinnerLayer.removeAnimation(forKey: Self.animationKey)
+        }
+
+        func setAccent(_ color: NSColor) {
+            accent = color
+            updateStrokeColor()
+        }
+
+        private func updateStrokeColor() {
+            effectiveAppearance.performAsCurrentDrawingAppearance {
+                spinnerLayer.strokeColor = accent.cgColor
+            }
+        }
+    }
+}
+
 // MARK: - Toolbar filters
 
 private struct GroupFilterMenu: View {
@@ -3063,10 +3391,8 @@ private struct ToolbarSearchField: View {
             .focusable(false)
             if featureEnabled {
                 SearchModeSegment(
-                    icon: indexing ? "hourglass" : "sparkle",
-                    title: indexing
-                        ? L("common.searchMode.indexing")
-                        : L("common.searchMode.semantic"),
+                    icon: "sparkle",
+                    title: L("common.searchMode.semantic"),
                     isOn: mode == .semantic && !indexing,
                     tint: .appAccent,
                     disabled: indexing,
@@ -3494,6 +3820,7 @@ private struct SearchModeSegment: View {
                 } else {
                     Image(systemName: icon)
                         .font(.system(size: 10, weight: .semibold))
+                        .frame(width: 12, height: 12)
                 }
                 Text(title)
                     .font(.system(size: 11, weight: .semibold))

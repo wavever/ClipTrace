@@ -89,13 +89,17 @@ enum AccentPalette: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    /// Dynamic NSColor so the swatch adapts to light / dark mode without us
-    /// having to thread the colour scheme through every view.
-    var color: Color {
-        Color(nsColor: NSColor(name: nil) { appearance in
+    /// Dynamic NSColor so AppKit bridges and SwiftUI views resolve the same
+    /// runtime accent in both light and dark appearances.
+    var nsColor: NSColor {
+        NSColor(name: nil) { appearance in
             let isDark = appearance.bestMatch(from: [.darkAqua, .vibrantDark]) != nil
             return isDark ? Self.darkValues[self]! : Self.lightValues[self]!
-        })
+        }
+    }
+
+    var color: Color {
+        Color(nsColor: nsColor)
     }
 
     var displayName: String {

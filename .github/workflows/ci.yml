@@ -32,6 +32,16 @@ jobs:
       - name: Show Xcode version
         run: xcodebuild -version
 
+      - name: Test sync v2, encryption, and transports
+        run: |
+          swiftc \
+            ClipTrace/Models/SyncModels.swift \
+            ClipTrace/Services/SyncSecurity.swift \
+            ClipTrace/Services/SyncTransports.swift \
+            scripts/SyncCoreTests.swift \
+            -o /tmp/cliptrace-sync-tests
+          /tmp/cliptrace-sync-tests
+
       - name: Build
         run: |
           xcodebuild \

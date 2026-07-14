@@ -14,13 +14,13 @@
   const META = {
     en: {
       title: '剪迹 · ClipTrace — Local-first clipboard history for macOS & AI',
-      description: 'ClipTrace is an open-source macOS clipboard manager with offline semantic search and a built-in MCP server. Local-first, private, and AI-ready.',
+      description: 'ClipTrace is an open-source macOS clipboard manager with offline semantic search, conflict-resilient encrypted sync, and a built-in MCP server.',
       toggleLabel: 'Switch language to Chinese',
       swQuery: 'meeting notes from last week'
     },
     zh: {
       title: '剪迹 · ClipTrace — 面向 macOS 与 AI 工具的本地优先剪贴板历史',
-      description: '剪迹是一款开源 macOS 剪贴板管理工具，支持离线语义搜索和内置 MCP 服务器。本地优先、隐私默认、面向 AI 工具。',
+      description: '剪迹是一款开源 macOS 剪贴板管理工具，支持离线语义搜索、可抗冲突的端到端加密同步和内置 MCP 服务器。',
       toggleLabel: '切换语言为 English',
       swQuery: '上周的会议记录'
     }

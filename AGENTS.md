@@ -8,8 +8,9 @@
 
 - SwiftUI + SwiftData (SQLite)，macOS 14.0+，Swift 5（Xcode 16）。
 - Bundle id `com.wavever.cliptrace`；仓库 `wavever/ClipTrace`。
-- 完全本地 / 离线：语义搜索用 Apple `NLEmbedding`，OCR 用 `Vision`，本地 MCP
-  服务走 stdio。无遥测、无网络请求（仅 Sparkle 更新检查除外）。
+- 默认本地 / 离线：语义搜索用 Apple `NLEmbedding`，OCR 用 `Vision`，本地 MCP
+  服务走 stdio。无遥测；网络仅用于 Sparkle 更新检查和用户主动配置的端到端加密同步
+  （iCloud 云盘 / WebDAV / 本地同步文件夹）。
 - 依赖（SPM）：**Sparkle**（自动更新）、**KeyboardShortcuts**（全局快捷键）。
 
 ### 目录结构
