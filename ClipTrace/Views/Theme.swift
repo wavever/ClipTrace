@@ -826,6 +826,81 @@ extension View {
 
 // MARK: - Paper context menu
 
+/// Keeps the shared context-menu interaction consistent while allowing a host
+/// surface to supply the tone that belongs beside it. Quick Paste floats on a
+/// translucent AppKit popover, whereas the main window and menu-bar panel use
+/// the warmer paper palette.
+enum PaperContextMenuSurfaceStyle {
+    case paper
+    case popover
+
+    var foreground: Color {
+        switch self {
+        case .paper: Color.appMetal
+        case .popover: Color.primary.opacity(0.84)
+        }
+    }
+
+    var hoverFill: Color {
+        switch self {
+        case .paper: Color.appAccent.opacity(0.14)
+        case .popover: Color.secondary.opacity(0.10)
+        }
+    }
+
+    var selectedFill: Color {
+        switch self {
+        case .paper: Color.appAccent.opacity(0.10)
+        case .popover: Color.appAccent.opacity(0.11)
+        }
+    }
+
+    var selectedHoverFill: Color {
+        switch self {
+        case .paper: Color.appAccent.opacity(0.18)
+        case .popover: Color.appAccent.opacity(0.16)
+        }
+    }
+
+    var divider: Color {
+        switch self {
+        case .paper: Color.appPaperDivider
+        case .popover: Color(nsColor: .separatorColor).opacity(0.42)
+        }
+    }
+
+    var border: Color {
+        switch self {
+        case .paper: Color.appCardBorder
+        case .popover: Color(nsColor: .separatorColor).opacity(0.4)
+        }
+    }
+
+    var borderWidth: CGFloat {
+        switch self {
+        case .paper: 0.75
+        case .popover: 0.5
+        }
+    }
+}
+
+private struct PaperContextMenuSurfaceStyleKey: EnvironmentKey {
+    static let defaultValue = PaperContextMenuSurfaceStyle.paper
+}
+
+extension EnvironmentValues {
+    var paperContextMenuSurfaceStyle: PaperContextMenuSurfaceStyle {
+        get { self[PaperContextMenuSurfaceStyleKey.self] }
+        set { self[PaperContextMenuSurfaceStyleKey.self] = newValue }
+    }
+}
+
+extension View {
+    func paperContextMenuSurfaceStyle(_ style: PaperContextMenuSurfaceStyle) -> some View {
+        environment(\.paperContextMenuSurfaceStyle, style)
+    }
+}
+
 /// Hosts a borderless child `NSPanel` for a right-click menu, opened *at the
 /// cursor* rather than below a fixed trigger. Mirrors `PaperDropdownController`,
 /// but the menu drives its own dismissal (outside click, Esc, window resign)
@@ -842,14 +917,19 @@ final class PaperContextMenuController: ObservableObject {
     private var submenuPanel: NSPanel?
     private var monitor: Any?
     private var resignObserver: NSObjectProtocol?
+    private var closeObserver: NSObjectProtocol?
+    private var closeHandler: (() -> Void)?
 
     func open<Content: View>(
         at screenPoint: CGPoint,
         in parentWindow: NSWindow,
         width: CGFloat,
+        keyboardHandler: ((NSEvent) -> Bool)? = nil,
+        onClose: (() -> Void)? = nil,
         @ViewBuilder content: () -> Content
     ) {
         close()
+        closeHandler = onClose
 
         let hosting = NSHostingView(rootView: content())
         hosting.layoutSubtreeIfNeeded()
@@ -887,10 +967,16 @@ final class PaperContextMenuController: ObservableObject {
         isOpen = true
 
         // Dismiss on any click outside the menu, and on Esc.
-        monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
+        monitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .keyDown, .keyUp]
+        ) { [weak self] event in
             guard let self, let panel = self.panel else { return event }
-            if event.type == .keyDown {
-                if event.keyCode == 53 { self.close(); return nil }   // Esc
+            if event.type == .keyDown || event.type == .keyUp {
+                if keyboardHandler?(event) == true { return nil }
+                if event.type == .keyDown, event.keyCode == 53 {
+                    self.close()
+                    return nil
+                }
                 return event
             }
             // Clicks inside the root menu or its open submenu keep the menu up.
@@ -901,6 +987,13 @@ final class PaperContextMenuController: ObservableObject {
 
         resignObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didResignKeyNotification,
+            object: parentWindow,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.close() }
+        }
+        closeObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
             object: parentWindow,
             queue: .main
         ) { [weak self] _ in
@@ -964,11 +1057,17 @@ final class PaperContextMenuController: ObservableObject {
     }
 
     func close() {
+        let closeHandler = closeHandler
+        self.closeHandler = nil
         closeSubmenu()
         if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
         if let resignObserver {
             NotificationCenter.default.removeObserver(resignObserver)
             self.resignObserver = nil
+        }
+        if let closeObserver {
+            NotificationCenter.default.removeObserver(closeObserver)
+            self.closeObserver = nil
         }
         if let panel {
             panel.parent?.removeChildWindow(panel)
@@ -976,6 +1075,7 @@ final class PaperContextMenuController: ObservableObject {
         }
         panel = nil
         isOpen = false
+        closeHandler?()
     }
 }
 
@@ -986,20 +1086,57 @@ final class PaperContextMenuController: ObservableObject {
 /// only returning `self` from `hitTest` when the live event is a right/control
 /// click; otherwise the hit lands on the view below.
 struct RightClickCatcher: NSViewRepresentable {
+    /// A changing token asks the backing row view to open the same menu from
+    /// its live screen frame. This keeps keyboard invocation anchored to the
+    /// focused lazy row instead of wherever the mouse happened to be.
+    var keyboardRequestSequence: Int? = nil
+    var onKeyboardRequest: ((CGPoint, NSWindow) -> Void)? = nil
     let onRightClick: (CGPoint, NSWindow) -> Void
 
     func makeNSView(context: Context) -> CatcherView {
         let view = CatcherView()
+        view.keyboardRequestSequence = keyboardRequestSequence
+        view.onKeyboardRequest = onKeyboardRequest
         view.onRightClick = onRightClick
+        view.scheduleKeyboardRequestIfNeeded()
         return view
     }
 
     func updateNSView(_ nsView: CatcherView, context: Context) {
+        nsView.keyboardRequestSequence = keyboardRequestSequence
+        nsView.onKeyboardRequest = onKeyboardRequest
         nsView.onRightClick = onRightClick
+        nsView.scheduleKeyboardRequestIfNeeded()
     }
 
     final class CatcherView: NSView {
+        var keyboardRequestSequence: Int?
+        var onKeyboardRequest: ((CGPoint, NSWindow) -> Void)?
         var onRightClick: ((CGPoint, NSWindow) -> Void)?
+        private var handledKeyboardRequestSequence: Int?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            scheduleKeyboardRequestIfNeeded()
+        }
+
+        func scheduleKeyboardRequestIfNeeded() {
+            guard let sequence = keyboardRequestSequence,
+                  sequence != handledKeyboardRequestSequence else { return }
+            DispatchQueue.main.async { [weak self] in
+                self?.fulfillKeyboardRequestIfNeeded()
+            }
+        }
+
+        private func fulfillKeyboardRequestIfNeeded() {
+            guard let sequence = keyboardRequestSequence,
+                  sequence != handledKeyboardRequestSequence,
+                  let window else { return }
+            handledKeyboardRequestSequence = sequence
+            let frame = window.convertToScreen(convert(bounds, to: nil))
+            let point = CGPoint(x: frame.minX + 12, y: frame.maxY - 4)
+            onKeyboardRequest?(point, window)
+        }
 
         private func isContextClick(_ event: NSEvent?) -> Bool {
             guard let event else { return false }
@@ -1071,6 +1208,19 @@ final class PaperSubmenuCoordinator: ObservableObject {
         if !isOpen { isOpen = true; present?() }
     }
 
+    /// Keyboard navigation must update the coordinator as well as removing
+    /// the child panel; otherwise a subsequent Right-arrow sees `isOpen` and
+    /// refuses to recreate the submenu that Left-arrow just dismissed.
+    func closeNow() {
+        task?.cancel()
+        rowHovered = false
+        submenuHovered = false
+        if isOpen {
+            isOpen = false
+            dismiss?()
+        }
+    }
+
     private func reconcile() {
         task?.cancel()
         let shouldOpen = rowHovered || submenuHovered
@@ -1108,8 +1258,10 @@ struct PaperSubmenuRow: View {
     let icon: String
     let title: String
     @ObservedObject var coordinator: PaperSubmenuCoordinator
+    var isKeyboardFocused = false
 
     @State private var hovering = false
+    @Environment(\.paperContextMenuSurfaceStyle) private var surfaceStyle
 
     private var active: Bool { coordinator.isOpen }
 
@@ -1118,11 +1270,11 @@ struct PaperSubmenuRow: View {
             HStack(spacing: 9) {
                 Image(systemName: icon)
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(active ? Color.appAccent : Color.appMetal)
+                    .foregroundStyle(active ? Color.appAccent : surfaceStyle.foreground)
                     .frame(width: 16)
                 Text(title)
                     .font(.system(size: 12, weight: active ? .semibold : .regular))
-                    .foregroundStyle(active ? Color.appAccent : Color.appMetal)
+                    .foregroundStyle(active ? Color.appAccent : surfaceStyle.foreground)
                     .lineLimit(1)
                 Spacer(minLength: 8)
                 Image(systemName: "chevron.right")
@@ -1134,7 +1286,9 @@ struct PaperSubmenuRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(hovering || active ? Color.appAccent.opacity(0.14) : Color.clear)
+                    .fill(active
+                          ? Color.appAccent.opacity(0.14)
+                          : (hovering || isKeyboardFocused ? surfaceStyle.hoverFill : Color.clear))
             )
             .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
@@ -1156,12 +1310,14 @@ struct PaperMenuActionRow: View {
     let icon: String
     let title: String
     var role: Role = .normal
+    var isKeyboardFocused = false
     let action: () -> Void
 
     @State private var hovering = false
+    @Environment(\.paperContextMenuSurfaceStyle) private var surfaceStyle
 
     private var tint: Color {
-        role == .destructive ? Color.appDanger : Color.appMetal
+        role == .destructive ? Color.appDanger : surfaceStyle.foreground
     }
 
     var body: some View {
@@ -1182,8 +1338,8 @@ struct PaperMenuActionRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(hovering
-                          ? (role == .destructive ? Color.appDanger.opacity(0.14) : Color.appAccent.opacity(0.14))
+                    .fill(hovering || isKeyboardFocused
+                          ? (role == .destructive ? Color.appDanger.opacity(0.14) : surfaceStyle.hoverFill)
                           : Color.clear)
             )
             .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
@@ -1199,9 +1355,11 @@ struct PaperMenuActionRow: View {
 struct PaperMenuCheckRow: View {
     let title: String
     let isMember: Bool
+    var isKeyboardFocused = false
     let action: () -> Void
 
     @State private var hovering = false
+    @Environment(\.paperContextMenuSurfaceStyle) private var surfaceStyle
 
     var body: some View {
         Button(action: action) {
@@ -1212,7 +1370,7 @@ struct PaperMenuCheckRow: View {
                     .frame(width: 16)
                 Text(title)
                     .font(.system(size: 12, weight: isMember ? .semibold : .regular))
-                    .foregroundStyle(isMember ? Color.appAccent : Color.appMetal)
+                    .foregroundStyle(isMember ? Color.appAccent : surfaceStyle.foreground)
                     .lineLimit(1)
                 Spacer(minLength: 8)
             }
@@ -1222,8 +1380,10 @@ struct PaperMenuCheckRow: View {
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(isMember
-                          ? Color.appAccent.opacity(hovering ? 0.18 : 0.10)
-                          : (hovering ? Color.appAccent.opacity(0.14) : Color.clear))
+                          ? (hovering || isKeyboardFocused
+                             ? surfaceStyle.selectedHoverFill
+                             : surfaceStyle.selectedFill)
+                          : (hovering || isKeyboardFocused ? surfaceStyle.hoverFill : Color.clear))
             )
             .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
@@ -1250,9 +1410,11 @@ struct PaperMenuSectionLabel: View {
 
 /// Hairline divider tuned for the paper menu surface.
 struct PaperMenuDivider: View {
+    @Environment(\.paperContextMenuSurfaceStyle) private var surfaceStyle
+
     var body: some View {
         Rectangle()
-            .fill(Color.appPaperDivider)
+            .fill(surfaceStyle.divider)
             .frame(height: 1)
             .padding(.vertical, 3)
             .padding(.horizontal, 4)

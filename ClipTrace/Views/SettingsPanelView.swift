@@ -900,9 +900,9 @@ private struct ShortcutSection: View {
                     subtitle: L("settings.shortcut.quickPasteCommit.subtitle")
                 ) {
                     HStack(spacing: 8) {
-                        QuickPasteKeyRecorder(shortcut: $quickPasteKeys.commitShortcut)
+                        QuickPasteKeyRecorder(action: .commit, store: quickPasteKeys)
                         Button {
-                            quickPasteKeys.resetCommit()
+                            showQuickPasteShortcutIssue(quickPasteKeys.reset(.commit))
                         } label: {
                             Image(systemName: "arrow.counterclockwise")
                         }
@@ -917,9 +917,26 @@ private struct ShortcutSection: View {
                     subtitle: L("settings.shortcut.quickPasteToggleSelect.subtitle")
                 ) {
                     HStack(spacing: 8) {
-                        QuickPasteKeyRecorder(shortcut: $quickPasteKeys.toggleSelectShortcut)
+                        QuickPasteKeyRecorder(action: .toggleSelect, store: quickPasteKeys)
                         Button {
-                            quickPasteKeys.resetToggleSelect()
+                            showQuickPasteShortcutIssue(quickPasteKeys.reset(.toggleSelect))
+                        } label: {
+                            Image(systemName: "arrow.counterclockwise")
+                        }
+                        .buttonStyle(PaperIconButtonStyle(size: 28))
+                        .help(L("settings.shortcut.resetTooltip"))
+                    }
+                }
+                SettingsRow(
+                    icon: "list.bullet.rectangle",
+                    iconTint: .appAccent,
+                    title: L("settings.shortcut.quickPasteMenu"),
+                    subtitle: L("settings.shortcut.quickPasteMenu.subtitle")
+                ) {
+                    HStack(spacing: 8) {
+                        QuickPasteKeyRecorder(action: .openMenu, store: quickPasteKeys)
+                        Button {
+                            showQuickPasteShortcutIssue(quickPasteKeys.reset(.openMenu))
                         } label: {
                             Image(systemName: "arrow.counterclockwise")
                         }
@@ -1097,17 +1114,42 @@ private extension AppShortcut {
     }
 }
 
+@MainActor
+private func showQuickPasteShortcutIssue(_ issue: QuickPasteKeyAssignmentIssue?) {
+    guard let issue else { return }
+    let messageKey: String
+    switch issue {
+    case .conflict:
+        messageKey = "settings.shortcut.quickPasteConflict"
+    case .reservedPanelCommand:
+        messageKey = "settings.shortcut.quickPasteReservedCommand"
+    case .menuFallbackReserved:
+        messageKey = "settings.shortcut.quickPasteMenuFallbackReserved"
+    }
+    ToastCenter.shared.show(
+        L(messageKey),
+        systemImage: "exclamationmark.triangle.fill",
+        tint: .orange
+    )
+}
+
 /// Records one of the QuickPaste panel's keyboard-flow keys. Click to arm,
 /// then press any key (with or without modifiers); Esc cancels without
-/// changing the binding.
+/// changing the stored command. Conflicting or reserved input keeps the
+/// recorder armed so another key can be tried immediately.
 ///
 /// Capture goes through an embedded AppKit probe rather than
 /// `KeyboardShortcuts.Recorder`: that component installs a *global* hotkey for
 /// whatever it records, which would hijack the key system-wide. These
 /// shortcuts must stay panel-local.
 private struct QuickPasteKeyRecorder: View {
-    @Binding var shortcut: KeyboardShortcuts.Shortcut
+    let action: QuickPasteKeyAction
+    @ObservedObject var store: QuickPasteKeyStore
     @State private var isRecording = false
+
+    private var shortcut: KeyboardShortcuts.Shortcut {
+        store.shortcut(for: action)
+    }
 
     var body: some View {
         Button {
@@ -1136,34 +1178,48 @@ private struct QuickPasteKeyRecorder: View {
         .buttonStyle(.plain)
         .overlay {
             if isRecording {
-                QuickPasteKeyProbe(isRecording: $isRecording, shortcut: $shortcut)
+                QuickPasteKeyProbe(isRecording: $isRecording) { event in
+                    if QuickPasteMenuShortcut.isHardwareContextMenuEvent(event) {
+                        showQuickPasteShortcutIssue(.menuFallbackReserved)
+                        return false
+                    }
+                    guard let recorded = KeyboardShortcuts.Shortcut(event: event) else {
+                        return false
+                    }
+                    if let issue = store.assign(recorded, from: event, to: action) {
+                        showQuickPasteShortcutIssue(issue)
+                        return false
+                    }
+                    return true
+                }
             }
         }
     }
 }
 
 /// Invisible AppKit probe inserted while `QuickPasteKeyRecorder` is armed.
-/// Grabs the next keystroke, writes it to `shortcut`, and disarms. `hitTest`
-/// returns `nil` so a click still falls through to the button beneath it.
+/// Grabs keystrokes and delegates validation to the store-backed recorder.
+/// `hitTest` returns `nil` so a click still falls through to the button.
 private struct QuickPasteKeyProbe: NSViewRepresentable {
     @Binding var isRecording: Bool
-    @Binding var shortcut: KeyboardShortcuts.Shortcut
+    let onCapture: (NSEvent) -> Bool
 
     func makeNSView(context: Context) -> ProbeView {
         let view = ProbeView()
         view.isRecording = $isRecording
-        view.shortcut = $shortcut
+        view.onCapture = onCapture
         return view
     }
 
     func updateNSView(_ nsView: ProbeView, context: Context) {
         nsView.isRecording = $isRecording
-        nsView.shortcut = $shortcut
+        nsView.onCapture = onCapture
     }
 
     final class ProbeView: NSView {
         var isRecording: Binding<Bool>?
-        var shortcut: Binding<KeyboardShortcuts.Shortcut>?
+        var onCapture: ((NSEvent) -> Bool)?
+        private var finished = false
 
         override var acceptsFirstResponder: Bool { true }
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -1176,17 +1232,25 @@ private struct QuickPasteKeyProbe: NSViewRepresentable {
             }
         }
 
-        /// Records `event` (unless it is Esc) and disarms. Always returns
-        /// `true` so the keystroke is swallowed instead of triggering app
-        /// shortcuts while recording.
+        /// Esc cancels. Valid input disarms; rejected input stays armed so the
+        /// user can immediately try another key. Every event is swallowed.
         @discardableResult
         private func capture(_ event: NSEvent) -> Bool {
-            if event.keyCode != 53,  // 53 = Esc → cancel, leave binding intact
-               let recorded = KeyboardShortcuts.Shortcut(event: event) {
-                shortcut?.wrappedValue = recorded
+            guard !finished else { return true }
+            if event.keyCode == 53 {
+                finish()
+                return true
             }
-            isRecording?.wrappedValue = false
+            if onCapture?(event) == true {
+                finish()
+            }
             return true
+        }
+
+        private func finish() {
+            guard !finished else { return }
+            finished = true
+            isRecording?.wrappedValue = false
         }
 
         override func keyDown(with event: NSEvent) {
@@ -1195,6 +1259,15 @@ private struct QuickPasteKeyProbe: NSViewRepresentable {
 
         override func performKeyEquivalent(with event: NSEvent) -> Bool {
             capture(event)
+        }
+
+        override func resignFirstResponder() -> Bool {
+            if !finished {
+                finished = true
+                let recording = isRecording
+                DispatchQueue.main.async { recording?.wrappedValue = false }
+            }
+            return super.resignFirstResponder()
         }
     }
 }

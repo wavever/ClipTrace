@@ -4,6 +4,15 @@ import KeyboardShortcuts
 
 struct QuickPasteView: View {
     @ObservedObject var state: QuickPastePanelState
+    @ObservedObject private var itemContextMenu: ClipboardItemContextMenuCoordinator
+
+    init(
+        state: QuickPastePanelState,
+        itemContextMenu: ClipboardItemContextMenuCoordinator
+    ) {
+        _state = ObservedObject(wrappedValue: state)
+        _itemContextMenu = ObservedObject(wrappedValue: itemContextMenu)
+    }
 
     /// Selection in click order. Used to drive numeric badges and to preserve
     /// concatenation order at commit time.
@@ -21,6 +30,8 @@ struct QuickPasteView: View {
     /// Bumped to hand first-responder back to the key catcher when search
     /// focus ends — otherwise ↑/↓ would go nowhere after Esc.
     @State private var keyClaimToken = 0
+    @State private var contextMenuRequestSequence = 0
+    @State private var contextMenuKeyboardRequest: ClipboardItemContextMenuKeyboardRequest?
     @AppStorage("quickPasteContentLayout") private var contentLayoutRaw = PanelContentLayout.list.rawValue
 
     @ObservedObject private var keyStore = QuickPasteKeyStore.shared
@@ -67,12 +78,14 @@ struct QuickPasteView: View {
         .background(
             QuickPasteKeyCatcher(
                 claimFocusToken: keyClaimToken,
+                isContextMenuOpen: { itemContextMenu.isMenuOpen },
                 onLeft: { usesGrid ? moveFocusHorizontally(by: -1) : switchGroup(by: -1) },
                 onRight: { usesGrid ? moveFocusHorizontally(by: 1) : switchGroup(by: 1) },
                 onUp: { moveFocusVertically(by: -1) },
                 onDown: { moveFocusVertically(by: 1) },
                 onToggleSelect: { toggleFocusedSelection() },
-                onCommit: { plainText in commitFromKeyboard(plainText: plainText) }
+                onCommit: { plainText in commitFromKeyboard(plainText: plainText) },
+                onOpenContextMenu: { openFocusedContextMenu() }
             )
         )
         .background(
@@ -102,6 +115,10 @@ struct QuickPasteView: View {
             selectedIDs.removeAll(keepingCapacity: true)
             hoverID = nil
             focusedID = ids.first
+            if let request = contextMenuKeyboardRequest,
+               !ids.contains(request.itemID) {
+                contextMenuKeyboardRequest = nil
+            }
         }
         .onChange(of: state.selectedGroupFilter) { _, _ in
             selectedIDs.removeAll(keepingCapacity: true)
@@ -128,6 +145,7 @@ struct QuickPasteView: View {
                 HoverPreviewController.shared.noteExit(itemID: oldValue)
             }
         }
+        .clipboardItemContextMenuPresenter(itemContextMenu)
     }
 
     private func schedulePreview(for id: UUID) {
@@ -222,7 +240,7 @@ struct QuickPasteView: View {
                 }
                 .background(
                     SearchArrowRouter(
-                        isActive: { searchFocused },
+                        isActive: { searchFocused && !itemContextMenu.isMenuOpen },
                         onMove: { delta in moveFocusVertically(by: delta) }
                     )
                 )
@@ -426,12 +444,15 @@ struct QuickPasteView: View {
             focusedID = item.id
             toggle(item.id)
         }
-        .contextMenu {
-            Button(item.isPinned ? L("action.unpin") : L("action.pin"),
-                   systemImage: item.isPinned ? "pin.slash" : "pin") {
-                state.onTogglePin(item)
-            }
-        }
+        .clipboardItemContextMenu(
+            item: item,
+            groups: sortedGroups,
+            coordinator: itemContextMenu,
+            surfaceStyle: .popover,
+            keyboardRequest: contextMenuKeyboardRequest,
+            onKeyboardRequestHandled: { contextMenuKeyboardRequest = nil },
+            onMutation: state.reloadSnapshot
+        )
     }
 
     private func gridCard(for item: ClipboardItem) -> some View {
@@ -555,12 +576,15 @@ struct QuickPasteView: View {
             focusedID = item.id
             toggle(item.id)
         }
-        .contextMenu {
-            Button(item.isPinned ? L("action.unpin") : L("action.pin"),
-                   systemImage: item.isPinned ? "pin.slash" : "pin") {
-                state.onTogglePin(item)
-            }
-        }
+        .clipboardItemContextMenu(
+            item: item,
+            groups: sortedGroups,
+            coordinator: itemContextMenu,
+            surfaceStyle: .popover,
+            keyboardRequest: contextMenuKeyboardRequest,
+            onKeyboardRequestHandled: { contextMenuKeyboardRequest = nil },
+            onMutation: state.reloadSnapshot
+        )
     }
 
     private func showsGridThumbnail(_ item: ClipboardItem) -> Bool {
@@ -584,6 +608,12 @@ struct QuickPasteView: View {
             .escapeShortcut(enabled: !searchFocused)
 
             Spacer()
+
+            Text("\(keyStore.openMenuShortcut.description) \(L("quickpaste.hint.kbdMenu"))")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
 
             Button {
                 commitFromKeyboard(plainText: false)
@@ -650,6 +680,7 @@ struct QuickPasteView: View {
     private func resetSearchSession() {
         searchDebounce?.cancel()
         searchDraft = ""
+        contextMenuKeyboardRequest = nil
         exitSearch()
     }
 
@@ -722,6 +753,21 @@ struct QuickPasteView: View {
         toggle(id)
     }
 
+    /// Ask the focused lazy row to open its shared menu from its own live
+    /// AppKit frame. Exiting search first prevents the field editor's arrow
+    /// router from intercepting menu navigation on the following key press.
+    private func openFocusedContextMenu() {
+        guard let id = focusedID ?? visualItems.first?.id,
+              visualItems.contains(where: { $0.id == id }) else { return }
+        focusedID = id
+        if searchFocused { exitSearch() }
+        contextMenuRequestSequence &+= 1
+        contextMenuKeyboardRequest = ClipboardItemContextMenuKeyboardRequest(
+            itemID: id,
+            sequence: contextMenuRequestSequence
+        )
+    }
+
     private func toggle(_ id: UUID) {
         if let idx = selectedIDs.firstIndex(of: id) {
             selectedIDs.remove(at: idx)
@@ -771,6 +817,7 @@ struct QuickPasteKeyCatcher: NSViewRepresentable {
     /// Bumped by the host to re-claim first responder (e.g. when search focus
     /// ends) so the arrow-key flow resumes without rebuilding the view.
     var claimFocusToken: Int = 0
+    var isContextMenuOpen: () -> Bool
     var onLeft: () -> Void
     var onRight: () -> Void
     var onUp: () -> Void
@@ -778,26 +825,31 @@ struct QuickPasteKeyCatcher: NSViewRepresentable {
     var onToggleSelect: () -> Void
     /// `plainText` is `true` when the commit was issued with `⌥` held.
     var onCommit: (_ plainText: Bool) -> Void
+    var onOpenContextMenu: () -> Void
 
     func makeNSView(context: Context) -> KeyView {
         let view = KeyView()
         view.claimFocusToken = claimFocusToken
+        view.isContextMenuOpen = isContextMenuOpen
         view.onLeft = onLeft
         view.onRight = onRight
         view.onUp = onUp
         view.onDown = onDown
         view.onToggleSelect = onToggleSelect
         view.onCommit = onCommit
+        view.onOpenContextMenu = onOpenContextMenu
         return view
     }
 
     func updateNSView(_ nsView: KeyView, context: Context) {
+        nsView.isContextMenuOpen = isContextMenuOpen
         nsView.onLeft = onLeft
         nsView.onRight = onRight
         nsView.onUp = onUp
         nsView.onDown = onDown
         nsView.onToggleSelect = onToggleSelect
         nsView.onCommit = onCommit
+        nsView.onOpenContextMenu = onOpenContextMenu
         if nsView.claimFocusToken != claimFocusToken {
             nsView.claimFocusToken = claimFocusToken
             // Deferred: updateNSView runs mid view-update, and yanking first
@@ -809,19 +861,27 @@ struct QuickPasteKeyCatcher: NSViewRepresentable {
         }
     }
 
+    static func dismantleNSView(_ nsView: KeyView, coordinator: Void) {
+        nsView.uninstallContextMenuMonitor()
+    }
+
     final class KeyView: NSView {
         var claimFocusToken = 0
+        var isContextMenuOpen: (() -> Bool)?
         var onLeft: (() -> Void)?
         var onRight: (() -> Void)?
         var onUp: (() -> Void)?
         var onDown: (() -> Void)?
         var onToggleSelect: (() -> Void)?
         var onCommit: ((Bool) -> Void)?
+        var onOpenContextMenu: (() -> Void)?
+        private var contextMenuMonitor: Any?
 
         override var acceptsFirstResponder: Bool { true }
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
+            installContextMenuMonitor()
             // Grab first responder once the panel exists so arrow keys land
             // here instead of beeping. The search field can take focus away
             // (⌘F); the host hands it back via `claimFocusToken` on exit.
@@ -829,6 +889,29 @@ struct QuickPasteKeyCatcher: NSViewRepresentable {
                 guard let self, let window = self.window else { return }
                 window.makeFirstResponder(self)
             }
+        }
+
+        private func installContextMenuMonitor() {
+            uninstallContextMenuMonitor()
+            guard let hostedWindow = window else { return }
+            contextMenuMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
+                [weak self, weak hostedWindow] event in
+                guard let self, let hostedWindow,
+                      event.window === hostedWindow,
+                      self.isContextMenuOpen?() != true,
+                      QuickPasteMenuShortcut.matches(
+                        event,
+                        configured: QuickPasteKeyStore.shared.openMenuShortcut
+                      ) else { return event }
+                // Holding the command must never queue multiple menu requests.
+                if !event.isARepeat { self.onOpenContextMenu?() }
+                return nil
+            }
+        }
+
+        func uninstallContextMenuMonitor() {
+            if let contextMenuMonitor { NSEvent.removeMonitor(contextMenuMonitor) }
+            contextMenuMonitor = nil
         }
 
         private func matches(_ event: NSEvent, _ shortcut: KeyboardShortcuts.Shortcut) -> Bool {
@@ -865,20 +948,24 @@ struct QuickPasteKeyCatcher: NSViewRepresentable {
         /// toggle so a user who maps both to the same key still gets a paste.
         private func handle(_ event: NSEvent) -> Bool {
             let store = QuickPasteKeyStore.shared
+            if QuickPasteMenuShortcut.matches(event, configured: store.openMenuShortcut) {
+                if !event.isARepeat { onOpenContextMenu?() }
+                return true
+            }
             let optionHeld = event.modifierFlags.contains(.option)
             if matches(event, store.commitShortcut) {
-                onCommit?(optionHeld)
+                if !event.isARepeat { onCommit?(optionHeld) }
                 return true
             }
             // ⌥ + commit key reaches us as a different shortcut (e.g. ⌥⏎
             // instead of ⏎). Detect that combo explicitly so plain-text paste
             // works with the default Return commit key.
             if optionHeld, matchesIgnoringOption(event, store.commitShortcut) {
-                onCommit?(true)
+                if !event.isARepeat { onCommit?(true) }
                 return true
             }
             if matches(event, store.toggleSelectShortcut) {
-                onToggleSelect?()
+                if !event.isARepeat { onToggleSelect?() }
                 return true
             }
             return false

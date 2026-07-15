@@ -1051,15 +1051,24 @@ class ClipboardViewModel: ObservableObject {
 
     /// Run a single rule on demand (context menu), ignoring its match conditions
     /// per the manual-invocation contract.
-    func runRuleManually(_ rule: ScriptingRule, on item: ClipboardItem, context: ModelContext) {
+    func runRuleManually(
+        _ rule: ScriptingRule,
+        on item: ClipboardItem,
+        context: ModelContext,
+        completion: (() -> Void)? = nil
+    ) {
         Task { @MainActor [weak self, weak item] in
-            guard let self, let item else { return }
+            guard let self, let item else {
+                completion?()
+                return
+            }
             _ = await self.runOneRule(rule, on: item, bundleId: "", context: context)
             ToastCenter.shared.show(
                 L("rule.toast.ran") + " " + rule.displayName,
                 systemImage: "wand.and.stars",
                 tint: .appAccent
             )
+            completion?()
         }
     }
 

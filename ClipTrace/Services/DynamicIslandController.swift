@@ -67,6 +67,8 @@ final class DynamicIslandController: NSObject {
     private var localMonitor: Any?
     private var globalMonitor: Any?
     private var resignObserver: NSObjectProtocol?
+    private var appResignObserver: NSObjectProtocol?
+    private var contextMenuPresentationActive = false
 
     private override init() {
         super.init()
@@ -171,6 +173,7 @@ final class DynamicIslandController: NSObject {
         toastTimer?.invalidate()
         toastTimer = nil
         removeDismissHandlers()
+        contextMenuPresentationActive = false
         panel?.orderOut(nil)
         panel = nil
         hostingView = nil
@@ -218,6 +221,7 @@ final class DynamicIslandController: NSObject {
 
     private func collapse() {
         removeDismissHandlers()
+        contextMenuPresentationActive = false
         withAnimation(NotchAnimation.close) {
             model.state = .collapsed
         }
@@ -249,10 +253,24 @@ final class DynamicIslandController: NSObject {
             matching: [.leftMouseDown, .rightMouseDown, .keyDown]
         ) { [weak self] event in
             if event.type == .keyDown, event.charactersIgnoringModifiers == "\u{1b}" {
+                // Let an active child menu or sheet consume Esc first. Without
+                // this, the island monitor would collapse the entire surface
+                // before the menu can close or a sheet can run its cancel path.
+                if self?.contextMenuPresentationActive == true ||
+                    hosted?.attachedSheet != nil ||
+                    hosted?.childWindows?.contains(where: { $0.isVisible }) == true {
+                    return event
+                }
                 Task { @MainActor in self?.collapse() }
                 return nil
             }
-            if event.window == hosted { return event }
+            // Context menus, flyout submenus and SwiftUI sheets are separate
+            // AppKit windows parented to the island panel. They are still part
+            // of the expanded interaction, so only clicks outside the entire
+            // hierarchy should collapse it.
+            if Self.belongsToHostedHierarchy(event.window, hosted: hosted) {
+                return event
+            }
             Task { @MainActor in self?.collapse() }
             return event
         }
@@ -269,15 +287,55 @@ final class DynamicIslandController: NSObject {
                 object: panel,
                 queue: .main
             ) { [weak self] _ in
-                Task { @MainActor in self?.collapse() }
+                Task { @MainActor in
+                    // Sheet attachment and key-window transfer settle one turn
+                    // after the resign notification. Waiting prevents rename,
+                    // preview and delete sheets from dismissing their host.
+                    await Task.yield()
+                    guard let self, let panel = self.panel,
+                          !self.contextMenuPresentationActive,
+                          panel.attachedSheet == nil,
+                          !Self.belongsToHostedHierarchy(NSApp.keyWindow, hosted: panel) else {
+                        return
+                    }
+                    self.collapse()
+                }
             }
         }
+        appResignObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: NSApp,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.collapse() }
+        }
+    }
+
+    /// True for the hosted island panel, any context-menu child panel, nested
+    /// submenu, or attached sheet. Walking both parent relationships keeps the
+    /// check generic instead of coupling the island to a specific menu type.
+    private static func belongsToHostedHierarchy(_ candidate: NSWindow?, hosted: NSWindow?) -> Bool {
+        guard let hosted else { return false }
+        var current = candidate
+        var visited: Set<ObjectIdentifier> = []
+
+        while let window = current {
+            if window === hosted { return true }
+            let identifier = ObjectIdentifier(window)
+            guard visited.insert(identifier).inserted else { return false }
+            current = window.sheetParent ?? window.parent
+        }
+        return false
     }
 
     private func removeDismissHandlers() {
         if let localMonitor { NSEvent.removeMonitor(localMonitor); self.localMonitor = nil }
         if let globalMonitor { NSEvent.removeMonitor(globalMonitor); self.globalMonitor = nil }
         if let resignObserver { NotificationCenter.default.removeObserver(resignObserver); self.resignObserver = nil }
+        if let appResignObserver {
+            NotificationCenter.default.removeObserver(appResignObserver)
+            self.appResignObserver = nil
+        }
     }
 
     // MARK: - Expanded menu
@@ -299,6 +357,9 @@ final class DynamicIslandController: NSObject {
                 onOpenSettings: {
                     AppNavigation.shared.showSettings()
                     AppDelegate.openMainWindow()
+                },
+                onContextMenuPresentationChange: { [weak self] presenting in
+                    self?.contextMenuPresentationActive = presenting
                 }
             )
             .environmentObject(ClipboardRuntime.shared.viewModel)

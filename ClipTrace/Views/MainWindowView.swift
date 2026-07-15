@@ -157,17 +157,9 @@ struct MainWindowContent: View {
     @AppStorage(SyncPreferenceKeys.automatic) private var automaticSync = true
     @State private var gridColumnCount = 1
     @State private var isMergingSelection = false
-    /// Non-nil when the user picked "Rename" from a row's context menu —
-    /// drives the rename sheet at the root level so it survives row-view churn.
-    @State private var renameTarget: ClipboardItem?
-    @State private var barcodeScanTarget: ClipboardItem?
-    @State private var qrPreviewTarget: ClipboardItem?
     @State private var showGroupManager = false
     @State private var groupEditorRequest: GroupEditorRequest?
-    /// Paper-styled right-click menu for list rows, hosted in a borderless
-    /// child panel so it can show a custom group-membership state and match the
-    /// warm paper UI instead of the cold system `NSMenu`.
-    @StateObject private var rowContextMenu = PaperContextMenuController()
+    @StateObject private var itemContextMenu = ClipboardItemContextMenuCoordinator()
 
     /// Header-stat caches. With pagination, `allItems` only contains the
     /// current page so these come from dedicated `fetchCount` / tag queries
@@ -365,23 +357,6 @@ struct MainWindowContent: View {
                 vm.showExportPanel = false
             }
         }
-        .sheet(item: $renameTarget) { item in
-            RenameClipSheet(
-                initialTitle: item.effectiveCustomTitle ?? "",
-                fallback: defaultDisplayTitle(for: item),
-                onCommit: { newTitle in
-                    vm.rename(item, to: newTitle, context: modelContext)
-                    renameTarget = nil
-                },
-                onCancel: { renameTarget = nil }
-            )
-        }
-        .sheet(item: $barcodeScanTarget) { item in
-            BarcodeResultView(item: item, onClose: { barcodeScanTarget = nil })
-        }
-        .sheet(item: $qrPreviewTarget) { item in
-            TextQRCodePreviewView(item: item, onClose: { qrPreviewTarget = nil })
-        }
         .sheet(isPresented: $showGroupManager) {
             GroupManagementSheet(onClose: { showGroupManager = false })
         }
@@ -416,6 +391,7 @@ struct MainWindowContent: View {
                 onCancel: { vm.showSnippetEditor = false }
             )
         }
+        .clipboardItemContextMenuPresenter(itemContextMenu)
     }
 
     /// Single, restrained accent halo in the upper-left — avoids the
@@ -1352,14 +1328,10 @@ struct MainWindowContent: View {
                 .equatable()
             }
         }
-        // Custom paper-styled right-click menu (see `openRowContextMenu`) in
-        // place of the cold system `NSMenu`. The catcher only intercepts
-        // right/control-clicks; every other event falls through so hover and
-        // the tap gestures below stay intact.
-        .overlay(
-            RightClickCatcher { screenPoint, window in
-                openRowContextMenu(for: item, at: screenPoint, in: window)
-            }
+        .clipboardItemContextMenu(
+            item: item,
+            groups: groups.sortedForDisplay(),
+            coordinator: itemContextMenu
         )
         // Mount only one tap gesture at a time. Having both a single- and a
         // double-tap on the same view makes SwiftUI delay the single tap
@@ -1444,103 +1416,6 @@ struct MainWindowContent: View {
         .buttonStyle(.plain)
     }
 
-    /// Open the paper-styled right-click menu for `item` at the cursor. Every
-    /// terminal action closes the menu first; group toggles deliberately keep
-    /// it open so the membership checkmarks update live as the user assigns
-    /// several groups in one pass.
-    private func openRowContextMenu(for item: ClipboardItem, at screenPoint: CGPoint, in window: NSWindow) {
-        let dismissThen: (@escaping () -> Void) -> () -> Void = { action in
-            { rowContextMenu.close(); action() }
-        }
-
-        rowContextMenu.open(at: screenPoint, in: window, width: 232) {
-            ClipboardRowContextMenu(
-                controller: rowContextMenu,
-                item: item,
-                groups: groups.sortedForDisplay(),
-                onCopy: dismissThen {
-                    vm.copyToClipboard(item)
-                    ToastCenter.shared.show(L("common.copied"))
-                },
-                onCopyPlainText: dismissThen {
-                    vm.copyAsPlainText(item)
-                    ToastCenter.shared.show(L("common.copiedPlainText"))
-                },
-                onPreviewQRCode: dismissThen { qrPreviewTarget = item },
-                onScanCodes: dismissThen { barcodeScanTarget = item },
-                onBase64Encode: dismissThen {
-                    if vm.copyBase64Encoded(item) {
-                        ToastCenter.shared.show(L("action.base64Encoded"), systemImage: "doc.on.doc")
-                    }
-                },
-                onBase64Decode: dismissThen {
-                    if vm.copyBase64Decoded(item) {
-                        ToastCenter.shared.show(L("action.base64Decoded"), systemImage: "doc.on.doc")
-                    } else {
-                        ToastCenter.shared.show(
-                            L("action.base64DecodeFailed"),
-                            systemImage: "exclamationmark.triangle.fill",
-                            tint: .red
-                        )
-                    }
-                },
-                onRunRule: { rule in
-                    rowContextMenu.close()
-                    vm.runRuleManually(rule, on: item, context: modelContext)
-                },
-                onRename: dismissThen { renameTarget = item },
-                onToggleGroup: { group in
-                    let wasMember = item.isInGroup(group.id)
-                    vm.toggleGroup(item, group: group, context: modelContext)
-                    ToastCenter.shared.show(
-                        wasMember
-                            ? L("group.removedFromFormat", group.displayName)
-                            : L("group.addedToFormat", group.displayName),
-                        systemImage: wasMember ? "folder.badge.minus" : "folder.fill",
-                        tint: .appAccent
-                    )
-                },
-                onClearGroups: {
-                    vm.clearGroups(item, context: modelContext)
-                    ToastCenter.shared.show(L("group.removedFromGroup"), systemImage: "folder.badge.minus")
-                },
-                onNewGroup: dismissThen { groupEditorRequest = .create(assigning: item) },
-                onOpenInBrowser: dismissThen { openInBrowser(item.content) },
-                onReveal: dismissThen {
-                    if let url = item.resolvedFileURL {
-                        NSWorkspace.shared.activateFileViewerSelecting([url])
-                    }
-                },
-                onOpenFile: dismissThen {
-                    if let url = item.resolvedFileURL { NSWorkspace.shared.open(url) }
-                },
-                onOpenWith: dismissThen {
-                    if let url = item.resolvedFileURL { FileOpener.openWithChooser(url: url) }
-                },
-                onToggleFavorite: dismissThen {
-                    let willFavorite = !item.isFavorite
-                    vm.toggleFavorite(item)
-                    ToastCenter.shared.show(
-                        willFavorite ? L("action.favorited") : L("action.unfavorited"),
-                        systemImage: "star.fill",
-                        tint: .yellow
-                    )
-                },
-                onTogglePin: dismissThen {
-                    let willPin = !item.isPinned
-                    vm.togglePin(item)
-                    ToastCenter.shared.show(
-                        willPin ? L("action.pinned") : L("action.unpinned"),
-                        systemImage: "pin.fill",
-                        tint: .orange
-                    )
-                },
-                onExport: dismissThen { ExportService.shared.exportItem(item) },
-                onDelete: dismissThen { requestDeleteItem(item) }
-            )
-        }
-    }
-
     /// Open the native QuickLook panel for `item`, using the current filtered
     /// list as the navigation stack so arrow keys move through neighbors.
     private func showQuickLook(for item: ClipboardItem) {
@@ -1562,18 +1437,6 @@ struct MainWindowContent: View {
         }
     }
 
-    /// Heuristic title used as the rename sheet's placeholder/fallback so
-    /// users see what the row currently shows before they type anything.
-    private func defaultDisplayTitle(for item: ClipboardItem) -> String {
-        if let url = item.resolvedFileURL { return url.lastPathComponent }
-        // Mask sensitive spans so the rename sheet's placeholder never reveals
-        // the raw value (the user can still type any new title they want).
-        let firstLine = item.redactedForDisplay(item.preview ?? item.content)
-            .components(separatedBy: .newlines)
-            .first ?? ""
-        return firstLine.isEmpty ? item.itemType.displayName : firstLine
-    }
-
     private func handleGroupEditorCommit(_ request: GroupEditorRequest, name: String) {
         switch request.kind {
         case .create(let assigning):
@@ -1591,355 +1454,6 @@ struct MainWindowContent: View {
         }
     }
 
-}
-
-// MARK: - Row context menu
-
-/// Shared, observable group-membership set so the root menu and the flyout
-/// submenu stay in lockstep: toggling a group in the submenu flips its check
-/// instantly, even though the two live in separate hosted view trees.
-@MainActor
-final class PaperGroupMembership: ObservableObject {
-    @Published var ids: Set<UUID>
-    init(ids: Set<UUID>) { self.ids = ids }
-    func toggle(_ id: UUID) {
-        if ids.contains(id) { ids.remove(id) } else { ids.insert(id) }
-    }
-    func clear() { ids.removeAll() }
-}
-
-/// Paper-styled replacement for the list row's right-click `NSMenu`. Hosted in
-/// a borderless child panel by `PaperContextMenuController`, so it lives in its
-/// own SwiftUI tree — every dependency arrives as a value or closure rather
-/// than through the environment.
-///
-/// Group assignment lives in a flyout secondary menu (`ClipboardGroupSubmenu`),
-/// where each group carries a leading selected-state so "which groups is this
-/// clip in" is legible at a glance — the gap the old system menu left.
-private struct ClipboardRowContextMenu: View {
-    let controller: PaperContextMenuController
-    let item: ClipboardItem
-    let groups: [ClipboardGroup]
-    let onCopy: () -> Void
-    let onCopyPlainText: () -> Void
-    let onPreviewQRCode: () -> Void
-    let onScanCodes: () -> Void
-    let onBase64Encode: () -> Void
-    let onBase64Decode: () -> Void
-    let onRunRule: (ScriptingRule) -> Void
-    let onRename: () -> Void
-    let onToggleGroup: (ClipboardGroup) -> Void
-    let onClearGroups: () -> Void
-    let onNewGroup: () -> Void
-    let onOpenInBrowser: () -> Void
-    let onReveal: () -> Void
-    let onOpenFile: () -> Void
-    let onOpenWith: () -> Void
-    let onToggleFavorite: () -> Void
-    let onTogglePin: () -> Void
-    let onExport: () -> Void
-    let onDelete: () -> Void
-
-    @StateObject private var membership: PaperGroupMembership
-    @StateObject private var submenu = PaperSubmenuCoordinator()
-
-    init(
-        controller: PaperContextMenuController,
-        item: ClipboardItem,
-        groups: [ClipboardGroup],
-        onCopy: @escaping () -> Void,
-        onCopyPlainText: @escaping () -> Void,
-        onPreviewQRCode: @escaping () -> Void,
-        onScanCodes: @escaping () -> Void,
-        onBase64Encode: @escaping () -> Void,
-        onBase64Decode: @escaping () -> Void,
-        onRunRule: @escaping (ScriptingRule) -> Void,
-        onRename: @escaping () -> Void,
-        onToggleGroup: @escaping (ClipboardGroup) -> Void,
-        onClearGroups: @escaping () -> Void,
-        onNewGroup: @escaping () -> Void,
-        onOpenInBrowser: @escaping () -> Void,
-        onReveal: @escaping () -> Void,
-        onOpenFile: @escaping () -> Void,
-        onOpenWith: @escaping () -> Void,
-        onToggleFavorite: @escaping () -> Void,
-        onTogglePin: @escaping () -> Void,
-        onExport: @escaping () -> Void,
-        onDelete: @escaping () -> Void
-    ) {
-        self.controller = controller
-        self.item = item
-        self.groups = groups
-        self.onCopy = onCopy
-        self.onCopyPlainText = onCopyPlainText
-        self.onPreviewQRCode = onPreviewQRCode
-        self.onScanCodes = onScanCodes
-        self.onBase64Encode = onBase64Encode
-        self.onBase64Decode = onBase64Decode
-        self.onRunRule = onRunRule
-        self.onRename = onRename
-        self.onToggleGroup = onToggleGroup
-        self.onClearGroups = onClearGroups
-        self.onNewGroup = onNewGroup
-        self.onOpenInBrowser = onOpenInBrowser
-        self.onReveal = onReveal
-        self.onOpenFile = onOpenFile
-        self.onOpenWith = onOpenWith
-        self.onToggleFavorite = onToggleFavorite
-        self.onTogglePin = onTogglePin
-        self.onExport = onExport
-        self.onDelete = onDelete
-        _membership = StateObject(
-            wrappedValue: PaperGroupMembership(ids: Set(groups.map(\.id).filter(item.isInGroup)))
-        )
-    }
-
-    private var hasFile: Bool { item.resolvedFileURL != nil }
-    /// Enabled rules surfaced as manual "run rule" actions. Read at menu-build
-    /// time (the menu is rebuilt on each open, so no reactive observation needed).
-    private var enabledRules: [ScriptingRule] {
-        FilterSettingsStore.shared.scriptingRules.filter(\.isEnabled)
-    }
-    private var canScanCodes: Bool {
-        item.hasImagePayload
-    }
-    private var canPreviewQRCode: Bool {
-        item.itemType == .text &&
-        !item.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-    private var canBase64Encode: Bool {
-        guard let text = ClipboardViewModel.transformableText(of: item) else { return false }
-        return !text.isEmpty
-    }
-    /// Offer decoding only when the content actually decodes to UTF-8 text,
-    /// so the row never leads to a dead-end error for ordinary prose.
-    private var canBase64Decode: Bool {
-        guard let text = ClipboardViewModel.transformableText(of: item) else { return false }
-        return ClipboardViewModel.base64Decoded(text) != nil
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            PaperMenuActionRow(icon: "doc.on.doc", title: L("action.copy"), action: onCopy)
-            PaperMenuActionRow(icon: "doc.plaintext", title: L("action.copyAsPlainText"), action: onCopyPlainText)
-            if canPreviewQRCode {
-                PaperMenuActionRow(icon: "qrcode", title: L("action.qrPreview"), action: onPreviewQRCode)
-            }
-            if canScanCodes {
-                PaperMenuActionRow(icon: "qrcode.viewfinder", title: L("action.scanCodes"), action: onScanCodes)
-            }
-            if canBase64Encode {
-                PaperMenuActionRow(
-                    icon: "chevron.left.forwardslash.chevron.right",
-                    title: L("action.base64Encode"),
-                    action: onBase64Encode
-                )
-            }
-            if canBase64Decode {
-                PaperMenuActionRow(
-                    icon: "abc",
-                    title: L("action.base64Decode"),
-                    action: onBase64Decode
-                )
-            }
-
-            if !enabledRules.isEmpty {
-                PaperMenuDivider()
-                ForEach(enabledRules) { rule in
-                    PaperMenuActionRow(
-                        icon: "wand.and.stars",
-                        title: L("action.runRule", rule.displayName),
-                        action: { onRunRule(rule) }
-                    )
-                }
-            }
-
-            PaperMenuDivider()
-            PaperMenuActionRow(icon: "pencil", title: L("action.rename"), action: onRename)
-            // Group assignment opens a flyout secondary menu when groups exist;
-            // with none yet, jump straight to creating one.
-            if groups.isEmpty {
-                PaperMenuActionRow(icon: "folder.badge.plus", title: L("group.newAndMove"), action: onNewGroup)
-            } else {
-                PaperSubmenuRow(icon: "folder", title: L("group.moveTo"), coordinator: submenu)
-            }
-
-            if item.itemType == .url {
-                PaperMenuDivider()
-                PaperMenuActionRow(icon: "safari", title: L("action.openInBrowser"), action: onOpenInBrowser)
-            }
-
-            if hasFile {
-                PaperMenuDivider()
-                PaperMenuActionRow(icon: "folder", title: L("action.revealInFinder"), action: onReveal)
-                PaperMenuActionRow(icon: "arrow.up.forward.app", title: L("action.openFile"), action: onOpenFile)
-                PaperMenuActionRow(icon: "app.badge", title: L("action.openWith"), action: onOpenWith)
-            }
-
-            PaperMenuDivider()
-            PaperMenuActionRow(
-                icon: item.isFavorite ? "star.slash" : "star",
-                title: item.isFavorite ? L("action.unfavorite") : L("action.favorite"),
-                action: onToggleFavorite
-            )
-            PaperMenuActionRow(
-                icon: item.isPinned ? "pin.slash" : "pin",
-                title: item.isPinned ? L("action.unpin") : L("action.pin"),
-                action: onTogglePin
-            )
-
-            PaperMenuDivider()
-            PaperMenuActionRow(icon: "square.and.arrow.up", title: L("action.exportOne"), action: onExport)
-
-            PaperMenuDivider()
-            PaperMenuActionRow(icon: "trash", title: L("action.delete"), role: .destructive, action: onDelete)
-        }
-        .padding(5)
-        .frame(width: 232, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.appPaper)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .onAppear {
-            // Wire the flyout into the controller. Set here (not in `init`)
-            // because it captures `@StateObject`s; the root menu always appears
-            // before the user can hover the submenu row, so there's no race.
-            submenu.present = {
-                guard let frame = submenu.rowScreenFrame() else { return }
-                controller.openSubmenu(besideRowAt: frame, width: 222) {
-                    ClipboardGroupSubmenu(
-                        membership: membership,
-                        groups: groups,
-                        coordinator: submenu,
-                        onToggleGroup: onToggleGroup,
-                        onClearGroups: onClearGroups,
-                        onNewGroup: onNewGroup
-                    )
-                }
-            }
-            submenu.dismiss = { controller.closeSubmenu() }
-        }
-    }
-}
-
-/// Second-level paper menu listing every group with a leading selected-state,
-/// plus "remove from all" and "new group". Lives in its own child panel; hover
-/// over it keeps the flyout alive via the shared coordinator.
-private struct ClipboardGroupSubmenu: View {
-    @ObservedObject var membership: PaperGroupMembership
-    let groups: [ClipboardGroup]
-    @ObservedObject var coordinator: PaperSubmenuCoordinator
-    let onToggleGroup: (ClipboardGroup) -> Void
-    let onClearGroups: () -> Void
-    let onNewGroup: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            groupRows
-
-            if !membership.ids.isEmpty {
-                PaperMenuActionRow(
-                    icon: "folder.badge.minus",
-                    title: L("group.removeFromGroup"),
-                    action: {
-                        membership.clear()
-                        onClearGroups()
-                    }
-                )
-            }
-            PaperMenuDivider()
-            PaperMenuActionRow(icon: "folder.badge.plus", title: L("group.newAndMove"), action: onNewGroup)
-        }
-        .padding(5)
-        .frame(width: 222, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.appPaper)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .onHover { coordinator.submenuHover($0) }
-    }
-
-    /// Group rows, scroll-capped so a large catalog stays a usable height.
-    @ViewBuilder
-    private var groupRows: some View {
-        let rows = ForEach(groups) { group in
-            PaperMenuCheckRow(
-                title: group.displayName,
-                isMember: membership.ids.contains(group.id),
-                action: {
-                    membership.toggle(group.id)
-                    onToggleGroup(group)
-                }
-            )
-        }
-        if groups.count > 7 {
-            ScrollView { VStack(spacing: 1) { rows } }
-                .frame(height: 232)
-        } else {
-            rows
-        }
-    }
-}
-
-// MARK: - Rename sheet
-
-/// Modal for assigning a custom title to a clipboard row. Empty / whitespace
-/// input clears the custom title back to the default heuristic.
-private struct RenameClipSheet: View {
-    let initialTitle: String
-    let fallback: String
-    let onCommit: (String) -> Void
-    let onCancel: () -> Void
-
-    @State private var draft: String = ""
-    @FocusState private var focused: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 8) {
-                Image(systemName: "pencil")
-                    .foregroundStyle(Color.appAccent)
-                Text(L("rename.title"))
-                    .font(.system(size: 14, weight: .semibold))
-                Spacer()
-            }
-
-            Text(L("rename.subtitle"))
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-
-            TextField(fallback, text: $draft)
-                .focused($focused)
-                .onSubmit { onCommit(draft) }
-                .paperTextField(focused: focused)
-
-            HStack {
-                Spacer()
-                Button(L("common.cancel"), action: onCancel)
-                    .buttonStyle(PaperActionButtonStyle(role: .plain))
-                    .keyboardShortcut(.cancelAction)
-                Button(L("common.save")) { onCommit(draft) }
-                    .buttonStyle(PaperActionButtonStyle(role: .primary))
-                    .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(18)
-        .frame(width: 360)
-        .onAppear {
-            draft = initialTitle
-            focused = true
-        }
-    }
 }
 
 private struct GroupEditorRequest: Identifiable {

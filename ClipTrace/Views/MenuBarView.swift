@@ -115,6 +115,7 @@ struct MenuBarView: View {
     private let onRequestClose: (() -> Void)?
     private let onOpenMain: (() -> Void)?
     private let onOpenSettings: (() -> Void)?
+    private let onContextMenuPresentationChange: ((Bool) -> Void)?
     private let surfaceStyle: MenuBarSurfaceStyle
 
     private static let pageSize = 20
@@ -123,12 +124,14 @@ struct MenuBarView: View {
         surfaceStyle: MenuBarSurfaceStyle = .paper,
         onRequestClose: (() -> Void)? = nil,
         onOpenMain: (() -> Void)? = nil,
-        onOpenSettings: (() -> Void)? = nil
+        onOpenSettings: (() -> Void)? = nil,
+        onContextMenuPresentationChange: ((Bool) -> Void)? = nil
     ) {
         self.surfaceStyle = surfaceStyle
         self.onRequestClose = onRequestClose
         self.onOpenMain = onOpenMain
         self.onOpenSettings = onOpenSettings
+        self.onContextMenuPresentationChange = onContextMenuPresentationChange
     }
 
     var body: some View {
@@ -143,7 +146,8 @@ struct MenuBarView: View {
             surfaceStyle: surfaceStyle,
             onRequestClose: onRequestClose,
             onOpenMain: onOpenMain,
-            onOpenSettings: onOpenSettings
+            onOpenSettings: onOpenSettings,
+            onContextMenuPresentationChange: onContextMenuPresentationChange
         )
         .onChange(of: searchText) { _, newValue in
             scheduleSearch(newValue)
@@ -209,6 +213,12 @@ struct MenuBarContent: View {
     @ObservedObject private var updater = UpdaterService.shared
     @ObservedObject private var hoverPreview = HoverPreviewSettings.shared
     @StateObject private var historyStore = MenuBarHistoryStore()
+    @StateObject private var itemContextMenu = ClipboardItemContextMenuCoordinator()
+    /// Context-menu actions can finish asynchronously (manual scripts). A
+    /// token hands that completion back into the *current* view value so the
+    /// reload reads today's query/filter/page rather than values captured when
+    /// the menu originally opened.
+    @State private var contextMenuMutationVersion = 0
     /// The panel hosting this view, captured so the open-main/settings actions
     /// can dismiss it deterministically — SwiftUI exposes no dismiss API for a
     /// `.window`-style `MenuBarExtra`, and waiting for it to resign key fails
@@ -230,6 +240,7 @@ struct MenuBarContent: View {
     let onRequestClose: (() -> Void)?
     let onOpenMain: (() -> Void)?
     let onOpenSettings: (() -> Void)?
+    let onContextMenuPresentationChange: ((Bool) -> Void)?
 
     init(
         searchText: Binding<String>,
@@ -242,7 +253,8 @@ struct MenuBarContent: View {
         surfaceStyle: MenuBarSurfaceStyle = .paper,
         onRequestClose: (() -> Void)? = nil,
         onOpenMain: (() -> Void)? = nil,
-        onOpenSettings: (() -> Void)? = nil
+        onOpenSettings: (() -> Void)? = nil,
+        onContextMenuPresentationChange: ((Bool) -> Void)? = nil
     ) {
         _searchText = searchText
         self.searchQuery = searchQuery
@@ -255,6 +267,7 @@ struct MenuBarContent: View {
         self.onRequestClose = onRequestClose
         self.onOpenMain = onOpenMain
         self.onOpenSettings = onOpenSettings
+        self.onContextMenuPresentationChange = onContextMenuPresentationChange
     }
 
     private var allItems: [ClipboardItem] {
@@ -320,6 +333,7 @@ struct MenuBarContent: View {
                 .accessibilityHidden(true)
         )
         .onAppear {
+            itemContextMenu.onPresentationChange = onContextMenuPresentationChange ?? { _ in }
             reloadHistory()
         }
         .onChange(of: fetchLimit) { _, _ in
@@ -343,6 +357,10 @@ struct MenuBarContent: View {
                 reloadHistory()
             }
         }
+        .onChange(of: contextMenuMutationVersion) { _, _ in
+            reloadHistory()
+        }
+        .clipboardItemContextMenuPresenter(itemContextMenu)
     }
 
     @ViewBuilder
@@ -580,19 +598,13 @@ struct MenuBarContent: View {
             surfaceStyle: surfaceStyle,
             presentation: usesGrid ? .grid : .list,
             onCopy: { vm.copyToClipboard(item) },
-            onCopyPlainText: { vm.copyAsPlainText(item) },
-            onBase64Encode: { _ = vm.copyBase64Encoded(item) },
-            onBase64Decode: {
-                if !vm.copyBase64Decoded(item) {
-                    ToastCenter.shared.show(
-                        L("action.base64DecodeFailed"),
-                        systemImage: "exclamationmark.triangle.fill",
-                        tint: .red
-                    )
-                }
-            },
-            onTogglePin: { togglePin(item) },
             onHoverChange: { hovering in handleRowHover(item, hovering: hovering) }
+        )
+        .clipboardItemContextMenu(
+            item: item,
+            groups: historyStore.groups.sortedForDisplay(),
+            coordinator: itemContextMenu,
+            onMutation: { contextMenuMutationVersion &+= 1 }
         )
     }
 
@@ -671,10 +683,6 @@ struct MenuBarContent: View {
     private func reloadHistory() {
         historyStore.reload(fetchLimit: fetchLimit, groupFilter: selectedGroupFilter, searchQuery: searchQuery)
         totalActiveRecords = historyStore.totalActiveRecords
-    }
-
-    private func togglePin(_ item: ClipboardItem) {
-        vm.togglePin(item)
     }
 
     private func openMain() {
@@ -966,10 +974,6 @@ struct MenuBarRow: View {
     var surfaceStyle: MenuBarSurfaceStyle = .paper
     var presentation: PanelContentLayout = .list
     let onCopy: () -> Void
-    var onCopyPlainText: (() -> Void)? = nil
-    var onBase64Encode: (() -> Void)? = nil
-    var onBase64Decode: (() -> Void)? = nil
-    var onTogglePin: () -> Void = {}
     /// Reports hover transitions outward so the host can drive the dwell
     /// preview — the row itself has no access to the panel window the preview
     /// window anchors to.
@@ -977,7 +981,6 @@ struct MenuBarRow: View {
 
     @State private var isHovered = false
     @State private var copySucceeded = false
-    @State private var showQRCodePreview = false
     @State private var resetTask: Task<Void, Never>?
 
     var body: some View {
@@ -1018,41 +1021,6 @@ struct MenuBarRow: View {
             // LazyVStack recycling can drop a hovered row without a final
             // onHover(false) — make sure the dwell timer dies with the row.
             if isHovered { onHoverChange?(false) }
-        }
-        .sheet(isPresented: $showQRCodePreview) {
-            TextQRCodePreviewView(item: item, onClose: { showQRCodePreview = false })
-        }
-        .contextMenu {
-            Button(L("action.copy"), systemImage: "doc.on.doc") { triggerCopy() }
-            if let onCopyPlainText {
-                Button(L("action.copyAsPlainText"), systemImage: "doc.plaintext") {
-                    onCopyPlainText()
-                    triggerCopySuccessFlash()
-                }
-                .keyboardShortcut("c", modifiers: [.command, .option])
-            }
-            if canPreviewQRCode {
-                Button(L("action.qrPreview"), systemImage: "qrcode") {
-                    showQRCodePreview = true
-                }
-            }
-            if let onBase64Encode, canBase64Encode {
-                Button(L("action.base64Encode"), systemImage: "chevron.left.forwardslash.chevron.right") {
-                    onBase64Encode()
-                    triggerCopySuccessFlash()
-                }
-            }
-            if let onBase64Decode, canBase64Decode {
-                Button(L("action.base64Decode"), systemImage: "abc") {
-                    onBase64Decode()
-                    triggerCopySuccessFlash()
-                }
-            }
-            Divider()
-            Button(item.isPinned ? L("action.unpin") : L("action.pin"),
-                   systemImage: item.isPinned ? "pin.slash" : "pin") {
-                onTogglePin()
-            }
         }
     }
 
@@ -1227,36 +1195,6 @@ struct MenuBarRow: View {
         switch item.itemType {
         case .image, .video, .file: return true
         case .text, .url, .rtf: return false
-        }
-    }
-
-    private var canPreviewQRCode: Bool {
-        item.itemType == .text &&
-        !item.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-    private var canBase64Encode: Bool {
-        guard let text = ClipboardViewModel.transformableText(of: item) else { return false }
-        return !text.isEmpty
-    }
-    private var canBase64Decode: Bool {
-        guard let text = ClipboardViewModel.transformableText(of: item) else { return false }
-        return ClipboardViewModel.base64Decoded(text) != nil
-    }
-
-    /// Flash the "copied" check without re-issuing the underlying copy — the
-    /// caller already wrote to the pasteboard via a different code path
-    /// (e.g. copy-as-plain-text).
-    private func triggerCopySuccessFlash() {
-        resetTask?.cancel()
-        withAnimation(.spring(response: 0.28, dampingFraction: 0.75)) {
-            copySucceeded = true
-        }
-        resetTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 1_200_000_000)
-            guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.25)) {
-                copySucceeded = false
-            }
         }
     }
 

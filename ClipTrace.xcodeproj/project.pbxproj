@@ -57,6 +57,7 @@
 		A10045 /* UpdaterService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10045; };
 		A10046 /* PreviewKeyCatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10046; };
 		A10047 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10047; };
+		A10510 /* ClipboardItemContextMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10510; };
 		A10048 /* AppContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10048; };
 		A10400 /* ImagePayloadStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10400; };
 		A10500 /* SyncModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10500; };
@@ -128,6 +129,7 @@
 		B10045 /* UpdaterService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdaterService.swift; sourceTree = "<group>"; };
 		B10046 /* PreviewKeyCatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewKeyCatcher.swift; sourceTree = "<group>"; };
 		B10047 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		B10510 /* ClipboardItemContextMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardItemContextMenu.swift; sourceTree = "<group>"; };
 		B10048 /* AppContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppContainer.swift; sourceTree = "<group>"; };
 		B10400 /* ImagePayloadStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePayloadStore.swift; sourceTree = "<group>"; };
 		B10500 /* SyncModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncModels.swift; sourceTree = "<group>"; };
@@ -233,6 +235,7 @@
 			children = (
 				B10006 /* MainWindowView.swift */,
 				B10007 /* ClipboardItemRow.swift */,
+				B10510 /* ClipboardItemContextMenu.swift */,
 				B10009 /* MenuBarView.swift */,
 				B10015 /* ThumbnailView.swift */,
 				B10016 /* PreviewPopover.swift */,
@@ -501,6 +504,7 @@
 				A10045 /* UpdaterService.swift in Sources */,
 				A10046 /* PreviewKeyCatcher.swift in Sources */,
 				A10047 /* Theme.swift in Sources */,
+				A10510 /* ClipboardItemContextMenu.swift in Sources */,
 				A10048 /* AppContainer.swift in Sources */,
 				A10400 /* ImagePayloadStore.swift in Sources */,
 				A10500 /* SyncModels.swift in Sources */,

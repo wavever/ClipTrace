@@ -3,6 +3,53 @@ import SwiftUI
 import SwiftData
 import KeyboardShortcuts
 
+/// The user-configured primary menu command plus platform-compatible aliases.
+/// Shift-F10 and a hardware Contextual Menu key stay available even when the
+/// primary command changes, matching the keyboard-only fallback users expect.
+enum QuickPasteMenuShortcut {
+    static let alternate = KeyboardShortcuts.Shortcut(.f10, modifiers: [.shift])
+
+    static func isHardwareContextMenuEvent(_ event: NSEvent) -> Bool {
+        // U+F735 is AppKit's NSMenuFunctionKey, emitted by the dedicated
+        // Contextual Menu key on supported external Apple keyboards.
+        event.charactersIgnoringModifiers?.unicodeScalars.first?.value == 0xF735
+    }
+
+    static func acceptedShortcuts(
+        configured: KeyboardShortcuts.Shortcut
+    ) -> Set<KeyboardShortcuts.Shortcut> {
+        var accepted: Set<KeyboardShortcuts.Shortcut> = [configured, alternate]
+        guard let key = configured.key else { return accepted }
+        if key == .return {
+            accepted.insert(.init(.keypadEnter, modifiers: configured.modifiers))
+        } else if key == .keypadEnter {
+            accepted.insert(.init(.return, modifiers: configured.modifiers))
+        }
+        return accepted
+    }
+
+    static func matches(
+        _ event: NSEvent,
+        configured: KeyboardShortcuts.Shortcut
+    ) -> Bool {
+        if isHardwareContextMenuEvent(event) { return true }
+        guard let typed = KeyboardShortcuts.Shortcut(event: event) else { return false }
+        return acceptedShortcuts(configured: configured).contains(typed)
+    }
+}
+
+enum QuickPasteKeyAction: CaseIterable, Hashable {
+    case commit
+    case toggleSelect
+    case openMenu
+}
+
+enum QuickPasteKeyAssignmentIssue {
+    case conflict
+    case reservedPanelCommand
+    case menuFallbackReserved
+}
+
 /// The keystrokes that drive the QuickPaste panel's keyboard flow: `↑`/`↓`
 /// move the highlight, `toggleSelectShortcut` adds/removes the highlighted
 /// clip from the multi-selection, and `commitShortcut` pastes.
@@ -17,24 +64,234 @@ final class QuickPasteKeyStore: ObservableObject {
 
     static let defaultCommit = KeyboardShortcuts.Shortcut(.return)
     static let defaultToggleSelect = KeyboardShortcuts.Shortcut(.space)
+    static let defaultOpenMenu = KeyboardShortcuts.Shortcut(.return, modifiers: [.control])
 
     private static let commitStorageKey = "quickPasteCommitShortcut"
     private static let toggleSelectStorageKey = "quickPasteToggleSelectShortcut"
+    private static let openMenuStorageKey = "quickPasteOpenMenuShortcut"
 
-    @Published var commitShortcut: KeyboardShortcuts.Shortcut {
+    @Published private(set) var commitShortcut: KeyboardShortcuts.Shortcut {
         didSet { Self.persist(commitShortcut, forKey: Self.commitStorageKey) }
     }
-    @Published var toggleSelectShortcut: KeyboardShortcuts.Shortcut {
+    @Published private(set) var toggleSelectShortcut: KeyboardShortcuts.Shortcut {
         didSet { Self.persist(toggleSelectShortcut, forKey: Self.toggleSelectStorageKey) }
+    }
+    @Published private(set) var openMenuShortcut: KeyboardShortcuts.Shortcut {
+        didSet { Self.persist(openMenuShortcut, forKey: Self.openMenuStorageKey) }
     }
 
     private init() {
-        commitShortcut = Self.load(Self.commitStorageKey) ?? Self.defaultCommit
-        toggleSelectShortcut = Self.load(Self.toggleSelectStorageKey) ?? Self.defaultToggleSelect
+        let storedCommit = Self.load(Self.commitStorageKey) ?? Self.defaultCommit
+        let storedToggle = Self.load(Self.toggleSelectStorageKey) ?? Self.defaultToggleSelect
+        let storedOpenMenu = Self.load(Self.openMenuStorageKey)
+        let normalized = Self.normalizedConfiguration(
+            commit: storedCommit,
+            toggle: storedToggle,
+            openMenu: storedOpenMenu
+        )
+
+        commitShortcut = normalized.commit
+        toggleSelectShortcut = normalized.toggle
+        openMenuShortcut = normalized.openMenu
+
+        // Persist the normalized triplet, including the newly introduced menu
+        // key. This makes migration one-shot while preserving every legacy key
+        // that remains reachable under the panel's current event routing.
+        Self.persist(normalized.commit, forKey: Self.commitStorageKey)
+        Self.persist(normalized.toggle, forKey: Self.toggleSelectStorageKey)
+        Self.persist(normalized.openMenu, forKey: Self.openMenuStorageKey)
     }
 
-    func resetCommit() { commitShortcut = Self.defaultCommit }
-    func resetToggleSelect() { toggleSelectShortcut = Self.defaultToggleSelect }
+    func shortcut(for action: QuickPasteKeyAction) -> KeyboardShortcuts.Shortcut {
+        switch action {
+        case .commit: commitShortcut
+        case .toggleSelect: toggleSelectShortcut
+        case .openMenu: openMenuShortcut
+        }
+    }
+
+    /// Whether the panel would consume this exact global hotkey, including
+    /// menu aliases and the Option-modified plain-text commit variant.
+    func captures(_ shortcut: KeyboardShortcuts.Shortcut) -> Bool {
+        QuickPasteKeyAction.allCases.contains { action in
+            Self.acceptedShortcuts(for: self.shortcut(for: action), action: action)
+                .contains(shortcut)
+        }
+    }
+
+    @discardableResult
+    func assign(
+        _ shortcut: KeyboardShortcuts.Shortcut,
+        from event: NSEvent? = nil,
+        to action: QuickPasteKeyAction
+    ) -> QuickPasteKeyAssignmentIssue? {
+        if Self.isReservedPanelCommand(shortcut) {
+            return .reservedPanelCommand
+        }
+        if event.map({ QuickPasteMenuShortcut.isHardwareContextMenuEvent($0) }) == true ||
+            (action != .openMenu && shortcut == QuickPasteMenuShortcut.alternate) {
+            return .menuFallbackReserved
+        }
+        if Self.hasConflict(
+            candidate: shortcut,
+            action: action,
+            commit: commitShortcut,
+            toggle: toggleSelectShortcut,
+            openMenu: openMenuShortcut
+        ) {
+            return .conflict
+        }
+
+        switch action {
+        case .commit: commitShortcut = shortcut
+        case .toggleSelect: toggleSelectShortcut = shortcut
+        case .openMenu: openMenuShortcut = shortcut
+        }
+        return nil
+    }
+
+    @discardableResult
+    func reset(_ action: QuickPasteKeyAction) -> QuickPasteKeyAssignmentIssue? {
+        let fallback: KeyboardShortcuts.Shortcut
+        switch action {
+        case .commit: fallback = Self.defaultCommit
+        case .toggleSelect: fallback = Self.defaultToggleSelect
+        case .openMenu: fallback = Self.defaultOpenMenu
+        }
+        return assign(fallback, to: action)
+    }
+
+    private static func normalizedConfiguration(
+        commit: KeyboardShortcuts.Shortcut,
+        toggle: KeyboardShortcuts.Shortcut,
+        openMenu: KeyboardShortcuts.Shortcut?
+    ) -> (
+        commit: KeyboardShortcuts.Shortcut,
+        toggle: KeyboardShortcuts.Shortcut,
+        openMenu: KeyboardShortcuts.Shortcut
+    ) {
+        var selected: [(action: QuickPasteKeyAction, shortcut: KeyboardShortcuts.Shortcut)] = []
+
+        func choose(
+            _ action: QuickPasteKeyAction,
+            candidates: [KeyboardShortcuts.Shortcut]
+        ) -> KeyboardShortcuts.Shortcut {
+            // Each fallback list has more distinct combinations than there are
+            // previously selected actions, so a valid candidate always exists.
+            let choice = candidates.first { candidate in
+                Self.isUsable(candidate, for: action) && selected.allSatisfy { existing in
+                    Self.acceptedShortcuts(for: candidate, action: action).isDisjoint(
+                        with: Self.acceptedShortcuts(
+                            for: existing.shortcut,
+                            action: existing.action
+                        )
+                    )
+                }
+            } ?? candidates[0]
+            selected.append((action, choice))
+            return choice
+        }
+
+        let commitFallbacks = [
+            commit,
+            Self.defaultCommit,
+            KeyboardShortcuts.Shortcut(.return, modifiers: [.command]),
+            KeyboardShortcuts.Shortcut(.return, modifiers: [.command, .shift])
+        ]
+        let toggleFallbacks = [
+            toggle,
+            Self.defaultToggleSelect,
+            KeyboardShortcuts.Shortcut(.space, modifiers: [.control]),
+            KeyboardShortcuts.Shortcut(.space, modifiers: [.shift]),
+            KeyboardShortcuts.Shortcut(.space, modifiers: [.command, .option])
+        ]
+
+        let normalizedCommit: KeyboardShortcuts.Shortcut
+        let normalizedToggle: KeyboardShortcuts.Shortcut
+        let normalizedOpenMenu: KeyboardShortcuts.Shortcut
+        if let openMenu {
+            // A stored menu command is an explicit user choice and keeps the
+            // same priority it has in the runtime event router.
+            normalizedOpenMenu = choose(
+                .openMenu,
+                candidates: [openMenu, Self.defaultOpenMenu, QuickPasteMenuShortcut.alternate]
+            )
+            normalizedCommit = choose(.commit, candidates: commitFallbacks)
+            normalizedToggle = choose(.toggleSelect, candidates: toggleFallbacks)
+        } else {
+            // Upgrade path: preserve the two legacy panel keys first. If one
+            // already uses Ctrl-Return, Shift-F10 becomes the visible primary
+            // menu command instead of wiping the user's existing choices.
+            normalizedCommit = choose(.commit, candidates: commitFallbacks)
+            normalizedToggle = choose(.toggleSelect, candidates: toggleFallbacks)
+            normalizedOpenMenu = choose(
+                .openMenu,
+                candidates: [Self.defaultOpenMenu, QuickPasteMenuShortcut.alternate]
+            )
+        }
+
+        return (normalizedCommit, normalizedToggle, normalizedOpenMenu)
+    }
+
+    private static func isUsable(
+        _ shortcut: KeyboardShortcuts.Shortcut,
+        for action: QuickPasteKeyAction
+    ) -> Bool {
+        !isReservedPanelCommand(shortcut) &&
+            (action == .openMenu || shortcut != QuickPasteMenuShortcut.alternate)
+    }
+
+    private static func hasConflict(
+        candidate: KeyboardShortcuts.Shortcut,
+        action: QuickPasteKeyAction,
+        commit: KeyboardShortcuts.Shortcut,
+        toggle: KeyboardShortcuts.Shortcut,
+        openMenu: KeyboardShortcuts.Shortcut
+    ) -> Bool {
+        let candidateSet = acceptedShortcuts(for: candidate, action: action)
+        for other in QuickPasteKeyAction.allCases where other != action {
+            let otherShortcut: KeyboardShortcuts.Shortcut
+            switch other {
+            case .commit: otherShortcut = commit
+            case .toggleSelect: otherShortcut = toggle
+            case .openMenu: otherShortcut = openMenu
+            }
+            if !candidateSet.isDisjoint(with: acceptedShortcuts(for: otherShortcut, action: other)) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func acceptedShortcuts(
+        for shortcut: KeyboardShortcuts.Shortcut,
+        action: QuickPasteKeyAction
+    ) -> Set<KeyboardShortcuts.Shortcut> {
+        switch action {
+        case .openMenu:
+            return QuickPasteMenuShortcut.acceptedShortcuts(configured: shortcut)
+        case .toggleSelect:
+            return [shortcut]
+        case .commit:
+            var accepted: Set<KeyboardShortcuts.Shortcut> = [shortcut]
+            if let key = shortcut.key, !shortcut.modifiers.contains(.option) {
+                accepted.insert(.init(key, modifiers: shortcut.modifiers.union(.option)))
+            }
+            return accepted
+        }
+    }
+
+    private static func isReservedPanelCommand(
+        _ shortcut: KeyboardShortcuts.Shortcut
+    ) -> Bool {
+        guard let key = shortcut.key else { return true }
+        if key == .leftArrow || key == .rightArrow || key == .upArrow ||
+            key == .downArrow || key == .escape {
+            return true
+        }
+        let modifiers = shortcut.modifiers.intersection([.command, .option, .control, .shift])
+        return key == .f && modifiers == [.command]
+    }
 
     private static func load(_ key: String) -> KeyboardShortcuts.Shortcut? {
         guard let raw = UserDefaults.standard.string(forKey: key),
@@ -70,23 +327,23 @@ final class QuickPastePanelState: ObservableObject {
     @Published private(set) var session = 0
 
     var onCommit: (_ items: [ClipboardItem], _ plainText: Bool) -> Void = { _, _ in }
-    var onTogglePin: (_ item: ClipboardItem) -> Void = { _ in }
     /// Single data source for the list: empty query means the recents feed
     /// for `filter`, anything else a bounded search within it.
     var onQuery: (_ filter: ClipboardGroupFilter, _ query: String) -> [ClipboardItem] = { _, _ in [] }
+    var onQueryGroups: () -> [ClipboardGroup] = { [] }
     var onCancel: () -> Void = {}
 
     func configure(
         items: [ClipboardItem],
         groups: [ClipboardGroup],
         onCommit: @escaping (_ items: [ClipboardItem], _ plainText: Bool) -> Void,
-        onTogglePin: @escaping (_ item: ClipboardItem) -> Void,
         onQuery: @escaping (_ filter: ClipboardGroupFilter, _ query: String) -> [ClipboardItem],
+        onQueryGroups: @escaping () -> [ClipboardGroup],
         onCancel: @escaping () -> Void
     ) {
         self.onCommit = onCommit
-        self.onTogglePin = onTogglePin
         self.onQuery = onQuery
+        self.onQueryGroups = onQueryGroups
         self.onCancel = onCancel
         self.selectedGroupFilter = .all
         self.searchQuery = ""
@@ -106,6 +363,14 @@ final class QuickPastePanelState: ObservableObject {
         searchQuery = query
         items = onQuery(selectedGroupFilter, query)
     }
+
+    /// Context-menu mutations can change ordering, filter membership or the
+    /// group catalog, so refresh both snapshots through the controller-owned
+    /// context instead of assuming an observed property change is sufficient.
+    func reloadSnapshot() {
+        groups = onQueryGroups()
+        items = onQuery(selectedGroupFilter, searchQuery)
+    }
 }
 
 @MainActor
@@ -114,13 +379,42 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
 
     private var panel: NSPanel?
     private let panelState = QuickPastePanelState()
+    private let itemContextMenu = ClipboardItemContextMenuCoordinator()
     private let context = ModelContext(AppContainer.shared)
+    private var appResignObserver: NSObjectProtocol?
+    private var sheetResignObserver: NSObjectProtocol?
+    private var pausedGlobalShortcuts: [KeyboardShortcuts.Name] = []
     /// App that was frontmost when we opened the panel. We re-activate it
     /// before posting the synthetic ⌘V so the keystroke lands in the right
     /// place even if focus drifted while the user picked clips.
     private var previousApp: NSRunningApplication?
 
-    private override init() { super.init() }
+    private override init() {
+        super.init()
+        itemContextMenu.onPresentationEnd = { [weak self] in
+            self?.contextMenuPresentationDidEnd()
+        }
+        appResignObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: NSApp,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.close() }
+        }
+        sheetResignObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            Task { @MainActor in
+                guard let self,
+                      let sheet = notification.object as? NSWindow,
+                      self.panel?.attachedSheet === sheet,
+                      self.itemContextMenu.isPresentingSheet else { return }
+                self.close()
+            }
+        }
+    }
 
     func prewarm() {
         _ = preparePanel(size: NSSize(width: 360, height: 440))
@@ -163,11 +457,11 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
             onCommit: { [weak self] selected, plainText in
                 self?.commit(selected, plainText: plainText)
             },
-            onTogglePin: { [weak self] item in
-                self?.togglePin(item)
-            },
             onQuery: { [weak self] filter, query in
                 self?.fetchItems(groupFilter: filter, query: query) ?? []
+            },
+            onQueryGroups: { [weak self] in
+                self?.fetchGroups() ?? []
             },
             onCancel: { [weak self] in self?.cancel() }
         )
@@ -180,6 +474,7 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
         } else {
             positionPanelAtCursor(panel, size: size)
         }
+        pauseConflictingGlobalShortcuts()
         panel.orderFrontRegardless()
         // A `.nonactivatingPanel` orders front without making our app active,
         // which leaves keyboard focus with the previously-frontmost app — so
@@ -202,10 +497,23 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
     /// one attempt isn't guaranteed to land under cooperative activation.
     /// Stops as soon as the panel is key or has been dismissed.
     private func reassertKey(_ panel: NSPanel, attempt: Int = 0) {
-        guard attempt < 6 else { return }
+        guard self.panel === panel, panel.isVisible else { return }
+        if panel.isKeyWindow || itemContextMenu.isPresentingSheet || panel.attachedSheet != nil {
+            return
+        }
+        guard attempt < 6 else {
+            // A visible panel without keyboard focus cannot fulfill its
+            // keyboard-only contract. Closing also restores any conflicting
+            // global shortcuts paused for this presentation.
+            close()
+            return
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { [weak self] in
             guard let self, self.panel === panel,
-                  panel.isVisible, !panel.isKeyWindow else { return }
+                  panel.isVisible,
+                  !self.itemContextMenu.isPresentingSheet,
+                  panel.attachedSheet == nil,
+                  !panel.isKeyWindow else { return }
             NSApp.activate(ignoringOtherApps: true)
             panel.makeKey()
             self.reassertKey(panel, attempt: attempt + 1)
@@ -220,7 +528,12 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
     private func preparePanel(size: NSSize) -> NSPanel {
         if let panel { return panel }
 
-        let hosting = NSHostingController(rootView: QuickPasteView(state: panelState))
+        let hosting = NSHostingController(
+            rootView: QuickPasteView(
+                state: panelState,
+                itemContextMenu: itemContextMenu
+            )
+        )
         hosting.view.wantsLayer = true
 
         let panel = KeyablePanel(
@@ -376,21 +689,56 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
         return (try? context.fetch(descriptor)) ?? []
     }
 
-    private func togglePin(_ item: ClipboardItem) {
-        ClipboardRuntime.shared.viewModel.togglePin(item)
-        panelState.items = fetchItems(
-            groupFilter: panelState.selectedGroupFilter,
-            query: panelState.searchQuery
-        )
-    }
-
     // MARK: - Close
 
     private func close() {
         // The dwell preview floats beside this panel and must never outlive
         // it — commit paths order the panel out without a resign-key tick.
         HoverPreviewController.shared.hide()
+        itemContextMenu.resetPresentation()
+        if let panel, let sheet = panel.attachedSheet {
+            panel.endSheet(sheet)
+        }
         panel?.orderOut(nil)
+        resumePausedGlobalShortcuts()
+    }
+
+    /// Carbon hotkeys are evaluated before the panel's AppKit responder chain.
+    /// Temporarily unregister only the global commands that the visible panel
+    /// would consume, then restore exactly those that were enabled beforehand.
+    private func pauseConflictingGlobalShortcuts() {
+        resumePausedGlobalShortcuts()
+        let keyStore = QuickPasteKeyStore.shared
+        for appShortcut in AppShortcut.allCases {
+            let name = appShortcut.name
+            guard let shortcut = KeyboardShortcuts.getShortcut(for: name),
+                  keyStore.captures(shortcut),
+                  KeyboardShortcuts.isEnabled(for: name) else { continue }
+            KeyboardShortcuts.disable(name)
+            pausedGlobalShortcuts.append(name)
+        }
+    }
+
+    private func resumePausedGlobalShortcuts() {
+        guard !pausedGlobalShortcuts.isEmpty else { return }
+        KeyboardShortcuts.enable(pausedGlobalShortcuts)
+        pausedGlobalShortcuts.removeAll(keepingCapacity: true)
+    }
+
+    /// Returning from a context-menu sheet should hand keyboard navigation
+    /// back to the reused panel. If the app deactivated meanwhile, the app
+    /// resign observer has already closed it instead.
+    private func contextMenuPresentationDidEnd() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let panel = self.panel,
+                  NSApp.isActive,
+                  panel.isVisible,
+                  !self.itemContextMenu.isPresentingSheet,
+                  panel.attachedSheet == nil else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            panel.makeKey()
+            self.reassertKey(panel)
+        }
     }
 
     /// Dismiss without pasting and hand keyboard focus back to the app the
@@ -526,6 +874,20 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
 
     /// Click-outside / focus-loss dismissal.
     func windowDidResignKey(_ notification: Notification) {
-        close()
+        guard let window = notification.object as? NSWindow else {
+            close()
+            return
+        }
+        // The target flips synchronously before SwiftUI begins attaching its
+        // sheet, making this guard deterministic even if AppKit's key-window
+        // notification arrives before `attachedSheet` is populated.
+        guard !itemContextMenu.isPresentingSheet else { return }
+        DispatchQueue.main.async { [weak self, weak window] in
+            guard let self, let window,
+                  !self.itemContextMenu.isPresentingSheet,
+                  window.attachedSheet == nil,
+                  !window.isKeyWindow else { return }
+            self.close()
+        }
     }
 }
