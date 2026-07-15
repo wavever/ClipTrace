@@ -1260,9 +1260,26 @@ struct MainWindowContent: View {
                         vm.copyToClipboard(item)
                         ToastCenter.shared.show(L("common.copied"))
                     },
-                    onPreview: { showQuickLook(for: item) },
+                    onDelete: { requestDeleteItem(item) },
                     onToggleFavorite: { toggleFavorite(item) },
-                    onTogglePin: { togglePin(item) }
+                    onTogglePin: { togglePin(item) },
+                    onRevealInFinder: {
+                        if let url = item.resolvedFileURL {
+                            NSWorkspace.shared.activateFileViewerSelecting([url])
+                        }
+                    },
+                    onOpenURL: {
+                        openInBrowser(item.content)
+                    },
+                    onPreview: { showQuickLook(for: item) },
+                    onAddTag: { tag in
+                        vm.addTag(tag, to: item)
+                        try? modelContext.save()
+                    },
+                    onRemoveTag: { tag in
+                        vm.removeTag(tag, from: item)
+                        try? modelContext.save()
+                    }
                 )
                 .equatable()
             } else {

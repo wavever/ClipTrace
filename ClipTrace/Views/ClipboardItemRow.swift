@@ -275,20 +275,6 @@ struct ClipboardItemRow: View, Equatable {
         return Color.secondary.opacity(0.15)
     }
 
-    private var canPreviewQRCode: Bool {
-        item.itemType == .text &&
-        !item.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    /// Cheap type gate for the encoding menu — the costly "is this valid
-    /// Base64" probe runs only when the menu opens, never per render.
-    private var hasEncodableText: Bool {
-        switch item.itemType {
-        case .text, .url, .rtf: return !item.content.isEmpty
-        default: return false
-        }
-    }
-
     private var rowDot: some View {
         Circle()
             .fill(.tertiary)
@@ -324,94 +310,26 @@ struct ClipboardItemRow: View, Equatable {
     }
 
     private var actionBar: some View {
-        HStack(spacing: 4) {
-            HoverIconButton(
-                systemName: "doc.on.doc",
-                help: L("action.copy"),
-                action: onCopy
-            )
-            HoverIconButton(
-                systemName: "eye",
-                help: L("action.preview"),
-                action: onPreview
-            )
-            if canPreviewQRCode {
-                HoverIconButton(
-                    systemName: "qrcode",
-                    help: L("action.qrPreview"),
-                    action: { showQRCodePreview = true }
-                )
-            }
-            if hasEncodableText {
-                EncodingMenuButton(
-                    item: item,
-                    onEncode: onBase64Encode,
-                    onDecode: onBase64Decode
-                )
-            }
-            HoverIconButton(
-                systemName: item.isPinned ? "pin.fill" : "pin",
-                help: item.isPinned ? L("action.unpin") : L("action.pin"),
-                tint: item.isPinned ? .orange : nil,
-                action: onTogglePin
-            )
-            HoverIconButton(
-                systemName: item.isFavorite ? "star.fill" : "star",
-                help: item.isFavorite ? L("action.unfavorite") : L("action.favorite"),
-                tint: item.isFavorite ? .yellow : nil,
-                action: onToggleFavorite
-            )
-            HoverIconButton(
-                systemName: item.tags.isEmpty ? "tag" : "tag.fill",
-                help: L("action.editTags"),
-                tint: item.tags.isEmpty ? nil : .appAccent,
-                action: { showTagEditor = true }
-            )
-            if item.itemType == .url {
-                HoverIconButton(
-                    systemName: "safari",
-                    help: L("action.openInBrowser"),
-                    action: onOpenURL
-                )
-            }
-            if item.hasImagePayload {
-                HoverIconButton(
-                    systemName: "text.viewfinder",
-                    help: L("action.ocr"),
-                    action: { showOCR = true }
-                )
-                HoverIconButton(
-                    systemName: "qrcode.viewfinder",
-                    help: L("action.scanCodes"),
-                    action: { showBarcodeScan = true }
-                )
-            }
-            if item.hasStoredImageData {
-                HoverIconButton(
-                    systemName: "square.and.arrow.down",
-                    help: L("action.saveImage"),
-                    action: onSaveImage
-                )
-            }
-            if fileExistsCache {
-                HoverIconButton(
-                    systemName: "folder",
-                    help: L("action.revealInFinder"),
-                    action: onRevealInFinder
-                )
-                HoverIconButton(
-                    systemName: "arrow.up.forward.app",
-                    help: L("action.openFile"),
-                    action: onOpenFile
-                )
-            }
-            HoverIconButton(
-                systemName: "trash",
-                help: L("action.delete"),
-                tint: .red,
-                action: onDelete
-            )
-        }
+        ClipboardItemActionBar(
+            item: item,
+            layout: .list,
+            fileExists: fileExistsCache,
+            onCopy: onCopy,
+            onPreview: onPreview,
+            onShowQRCode: { showQRCodePreview = true },
+            onBase64Encode: onBase64Encode,
+            onBase64Decode: onBase64Decode,
+            onTogglePin: onTogglePin,
+            onToggleFavorite: onToggleFavorite,
+            onEditTags: { showTagEditor = true },
+            onOpenURL: onOpenURL,
+            onShowOCR: { showOCR = true },
+            onShowBarcodeScan: { showBarcodeScan = true },
+            onSaveImage: onSaveImage,
+            onRevealInFinder: onRevealInFinder,
+            onOpenFile: onOpenFile,
+            onDelete: onDelete
+        )
     }
 
     /// Probe the resolved file URL off the main render path. Falls back to
@@ -431,8 +349,9 @@ struct ClipboardItemRow: View, Equatable {
 }
 
 /// A denser, image-forward counterpart to `ClipboardItemRow` for the main
-/// window's adaptive grid. Full commands remain available from the shared
-/// paper context menu; the four most frequent actions stay one hover away.
+/// window's adaptive grid. Copy lives in the top corner; the footer stays
+/// deliberately compact while the context menu keeps the complete command
+/// set available.
 struct ClipboardItemGridCard: View, Equatable {
     let item: ClipboardItem
     var groupNames: [String] = []
@@ -440,13 +359,21 @@ struct ClipboardItemGridCard: View, Equatable {
     var isSelected: Bool = false
     var protectionVersion: Int = 0
     var onCopy: () -> Void = {}
-    var onPreview: () -> Void = {}
+    var onDelete: () -> Void = {}
     var onToggleFavorite: () -> Void = {}
     var onTogglePin: () -> Void = {}
+    var onRevealInFinder: () -> Void = {}
+    var onOpenURL: () -> Void = {}
+    var onPreview: () -> Void = {}
+    var onAddTag: (String) -> Void = { _ in }
+    var onRemoveTag: (String) -> Void = { _ in }
 
     @State private var isHovered = false
+    @State private var showTagEditor = false
+    @State private var showOCR = false
     @State private var detectedColorCache: Color?
     @State private var detectedColorComputed = false
+    @State private var fileExistsCache = false
 
     static func == (lhs: ClipboardItemGridCard, rhs: ClipboardItemGridCard) -> Bool {
         lhs.item.id == rhs.item.id
@@ -483,23 +410,11 @@ struct ClipboardItemGridCard: View, Equatable {
                 .opacity(isHovered && !isSelectionMode ? 0 : 1)
 
                 if !isSelectionMode {
-                    HStack(spacing: 3) {
-                        HoverIconButton(systemName: "doc.on.doc", help: L("action.copy"), action: onCopy)
-                        HoverIconButton(systemName: "eye", help: L("action.preview"), action: onPreview)
-                        HoverIconButton(
-                            systemName: item.isPinned ? "pin.fill" : "pin",
-                            help: item.isPinned ? L("action.unpin") : L("action.pin"),
-                            tint: item.isPinned ? .orange : nil,
-                            action: onTogglePin
-                        )
-                        HoverIconButton(
-                            systemName: item.isFavorite ? "star.fill" : "star",
-                            help: item.isFavorite ? L("action.unfavorite") : L("action.favorite"),
-                            tint: item.isFavorite ? .yellow : nil,
-                            action: onToggleFavorite
-                        )
-                    }
-                    .opacity(isHovered ? 1 : 0)
+                    actionBar
+                        .opacity(isHovered ? 1 : 0)
+                        .disabled(!isHovered)
+                        .allowsHitTesting(isHovered)
+                        .accessibilityHidden(!isHovered)
                 }
             }
             .frame(height: 28)
@@ -519,12 +434,43 @@ struct ClipboardItemGridCard: View, Equatable {
             withAnimation(.easeOut(duration: 0.12)) { isHovered = hovering }
         }
         .task(id: item.id) {
-            guard !detectedColorComputed else { return }
-            detectedColorComputed = true
-            if item.itemType == .text {
-                detectedColorCache = ColorValueParser.color(from: item.content)
+            if !detectedColorComputed {
+                detectedColorComputed = true
+                if item.itemType == .text {
+                    detectedColorCache = ColorValueParser.color(from: item.content)
+                }
             }
+            await refreshFileExistsCache()
         }
+        .onChange(of: item.fileURL) { _, _ in
+            Task { await refreshFileExistsCache() }
+        }
+        .sheet(isPresented: $showTagEditor) {
+            TagEditorPopover(
+                item: item,
+                onAdd: onAddTag,
+                onRemove: onRemoveTag
+            )
+        }
+        .sheet(isPresented: $showOCR) {
+            OCRResultView(item: item, onClose: { showOCR = false })
+        }
+    }
+
+    private var actionBar: some View {
+        ClipboardItemActionBar(
+            item: item,
+            layout: .grid,
+            fileExists: fileExistsCache,
+            onPreview: onPreview,
+            onTogglePin: onTogglePin,
+            onToggleFavorite: onToggleFavorite,
+            onEditTags: { showTagEditor = true },
+            onOpenURL: onOpenURL,
+            onShowOCR: { showOCR = true },
+            onRevealInFinder: onRevealInFinder,
+            onDelete: onDelete
+        )
     }
 
     private var previewSurface: some View {
@@ -612,31 +558,52 @@ struct ClipboardItemGridCard: View, Equatable {
 
             Spacer(minLength: 4)
 
-            if item.isPinned || item.isFavorite || rowProtection.isProtected {
-                HStack(spacing: 6) {
-                    if item.isPinned {
-                        Image(systemName: "pin.fill")
-                            .foregroundStyle(.orange)
-                    }
-                    if item.isFavorite {
-                        Image(systemName: "star.fill")
-                            .foregroundStyle(.yellow)
-                    }
-                    if rowProtection.isProtected {
-                        Image(systemName: "lock.shield.fill")
-                            .foregroundStyle(Color.appAccent)
-                            .help(L("protection.badge.tooltip"))
-                    }
-                }
-                .font(.system(size: 10, weight: .semibold))
-                .padding(.horizontal, 7)
-                .padding(.vertical, 5)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(Color.appPaper.opacity(0.92))
+            previewTrailingControls
+        }
+    }
+
+    /// The protection badge shares a fixed trailing footprint with copy.
+    /// Pin and favorite live exclusively in the footer, keeping the preview
+    /// corner light while the type badge avoids a sideways jump on hover.
+    private var previewTrailingControls: some View {
+        ZStack(alignment: .trailing) {
+            if rowProtection.isProtected {
+                Image(systemName: "lock.shield.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.appAccent)
+                    .help(L("protection.badge.tooltip"))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(Color.appPaper.opacity(0.92))
+                    )
+                    .opacity(isHovered && !isSelectionMode ? 0 : 1)
+                    .accessibilityHidden(isHovered && !isSelectionMode)
+            }
+
+            if !isSelectionMode {
+                HoverIconButton(
+                    systemName: "doc.on.doc",
+                    help: L("action.copy"),
+                    action: onCopy
                 )
+                .padding(2)
+                .background(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(Color.appPaper.opacity(0.94))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .strokeBorder(Color.appCardBorder.opacity(0.8), lineWidth: 0.5)
+                )
+                .opacity(isHovered ? 1 : 0)
+                .disabled(!isHovered)
+                .allowsHitTesting(isHovered)
+                .accessibilityHidden(!isHovered)
             }
         }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
     }
 
     private var staticSelected: Bool {
@@ -679,6 +646,230 @@ struct ClipboardItemGridCard: View, Equatable {
             Capsule(style: .continuous)
                 .fill(Color.appMetal.opacity(0.82))
         )
+    }
+
+    /// Match the list row's asynchronous file capability check without doing
+    /// synchronous disk I/O during hover-driven card redraws.
+    private func refreshFileExistsCache() async {
+        guard let url = item.resolvedFileURL else {
+            if fileExistsCache { fileExistsCache = false }
+            return
+        }
+        let path = url.path
+        let exists = await Task.detached(priority: .utility) {
+            FileManager.default.fileExists(atPath: path)
+        }.value
+        if fileExistsCache != exists { fileExistsCache = exists }
+    }
+}
+
+private enum ClipboardItemActionBarLayout {
+    case list
+    case grid
+}
+
+/// Main-window action definitions. List rows expose the complete inline set;
+/// grid cards deliberately keep only primary commands in their single-line
+/// footer, with secondary transforms available from the shared context menu.
+private struct ClipboardItemActionBar: View {
+    let item: ClipboardItem
+    let layout: ClipboardItemActionBarLayout
+    let fileExists: Bool
+    var onCopy: () -> Void = {}
+    var onPreview: () -> Void = {}
+    var onShowQRCode: () -> Void = {}
+    var onBase64Encode: () -> Void = {}
+    var onBase64Decode: () -> Void = {}
+    var onTogglePin: () -> Void = {}
+    var onToggleFavorite: () -> Void = {}
+    var onEditTags: () -> Void = {}
+    var onOpenURL: () -> Void = {}
+    var onShowOCR: () -> Void = {}
+    var onShowBarcodeScan: () -> Void = {}
+    var onSaveImage: () -> Void = {}
+    var onRevealInFinder: () -> Void = {}
+    var onOpenFile: () -> Void = {}
+    var onDelete: () -> Void = {}
+
+    @ViewBuilder
+    var body: some View {
+        switch layout {
+        case .list:
+            HStack(spacing: 4) {
+                buttons
+            }
+        case .grid:
+            HStack(spacing: 0) {
+                gridButtons
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    @ViewBuilder
+    private var buttons: some View {
+        HoverIconButton(
+            systemName: "doc.on.doc",
+            help: L("action.copy"),
+            action: onCopy
+        )
+        HoverIconButton(
+            systemName: "eye",
+            help: L("action.preview"),
+            action: onPreview
+        )
+        if canPreviewQRCode {
+            HoverIconButton(
+                systemName: "qrcode",
+                help: L("action.qrPreview"),
+                action: onShowQRCode
+            )
+        }
+        if hasEncodableText {
+            EncodingMenuButton(
+                item: item,
+                onEncode: onBase64Encode,
+                onDecode: onBase64Decode
+            )
+        }
+        HoverIconButton(
+            systemName: item.isPinned ? "pin.fill" : "pin",
+            help: item.isPinned ? L("action.unpin") : L("action.pin"),
+            tint: item.isPinned ? .orange : nil,
+            action: onTogglePin
+        )
+        HoverIconButton(
+            systemName: item.isFavorite ? "star.fill" : "star",
+            help: item.isFavorite ? L("action.unfavorite") : L("action.favorite"),
+            tint: item.isFavorite ? .yellow : nil,
+            action: onToggleFavorite
+        )
+        HoverIconButton(
+            systemName: item.tags.isEmpty ? "tag" : "tag.fill",
+            help: L("action.editTags"),
+            tint: item.tags.isEmpty ? nil : .appAccent,
+            action: onEditTags
+        )
+        if item.itemType == .url {
+            HoverIconButton(
+                systemName: "safari",
+                help: L("action.openInBrowser"),
+                action: onOpenURL
+            )
+        }
+        if item.hasImagePayload {
+            HoverIconButton(
+                systemName: "text.viewfinder",
+                help: L("action.ocr"),
+                action: onShowOCR
+            )
+            HoverIconButton(
+                systemName: "qrcode.viewfinder",
+                help: L("action.scanCodes"),
+                action: onShowBarcodeScan
+            )
+        }
+        if item.hasStoredImageData {
+            HoverIconButton(
+                systemName: "square.and.arrow.down",
+                help: L("action.saveImage"),
+                action: onSaveImage
+            )
+        }
+        if fileExists {
+            HoverIconButton(
+                systemName: "folder",
+                help: L("action.revealInFinder"),
+                action: onRevealInFinder
+            )
+            HoverIconButton(
+                systemName: "arrow.up.forward.app",
+                help: L("action.openFile"),
+                action: onOpenFile
+            )
+        }
+        HoverIconButton(
+            systemName: "trash",
+            help: L("action.delete"),
+            tint: .red,
+            action: onDelete
+        )
+    }
+
+    /// The compact card footer is capped at six 28pt buttons, fitting the
+    /// narrowest card's 190pt content width. Flexible gaps absorb the remaining
+    /// space, so both five- and six-command rows feel intentionally full.
+    @ViewBuilder
+    private var gridButtons: some View {
+        HoverIconButton(
+            systemName: "eye",
+            help: L("action.preview"),
+            action: onPreview
+        )
+        Spacer(minLength: 0)
+        HoverIconButton(
+            systemName: item.isPinned ? "pin.fill" : "pin",
+            help: item.isPinned ? L("action.unpin") : L("action.pin"),
+            tint: item.isPinned ? .orange : nil,
+            action: onTogglePin
+        )
+        Spacer(minLength: 0)
+        HoverIconButton(
+            systemName: item.isFavorite ? "star.fill" : "star",
+            help: item.isFavorite ? L("action.unfavorite") : L("action.favorite"),
+            tint: item.isFavorite ? .yellow : nil,
+            action: onToggleFavorite
+        )
+        Spacer(minLength: 0)
+        HoverIconButton(
+            systemName: item.tags.isEmpty ? "tag" : "tag.fill",
+            help: L("action.editTags"),
+            tint: item.tags.isEmpty ? nil : .appAccent,
+            action: onEditTags
+        )
+        if item.itemType == .url {
+            Spacer(minLength: 0)
+            HoverIconButton(
+                systemName: "safari",
+                help: L("action.openInBrowser"),
+                action: onOpenURL
+            )
+        } else if fileExists {
+            Spacer(minLength: 0)
+            HoverIconButton(
+                systemName: "folder",
+                help: L("action.revealInFinder"),
+                action: onRevealInFinder
+            )
+        } else if item.hasImagePayload {
+            Spacer(minLength: 0)
+            HoverIconButton(
+                systemName: "text.viewfinder",
+                help: L("action.ocr"),
+                action: onShowOCR
+            )
+        }
+        Spacer(minLength: 0)
+        HoverIconButton(
+            systemName: "trash",
+            help: L("action.delete"),
+            tint: .red,
+            action: onDelete
+        )
+    }
+
+    private var canPreviewQRCode: Bool {
+        item.itemType == .text &&
+        !item.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Keep the expensive Base64 validity check inside `EncodingMenuButton`;
+    /// this gate only decides whether an encoding command applies at all.
+    private var hasEncodableText: Bool {
+        switch item.itemType {
+        case .text, .url, .rtf: return !item.content.isEmpty
+        default: return false
+        }
     }
 }
 
