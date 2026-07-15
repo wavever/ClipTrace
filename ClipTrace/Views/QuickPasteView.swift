@@ -81,8 +81,8 @@ struct QuickPasteView: View {
             QuickPasteKeyCatcher(
                 claimFocusToken: keyClaimToken,
                 isContextMenuOpen: { itemContextMenu.isMenuOpen },
-                onLeft: { usesGrid ? moveFocusHorizontally(by: -1) : switchGroup(by: -1) },
-                onRight: { usesGrid ? moveFocusHorizontally(by: 1) : switchGroup(by: 1) },
+                onLeft: { handleHorizontalNavigation(by: -1) },
+                onRight: { handleHorizontalNavigation(by: 1) },
                 onUp: { moveFocusVertically(by: -1) },
                 onDown: { moveFocusVertically(by: 1) },
                 onToggleSelect: { toggleFocusedSelection() },
@@ -185,7 +185,14 @@ struct QuickPasteView: View {
     /// Surfaces the complete keyboard flow and the customized panel keys right
     /// in the panel, including the fixed native copy command.
     private var keyboardHint: String {
-        let group = usesGrid || sortedGroups.isEmpty ? nil : "←→ \(L("quickpaste.hint.kbdGroup"))"
+        let group: String?
+        if sortedGroups.isEmpty {
+            group = nil
+        } else if usesGrid {
+            group = L("quickpaste.hint.kbdGridGroup")
+        } else {
+            group = "←→ \(L("quickpaste.hint.kbdGroup"))"
+        }
         let arrows = usesGrid ? "←↑↓→" : "↑↓"
         let move = "\(arrows) \(L("quickpaste.hint.kbdMove"))"
         let toggle = "\(keyStore.toggleSelectShortcut.description) \(L("quickpaste.hint.kbdToggle"))"
@@ -737,6 +744,19 @@ struct QuickPasteView: View {
         }
     }
 
+    /// List rows reserve horizontal arrows for groups. In the two-column grid,
+    /// arrows first move within the current row; pressing past either edge
+    /// flows into the neighboring group instead of becoming a dead key.
+    private func handleHorizontalNavigation(by delta: Int) {
+        guard usesGrid else {
+            switchGroup(by: delta)
+            return
+        }
+        if !moveFocusHorizontally(by: delta) {
+            switchGroup(by: delta)
+        }
+    }
+
     private func moveFocusVertically(by delta: Int) {
         let ordered = visualItems
         guard !ordered.isEmpty else { return }
@@ -761,17 +781,22 @@ struct QuickPasteView: View {
         focusedID = ordered[next].id
     }
 
-    private func moveFocusHorizontally(by delta: Int) {
+    /// Returns whether focus moved to another card. `false` deliberately also
+    /// covers an empty result set so horizontal navigation can escape an empty
+    /// group through `handleHorizontalNavigation(by:)`.
+    @discardableResult
+    private func moveFocusHorizontally(by delta: Int) -> Bool {
         let ordered = visualItems
-        guard !ordered.isEmpty else { return }
+        guard !ordered.isEmpty else { return false }
         let current = ordered.firstIndex(where: { $0.id == focusedID }) ?? 0
         let column = current % 2
         let candidate = current + delta
         let canMove = delta < 0
             ? column > 0
             : column == 0 && candidate < ordered.count
-        guard canMove else { return }
+        guard canMove else { return false }
         focusedID = ordered[candidate].id
+        return true
     }
 
     /// Commit triggered by the commit key or the Paste button. Honors an
@@ -882,11 +907,12 @@ struct QuickPasteView: View {
 
 /// Invisible AppKit view that drives the QuickPaste panel's keyboard flow.
 ///
-/// Arrow keys move the focused item; Cmd-C copies, the user-customizable
-/// toggle-select key adds/removes it from the multi-selection, and the commit
-/// key pastes. Configurable keys read live from `QuickPasteKeyStore`. Matching
-/// runs in both `keyDown` (plain keys) and `performKeyEquivalent` (modifier
-/// combos) so any recorded shortcut works regardless of AppKit routing.
+/// Arrow keys move the focused item; a grid arrow that crosses a row edge may
+/// switch groups. Cmd-C copies, the user-customizable toggle-select key
+/// adds/removes the focused item from the multi-selection, and the commit key
+/// pastes. Configurable keys read live from `QuickPasteKeyStore`. Matching runs
+/// in both `keyDown` (plain keys) and `performKeyEquivalent` (modifier combos)
+/// so any recorded shortcut works regardless of AppKit routing.
 struct QuickPasteKeyCatcher: NSViewRepresentable {
     /// Bumped by the host to re-claim first responder (e.g. when search focus
     /// ends) so the arrow-key flow resumes without rebuilding the view.
