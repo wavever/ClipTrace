@@ -32,6 +32,8 @@ struct QuickPasteView: View {
     @State private var keyClaimToken = 0
     @State private var contextMenuRequestSequence = 0
     @State private var contextMenuKeyboardRequest: ClipboardItemContextMenuKeyboardRequest?
+    @State private var copiedIDs: Set<UUID> = []
+    @State private var copyFeedbackTask: Task<Void, Never>?
     @AppStorage("quickPasteContentLayout") private var contentLayoutRaw = PanelContentLayout.list.rawValue
 
     @ObservedObject private var keyStore = QuickPasteKeyStore.shared
@@ -84,6 +86,7 @@ struct QuickPasteView: View {
                 onUp: { moveFocusVertically(by: -1) },
                 onDown: { moveFocusVertically(by: 1) },
                 onToggleSelect: { toggleFocusedSelection() },
+                onCopy: { copyFromKeyboard() },
                 onCommit: { plainText in commitFromKeyboard(plainText: plainText) },
                 onOpenContextMenu: { openFocusedContextMenu() }
             )
@@ -179,15 +182,16 @@ struct QuickPasteView: View {
         .padding(.vertical, 10)
     }
 
-    /// "↑↓ move · Space select · ↩ paste" — surfaces the keyboard flow and the
-    /// (possibly customized) toggle/commit keys right in the panel.
+    /// Surfaces the complete keyboard flow and the customized panel keys right
+    /// in the panel, including the fixed native copy command.
     private var keyboardHint: String {
         let group = usesGrid || sortedGroups.isEmpty ? nil : "←→ \(L("quickpaste.hint.kbdGroup"))"
         let arrows = usesGrid ? "←↑↓→" : "↑↓"
         let move = "\(arrows) \(L("quickpaste.hint.kbdMove"))"
         let toggle = "\(keyStore.toggleSelectShortcut.description) \(L("quickpaste.hint.kbdToggle"))"
+        let copy = "⌘C \(L("common.copy"))"
         let paste = "\(keyStore.commitShortcut.description) \(L("quickpaste.hint.kbdPaste"))"
-        return [group, move, toggle, paste].compactMap(\.self).joined(separator: "  ·  ")
+        return [group, move, toggle, copy, paste].compactMap(\.self).joined(separator: "  ·  ")
     }
 
     private var groupStrip: some View {
@@ -363,63 +367,79 @@ struct QuickPasteView: View {
         let isHover = hoverID == item.id
         let isFocused = focusedID == item.id
 
-        return HStack(spacing: 10) {
-            ZStack {
-                Circle()
-                    .fill(isSelected ? Color.appAccent : Color.secondary.opacity(0.18))
-                    .frame(width: 22, height: 22)
-                if let order {
-                    Text("\(order)")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(.white)
-                } else {
-                    Image(systemName: item.itemType.icon)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
-                    if item.isPinned {
-                        Image(systemName: "pin.fill")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.orange)
-                    }
-                    Text(displayPreview(for: item))
-                        .font(.system(size: 12.5))
-                        .lineLimit(2)
-                        .foregroundStyle(.primary)
-                }
-                HStack(spacing: 6) {
-                    HStack(spacing: 2) {
+        return HStack(spacing: 6) {
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle()
+                        .fill(isSelected ? Color.appAccent : Color.secondary.opacity(0.18))
+                        .frame(width: 22, height: 22)
+                    if let order {
+                        Text("\(order)")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(.white)
+                    } else {
                         Image(systemName: item.itemType.icon)
-                            .font(.system(size: 9, weight: .semibold))
-                        Text(item.descriptiveTag)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
                     }
-                    ForEach(item.tags, id: \.self) { tag in
-                        HStack(spacing: 2) {
-                            Image(systemName: "tag.fill")
-                                .font(.system(size: 8, weight: .semibold))
-                            Text(tag)
-                        }
-                        .foregroundStyle(Color.appAccent)
-                    }
-                    Text("·")
-                    if item.sourceApp == L("remote.universalClipboard") {
-                        Image(systemName: "iphone.and.arrow.forward")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(Color.appAccent)
-                    }
-                    Text(item.sourceApp.isEmpty ? L("common.unknownSource") : item.sourceApp)
-                    Spacer(minLength: 0)
-                    Text(item.formattedDate)
                 }
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        if item.isPinned {
+                            Image(systemName: "pin.fill")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.orange)
+                        }
+                        Text(displayPreview(for: item))
+                            .font(.system(size: 12.5))
+                            .lineLimit(2)
+                            .foregroundStyle(.primary)
+                    }
+                    HStack(spacing: 6) {
+                        HStack(spacing: 2) {
+                            Image(systemName: item.itemType.icon)
+                                .font(.system(size: 9, weight: .semibold))
+                            Text(item.descriptiveTag)
+                        }
+                        ForEach(item.tags, id: \.self) { tag in
+                            HStack(spacing: 2) {
+                                Image(systemName: "tag.fill")
+                                    .font(.system(size: 8, weight: .semibold))
+                                Text(tag)
+                            }
+                            .foregroundStyle(Color.appAccent)
+                        }
+                        Text("·")
+                        if item.sourceApp == L("remote.universalClipboard") {
+                            Image(systemName: "iphone.and.arrow.forward")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(Color.appAccent)
+                        }
+                        Text(item.sourceApp.isEmpty ? L("common.unknownSource") : item.sourceApp)
+                        Spacer(minLength: 0)
+                        Text(item.formattedDate)
+                    }
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) {
+                // Double-click on a single item pastes it directly.
+                state.onCommit([item], false)
+            }
+            .onTapGesture {
+                focusedID = item.id
+                toggle(item.id)
             }
 
-            Spacer(minLength: 0)
+            if isHover || copiedIDs.contains(item.id) {
+                copyButton(for: item)
+            }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
@@ -435,15 +455,6 @@ struct QuickPasteView: View {
         )
         .contentShape(RoundedRectangle(cornerRadius: 7))
         .onHover { hoverID = $0 ? item.id : nil }
-        .onTapGesture(count: 2) {
-            // Double-click on a single item: paste it directly without needing
-            // the button (mirrors the typical clipboard-popup interaction).
-            state.onCommit([item], false)
-        }
-        .onTapGesture {
-            focusedID = item.id
-            toggle(item.id)
-        }
         .clipboardItemContextMenu(
             item: item,
             groups: sortedGroups,
@@ -461,120 +472,128 @@ struct QuickPasteView: View {
         let isHover = hoverID == item.id
         let isFocused = focusedID == item.id
         let previewContent = item.gridPreviewContent
+        let showsCopyButton = isHover || copiedIDs.contains(item.id)
 
-        return VStack(alignment: .leading, spacing: 5) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Color.appChipFill)
-
-                if showsGridThumbnail(item) {
-                    GeometryReader { proxy in
-                        ThumbnailView(
-                            item: item,
-                            width: proxy.size.width,
-                            height: proxy.size.height,
-                            cornerRadius: 7,
-                            contentMode: item.itemType == .image ? .fit : .fill
-                        )
-                    }
-                } else {
-                    ZStack(alignment: .bottomTrailing) {
-                        Image(systemName: item.itemType.icon)
-                            .font(.system(size: 38, weight: .ultraLight))
-                            .foregroundStyle(Color.appAccent.opacity(0.08))
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                            .padding(7)
-                        Text(previewContent)
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(.primary.opacity(0.78))
-                            .lineLimit(6)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                            .padding(7)
-                    }
-                }
-
-                if item.itemType == .image {
-                    VStack {
-                        Spacer(minLength: 0)
-                        HStack(spacing: 4) {
-                            Image(systemName: "photo")
-                            Text(item.gridImageTitle)
-                                .lineLimit(1)
-                            Spacer(minLength: 0)
-                        }
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(Color.white)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 4)
-                        .background(Color.appMetal.opacity(0.82))
-                    }
-                }
-            }
-            .frame(height: 99)
-            .overlay(alignment: .topLeading) {
+        return ZStack(alignment: .topTrailing) {
+            VStack(alignment: .leading, spacing: 5) {
                 ZStack {
-                    Circle()
-                        .fill(isSelected ? Color.appAccent : Color.appPaper.opacity(0.92))
-                        .frame(width: 22, height: 22)
-                    if let order {
-                        Text("\(order)")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.white)
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(Color.appChipFill)
+
+                    if showsGridThumbnail(item) {
+                        GeometryReader { proxy in
+                            ThumbnailView(
+                                item: item,
+                                width: proxy.size.width,
+                                height: proxy.size.height,
+                                cornerRadius: 7,
+                                contentMode: item.itemType == .image ? .fit : .fill
+                            )
+                        }
                     } else {
-                        Image(systemName: item.itemType.icon)
+                        ZStack(alignment: .bottomTrailing) {
+                            Image(systemName: item.itemType.icon)
+                                .font(.system(size: 38, weight: .ultraLight))
+                                .foregroundStyle(Color.appAccent.opacity(0.08))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                                .padding(7)
+                            Text(previewContent)
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.primary.opacity(0.78))
+                                .lineLimit(6)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                                .padding(7)
+                        }
+                    }
+
+                    if item.itemType == .image {
+                        VStack {
+                            Spacer(minLength: 0)
+                            HStack(spacing: 4) {
+                                Image(systemName: "photo")
+                                Text(item.gridImageTitle)
+                                    .lineLimit(1)
+                                Spacer(minLength: 0)
+                            }
                             .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 4)
+                            .background(Color.appMetal.opacity(0.82))
+                        }
                     }
                 }
-                .padding(5)
-            }
-            .overlay(alignment: .topTrailing) {
-                if item.isPinned {
-                    Image(systemName: "pin.fill")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.orange)
-                        .padding(6)
-                        .background(Circle().fill(Color.appPaper.opacity(0.92)))
-                        .padding(5)
+                .frame(height: 99)
+                .overlay(alignment: .topLeading) {
+                    ZStack {
+                        Circle()
+                            .fill(isSelected ? Color.appAccent : Color.appPaper.opacity(0.92))
+                            .frame(width: 22, height: 22)
+                        if let order {
+                            Text("\(order)")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(.white)
+                        } else {
+                            Image(systemName: item.itemType.icon)
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(5)
                 }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
 
-            HStack(spacing: 4) {
-                Text(item.sourceApp.isEmpty ? L("common.unknownSource") : item.sourceApp)
-                    .lineLimit(1)
-                Spacer(minLength: 2)
-                Text(item.formattedDate)
-                    .monospacedDigit()
-                    .fixedSize()
+                HStack(spacing: 4) {
+                    Text(item.sourceApp.isEmpty ? L("common.unknownSource") : item.sourceApp)
+                        .lineLimit(1)
+                    Spacer(minLength: 2)
+                    Text(item.formattedDate)
+                        .monospacedDigit()
+                        .fixedSize()
+                }
+                .font(.system(size: 9.5))
+                .foregroundStyle(.tertiary)
             }
-            .font(.system(size: 9.5))
-            .foregroundStyle(.tertiary)
+            .padding(6)
+            .frame(maxWidth: .infinity, minHeight: 128, maxHeight: 128, alignment: .topLeading)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isSelected
+                          ? Color.appAccent.opacity(0.12)
+                          : (isHover ? Color.secondary.opacity(0.10) : Color.clear))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(isFocused ? Color.appAccent : Color.appCardBorder.opacity(0.55), lineWidth: isFocused ? 1.5 : 0.5)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .onTapGesture(count: 2) {
+                state.onCommit([item], false)
+            }
+            .onTapGesture {
+                focusedID = item.id
+                toggle(item.id)
+            }
+
+            if item.isPinned {
+                Image(systemName: "pin.fill")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.orange)
+                    .frame(width: 22, height: 22)
+                    .background(Circle().fill(Color.appPaper.opacity(0.92)))
+                    .padding(.top, 11)
+                    .padding(.trailing, showsCopyButton ? 37 : 11)
+                    .allowsHitTesting(false)
+            }
+            if showsCopyButton {
+                copyButton(for: item)
+                    .padding(11)
+            }
         }
-        .padding(6)
-        .frame(maxWidth: .infinity, minHeight: 128, maxHeight: 128, alignment: .topLeading)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isSelected
-                      ? Color.appAccent.opacity(0.12)
-                      : (isHover ? Color.secondary.opacity(0.10) : Color.clear))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(isFocused ? Color.appAccent : Color.appCardBorder.opacity(0.55), lineWidth: isFocused ? 1.5 : 0.5)
-        )
-        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.12)) {
                 hoverID = hovering ? item.id : nil
             }
-        }
-        .onTapGesture(count: 2) {
-            state.onCommit([item], false)
-        }
-        .onTapGesture {
-            focusedID = item.id
-            toggle(item.id)
         }
         .clipboardItemContextMenu(
             item: item,
@@ -592,6 +611,26 @@ struct QuickPasteView: View {
         case .image, .video, .file: return true
         case .text, .url, .rtf: return false
         }
+    }
+
+    private func copyButton(for item: ClipboardItem) -> some View {
+        let copied = copiedIDs.contains(item.id)
+        return Button {
+            focusedID = item.id
+            copyItems([item])
+        } label: {
+            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                .font(.system(size: 11, weight: copied ? .bold : .regular))
+                .foregroundStyle(copied ? Color.appAccent : Color.secondary)
+                .frame(width: 22, height: 22)
+                .background(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(copied ? Color.appAccent.opacity(0.14) : Color.appChipFill)
+                )
+        }
+        .buttonStyle(.plain)
+        .help(copied ? L("common.copied") : L("common.copy"))
+        .transition(.opacity)
     }
 
     private var footer: some View {
@@ -679,6 +718,8 @@ struct QuickPasteView: View {
     /// first-responder before the panel becomes visible again.
     private func resetSearchSession() {
         searchDebounce?.cancel()
+        copyFeedbackTask?.cancel()
+        copiedIDs.removeAll(keepingCapacity: true)
         searchDraft = ""
         contextMenuKeyboardRequest = nil
         exitSearch()
@@ -747,6 +788,39 @@ struct QuickPasteView: View {
         }
     }
 
+    /// Cmd-C mirrors commit targeting but only updates the pasteboard: an
+    /// explicit multi-selection keeps its pick order, otherwise the focused
+    /// row (or first visible fallback) is copied and the panel stays open.
+    private func copyFromKeyboard() {
+        if !selectedIDs.isEmpty {
+            copyItems(selectedItems)
+        } else if let id = focusedID,
+                  let item = visualItems.first(where: { $0.id == id }) {
+            copyItems([item])
+        } else if let first = visualItems.first {
+            focusedID = first.id
+            copyItems([first])
+        }
+    }
+
+    private func copyItems(_ items: [ClipboardItem]) {
+        guard !items.isEmpty else { return }
+        state.onCopy(items)
+
+        let ids = Set(items.map(\.id))
+        copyFeedbackTask?.cancel()
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.75)) {
+            copiedIDs = ids
+        }
+        copyFeedbackTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.25)) {
+                copiedIDs.removeAll(keepingCapacity: true)
+            }
+        }
+    }
+
     /// Add/remove the keyboard-focused row from the multi-selection.
     private func toggleFocusedSelection() {
         guard let id = focusedID, visualItems.contains(where: { $0.id == id }) else { return }
@@ -808,11 +882,11 @@ struct QuickPasteView: View {
 
 /// Invisible AppKit view that drives the QuickPaste panel's keyboard flow.
 ///
-/// Arrow keys move the focused item; the user-customizable toggle-select key
-/// adds/removes it from the multi-selection, and the commit key pastes (both
-/// read live from `QuickPasteKeyStore`). Matching runs in both `keyDown`
-/// (plain keys) and `performKeyEquivalent` (modifier combos) so any recorded
-/// shortcut works regardless of whether AppKit routes it as a key equivalent.
+/// Arrow keys move the focused item; Cmd-C copies, the user-customizable
+/// toggle-select key adds/removes it from the multi-selection, and the commit
+/// key pastes. Configurable keys read live from `QuickPasteKeyStore`. Matching
+/// runs in both `keyDown` (plain keys) and `performKeyEquivalent` (modifier
+/// combos) so any recorded shortcut works regardless of AppKit routing.
 struct QuickPasteKeyCatcher: NSViewRepresentable {
     /// Bumped by the host to re-claim first responder (e.g. when search focus
     /// ends) so the arrow-key flow resumes without rebuilding the view.
@@ -823,6 +897,7 @@ struct QuickPasteKeyCatcher: NSViewRepresentable {
     var onUp: () -> Void
     var onDown: () -> Void
     var onToggleSelect: () -> Void
+    var onCopy: () -> Void
     /// `plainText` is `true` when the commit was issued with `⌥` held.
     var onCommit: (_ plainText: Bool) -> Void
     var onOpenContextMenu: () -> Void
@@ -836,6 +911,7 @@ struct QuickPasteKeyCatcher: NSViewRepresentable {
         view.onUp = onUp
         view.onDown = onDown
         view.onToggleSelect = onToggleSelect
+        view.onCopy = onCopy
         view.onCommit = onCommit
         view.onOpenContextMenu = onOpenContextMenu
         return view
@@ -848,6 +924,7 @@ struct QuickPasteKeyCatcher: NSViewRepresentable {
         nsView.onUp = onUp
         nsView.onDown = onDown
         nsView.onToggleSelect = onToggleSelect
+        nsView.onCopy = onCopy
         nsView.onCommit = onCommit
         nsView.onOpenContextMenu = onOpenContextMenu
         if nsView.claimFocusToken != claimFocusToken {
@@ -873,6 +950,7 @@ struct QuickPasteKeyCatcher: NSViewRepresentable {
         var onUp: (() -> Void)?
         var onDown: (() -> Void)?
         var onToggleSelect: (() -> Void)?
+        var onCopy: (() -> Void)?
         var onCommit: ((Bool) -> Void)?
         var onOpenContextMenu: (() -> Void)?
         private var contextMenuMonitor: Any?
@@ -944,10 +1022,19 @@ struct QuickPasteKeyCatcher: NSViewRepresentable {
             return typed == shortcut
         }
 
-        /// Runs the action bound to `event`, if any. Commit is checked before
-        /// toggle so a user who maps both to the same key still gets a paste.
+        /// Runs the action bound to `event`, if any. Built-in copy is checked
+        /// before configurable commands, which cannot be assigned Cmd-C.
         private func handle(_ event: NSEvent) -> Bool {
+            guard isContextMenuOpen?() != true else { return false }
             let store = QuickPasteKeyStore.shared
+            if matches(event, QuickPasteKeyStore.copyCommand) {
+                // The search field's field editor owns native text copy. A
+                // background NSView can still receive key equivalents while
+                // it is focused, so explicitly let NSTextView handle Cmd-C.
+                if window?.firstResponder is NSTextView { return false }
+                if !event.isARepeat { onCopy?() }
+                return true
+            }
             if QuickPasteMenuShortcut.matches(event, configured: store.openMenuShortcut) {
                 if !event.isARepeat { onOpenContextMenu?() }
                 return true

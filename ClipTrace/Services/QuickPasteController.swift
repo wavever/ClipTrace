@@ -65,6 +65,7 @@ final class QuickPasteKeyStore: ObservableObject {
     static let defaultCommit = KeyboardShortcuts.Shortcut(.return)
     static let defaultToggleSelect = KeyboardShortcuts.Shortcut(.space)
     static let defaultOpenMenu = KeyboardShortcuts.Shortcut(.return, modifiers: [.control])
+    static let copyCommand = KeyboardShortcuts.Shortcut(.c, modifiers: [.command])
 
     private static let commitStorageKey = "quickPasteCommitShortcut"
     private static let toggleSelectStorageKey = "quickPasteToggleSelectShortcut"
@@ -111,9 +112,11 @@ final class QuickPasteKeyStore: ObservableObject {
     }
 
     /// Whether the panel would consume this exact global hotkey, including
-    /// menu aliases and the Option-modified plain-text commit variant.
+    /// built-in copy, menu aliases and the Option-modified plain-text commit
+    /// variant.
     func captures(_ shortcut: KeyboardShortcuts.Shortcut) -> Bool {
-        QuickPasteKeyAction.allCases.contains { action in
+        if shortcut == Self.copyCommand { return true }
+        return QuickPasteKeyAction.allCases.contains { action in
             Self.acceptedShortcuts(for: self.shortcut(for: action), action: action)
                 .contains(shortcut)
         }
@@ -290,7 +293,7 @@ final class QuickPasteKeyStore: ObservableObject {
             return true
         }
         let modifiers = shortcut.modifiers.intersection([.command, .option, .control, .shift])
-        return key == .f && modifiers == [.command]
+        return (key == .f || key == .c) && modifiers == [.command]
     }
 
     private static func load(_ key: String) -> KeyboardShortcuts.Shortcut? {
@@ -327,6 +330,7 @@ final class QuickPastePanelState: ObservableObject {
     @Published private(set) var session = 0
 
     var onCommit: (_ items: [ClipboardItem], _ plainText: Bool) -> Void = { _, _ in }
+    var onCopy: (_ items: [ClipboardItem]) -> Void = { _ in }
     /// Single data source for the list: empty query means the recents feed
     /// for `filter`, anything else a bounded search within it.
     var onQuery: (_ filter: ClipboardGroupFilter, _ query: String) -> [ClipboardItem] = { _, _ in [] }
@@ -337,11 +341,13 @@ final class QuickPastePanelState: ObservableObject {
         items: [ClipboardItem],
         groups: [ClipboardGroup],
         onCommit: @escaping (_ items: [ClipboardItem], _ plainText: Bool) -> Void,
+        onCopy: @escaping (_ items: [ClipboardItem]) -> Void,
         onQuery: @escaping (_ filter: ClipboardGroupFilter, _ query: String) -> [ClipboardItem],
         onQueryGroups: @escaping () -> [ClipboardGroup],
         onCancel: @escaping () -> Void
     ) {
         self.onCommit = onCommit
+        self.onCopy = onCopy
         self.onQuery = onQuery
         self.onQueryGroups = onQueryGroups
         self.onCancel = onCancel
@@ -456,6 +462,9 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
             groups: groups,
             onCommit: { [weak self] selected, plainText in
                 self?.commit(selected, plainText: plainText)
+            },
+            onCopy: { [weak self] selected in
+                self?.copy(selected)
             },
             onQuery: { [weak self] filter, query in
                 self?.fetchItems(groupFilter: filter, query: query) ?? []
@@ -751,6 +760,18 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
     }
 
     // MARK: - Commit
+
+    /// Copy keeps the panel active. Single items deliberately use the same
+    /// path as the menu-bar button (including trim preferences and native
+    /// payloads); multi-selection reuses the ordered Quick Paste writer.
+    private func copy(_ items: [ClipboardItem]) {
+        guard !items.isEmpty else { return }
+        if items.count == 1, let item = items.first {
+            ClipboardRuntime.shared.viewModel.copyToClipboard(item)
+        } else {
+            writePasteboard(for: items)
+        }
+    }
 
     private func commit(_ items: [ClipboardItem], plainText: Bool = false) {
         guard !items.isEmpty else {
