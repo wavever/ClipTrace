@@ -15,6 +15,7 @@ struct ClipboardItemContextMenuKeyboardRequest: Equatable {
 @MainActor
 final class ClipboardItemContextMenuCoordinator: ObservableObject {
     @Published fileprivate var renameTarget: ClipboardItem?
+    @Published fileprivate var tagTarget: ClipboardItem?
     @Published fileprivate var barcodeScanTarget: ClipboardItem?
     @Published fileprivate var qrPreviewTarget: ClipboardItem?
     @Published fileprivate var newGroupTarget: ClipboardItem?
@@ -25,12 +26,18 @@ final class ClipboardItemContextMenuCoordinator: ObservableObject {
     private let vm = ClipboardRuntime.shared.viewModel
     private var groupsAtOpen: [ClipboardGroup] = []
     private var onMutation: () -> Void = {}
+    /// Tag sheets support several in-place toggles. Reloading a menu-bar or
+    /// Quick Paste snapshot after each toggle invalidates the sheet's model
+    /// identity and dismisses it, so publish one consolidated mutation only
+    /// after the editor has closed.
+    private var hasDeferredTagMutation = false
+    private var deferredTagContext: ModelContext?
     var onPresentationEnd: () -> Void = {}
     var onPresentationChange: (Bool) -> Void = { _ in }
 
     var isPresentingSheet: Bool {
-        renameTarget != nil || barcodeScanTarget != nil || qrPreviewTarget != nil ||
-        newGroupTarget != nil || deleteTarget != nil
+        renameTarget != nil || tagTarget != nil || barcodeScanTarget != nil ||
+        qrPreviewTarget != nil || newGroupTarget != nil || deleteTarget != nil
     }
 
     var isMenuOpen: Bool { menu.isOpen }
@@ -84,6 +91,7 @@ final class ClipboardItemContextMenuCoordinator: ObservableObject {
                     self?.run(rule, on: item)
                 },
                 onRename: dismissThen { [weak self] in self?.presentRename(for: item) },
+                onEditTags: dismissThen { [weak self] in self?.presentTags(for: item) },
                 onToggleGroup: { [weak self] group in self?.toggleGroup(group, for: item) },
                 onClearGroups: { [weak self] in self?.clearGroups(for: item) },
                 onNewGroup: dismissThen { [weak self] in self?.presentNewGroup(for: item) },
@@ -108,6 +116,25 @@ final class ClipboardItemContextMenuCoordinator: ObservableObject {
         vm.rename(item, to: title, context: context)
         renameTarget = nil
         notifyMutation()
+    }
+
+    fileprivate func addTag(_ tag: String, to item: ClipboardItem) {
+        guard let context = item.modelContext else { return }
+        let previousTags = item.tagsRaw
+        item.setTags(item.tags + [tag])
+        guard item.tagsRaw != previousTags else { return }
+        hasDeferredTagMutation = true
+        deferredTagContext = context
+    }
+
+    fileprivate func removeTag(_ tag: String, from item: ClipboardItem) {
+        guard let context = item.modelContext else { return }
+        let previousTags = item.tagsRaw
+        let key = tag.lowercased()
+        item.setTags(item.tags.filter { $0.lowercased() != key })
+        guard item.tagsRaw != previousTags else { return }
+        hasDeferredTagMutation = true
+        deferredTagContext = context
     }
 
     fileprivate func commitNewGroup(named name: String, for item: ClipboardItem) {
@@ -159,8 +186,10 @@ final class ClipboardItemContextMenuCoordinator: ObservableObject {
     /// SwiftUI root disappear when merely ordered out.
     func resetPresentation() {
         let wasPresenting = isPresentingSheet
+        flushDeferredTagMutation(notifySurface: false)
         menu.close()
         renameTarget = nil
+        tagTarget = nil
         barcodeScanTarget = nil
         qrPreviewTarget = nil
         newGroupTarget = nil
@@ -172,12 +201,25 @@ final class ClipboardItemContextMenuCoordinator: ObservableObject {
 
     fileprivate func presentationDidEnd() {
         guard !isPresentingSheet else { return }
+        flushDeferredTagMutation(notifySurface: true)
         onPresentationChange(false)
         onPresentationEnd()
     }
 
+    fileprivate func dismissTags() {
+        tagTarget = nil
+        presentationDidEnd()
+    }
+
     private func presentRename(for item: ClipboardItem) {
         renameTarget = item
+        onPresentationChange(true)
+    }
+
+    private func presentTags(for item: ClipboardItem) {
+        hasDeferredTagMutation = false
+        deferredTagContext = nil
+        tagTarget = item
         onPresentationChange(true)
     }
 
@@ -283,6 +325,15 @@ final class ClipboardItemContextMenuCoordinator: ObservableObject {
         onMutation()
     }
 
+    private func flushDeferredTagMutation(notifySurface: Bool) {
+        guard hasDeferredTagMutation else { return }
+        hasDeferredTagMutation = false
+        try? deferredTagContext?.save()
+        deferredTagContext = nil
+        vm.tagCatalogVersion &+= 1
+        if notifySurface { notifyMutation() }
+    }
+
     private static func openInBrowser(_ raw: String) {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -358,17 +409,25 @@ extension View {
     /// Hosts the sheets and destructive confirmation required by the shared
     /// menu. Attach once to the root of each surface, not to every lazy row.
     func clipboardItemContextMenuPresenter(
-        _ coordinator: ClipboardItemContextMenuCoordinator
+        _ coordinator: ClipboardItemContextMenuCoordinator,
+        presentsTagEditorInline: Bool = false
     ) -> some View {
-        modifier(ClipboardItemContextMenuPresenter(coordinator: coordinator))
+        modifier(
+            ClipboardItemContextMenuPresenter(
+                coordinator: coordinator,
+                presentsTagEditorInline: presentsTagEditorInline
+            )
+        )
     }
 }
 
 private struct ClipboardItemContextMenuPresenter: ViewModifier {
     @ObservedObject var coordinator: ClipboardItemContextMenuCoordinator
+    let presentsTagEditorInline: Bool
 
+    @ViewBuilder
     func body(content: Content) -> some View {
-        content
+        let base = content
             .sheet(item: $coordinator.renameTarget, onDismiss: coordinator.presentationDidEnd) { item in
                 ClipboardRenameSheet(
                     initialTitle: item.effectiveCustomTitle ?? "",
@@ -410,6 +469,50 @@ private struct ClipboardItemContextMenuPresenter: ViewModifier {
                 .background(Color.appPaper)
             }
             .onDisappear { coordinator.resetPresentation() }
+
+        if presentsTagEditorInline {
+            base.overlay {
+                if let item = coordinator.tagTarget {
+                    ZStack {
+                        Color.black.opacity(0.14)
+                            .contentShape(Rectangle())
+                            .onTapGesture { }
+
+                        TagEditorPopover(
+                            item: item,
+                            onAdd: { coordinator.addTag($0, to: item) },
+                            onRemove: { coordinator.removeTag($0, from: item) },
+                            width: 316,
+                            onClose: coordinator.dismissTags
+                        )
+                        .background(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(Color.appPaper)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .strokeBorder(Color.appCardBorder, lineWidth: 0.8)
+                        )
+                        .shadow(color: Color.appCardShadow, radius: 18, y: 8)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .transition(.scale(scale: 0.96).combined(with: .opacity))
+                    }
+                    .transition(.opacity)
+                }
+            }
+            .animation(
+                .spring(response: 0.30, dampingFraction: 0.82),
+                value: coordinator.tagTarget?.id
+            )
+        } else {
+            base.sheet(item: $coordinator.tagTarget, onDismiss: coordinator.presentationDidEnd) { item in
+                TagEditorPopover(
+                    item: item,
+                    onAdd: { coordinator.addTag($0, to: item) },
+                    onRemove: { coordinator.removeTag($0, from: item) }
+                )
+            }
+        }
     }
 }
 
@@ -511,6 +614,7 @@ private enum ClipboardItemContextMenuRootEntry: Hashable {
     case base64Decode
     case runRule(UUID)
     case rename
+    case editTags
     case groups
     case newGroup
     case openInBrowser
@@ -769,6 +873,7 @@ private struct ClipboardItemContextMenuView: View {
     let onBase64Decode: () -> Void
     let onRunRule: (ScriptingRule) -> Void
     let onRename: () -> Void
+    let onEditTags: () -> Void
     let onToggleGroup: (ClipboardGroup) -> Void
     let onClearGroups: () -> Void
     let onNewGroup: () -> Void
@@ -798,6 +903,7 @@ private struct ClipboardItemContextMenuView: View {
         onBase64Decode: @escaping () -> Void,
         onRunRule: @escaping (ScriptingRule) -> Void,
         onRename: @escaping () -> Void,
+        onEditTags: @escaping () -> Void,
         onToggleGroup: @escaping (ClipboardGroup) -> Void,
         onClearGroups: @escaping () -> Void,
         onNewGroup: @escaping () -> Void,
@@ -822,6 +928,7 @@ private struct ClipboardItemContextMenuView: View {
         self.onBase64Decode = onBase64Decode
         self.onRunRule = onRunRule
         self.onRename = onRename
+        self.onEditTags = onEditTags
         self.onToggleGroup = onToggleGroup
         self.onClearGroups = onClearGroups
         self.onNewGroup = onNewGroup
@@ -864,6 +971,7 @@ private struct ClipboardItemContextMenuView: View {
         if canBase64Decode { entries.append(.base64Decode) }
         entries.append(contentsOf: enabledRules.map { .runRule($0.id) })
         entries.append(.rename)
+        entries.append(.editTags)
         entries.append(groups.isEmpty ? .newGroup : .groups)
         if item.itemType == .url { entries.append(.openInBrowser) }
         if hasFile { entries.append(contentsOf: [.reveal, .openFile, .openWith]) }
@@ -889,6 +997,7 @@ private struct ClipboardItemContextMenuView: View {
         case .runRule(let id):
             if let rule = enabledRules.first(where: { $0.id == id }) { onRunRule(rule) }
         case .rename: onRename()
+        case .editTags: onEditTags()
         case .groups: submenu.openNow()
         case .newGroup: onNewGroup()
         case .openInBrowser: onOpenInBrowser()
@@ -982,6 +1091,12 @@ private struct ClipboardItemContextMenuView: View {
                 title: L("action.rename"),
                 isKeyboardFocused: keyboard.isFocused(.rename),
                 action: onRename
+            )
+            PaperMenuActionRow(
+                icon: item.tags.isEmpty ? "tag" : "tag.fill",
+                title: L("action.editTags"),
+                isKeyboardFocused: keyboard.isFocused(.editTags),
+                action: onEditTags
             )
             if groups.isEmpty {
                 PaperMenuActionRow(

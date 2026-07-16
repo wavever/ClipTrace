@@ -360,7 +360,10 @@ struct MenuBarContent: View {
         .onChange(of: contextMenuMutationVersion) { _, _ in
             reloadHistory()
         }
-        .clipboardItemContextMenuPresenter(itemContextMenu)
+        .clipboardItemContextMenuPresenter(
+            itemContextMenu,
+            presentsTagEditorInline: true
+        )
     }
 
     @ViewBuilder
@@ -594,7 +597,7 @@ struct MenuBarContent: View {
     private func menuRow(_ item: ClipboardItem) -> some View {
         MenuBarRow(
             item: item,
-            groupName: nil,
+            groupNames: groupNames(for: item),
             surfaceStyle: surfaceStyle,
             presentation: usesGrid ? .grid : .list,
             onCopy: { vm.copyToClipboard(item) },
@@ -606,6 +609,14 @@ struct MenuBarContent: View {
             coordinator: itemContextMenu,
             onMutation: { contextMenuMutationVersion &+= 1 }
         )
+    }
+
+    private func groupNames(for item: ClipboardItem) -> [String] {
+        let namesByID = Dictionary(
+            historyStore.groups.map { ($0.id, $0.displayName) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        return item.groupIDs.compactMap { namesByID[$0] }
     }
 
     /// Dwell-to-preview: hovering a row for the configured delay pops the full
@@ -970,7 +981,7 @@ private final class MenuBarHistoryStore: ObservableObject {
 
 struct MenuBarRow: View {
     let item: ClipboardItem
-    var groupName: String? = nil
+    var groupNames: [String] = []
     var surfaceStyle: MenuBarSurfaceStyle = .paper
     var presentation: PanelContentLayout = .list
     let onCopy: () -> Void
@@ -995,8 +1006,8 @@ struct MenuBarRow: View {
         .padding(.vertical, 6)
         .frame(
             maxWidth: .infinity,
-            minHeight: presentation == .grid ? 124 : nil,
-            maxHeight: presentation == .grid ? 124 : nil,
+            minHeight: presentation == .grid ? 146 : nil,
+            maxHeight: presentation == .grid ? 146 : nil,
             alignment: .topLeading
         )
         .background(
@@ -1055,19 +1066,16 @@ struct MenuBarRow: View {
                         .font(.system(size: 10))
                         .foregroundStyle(surfaceStyle.secondaryText)
                         .lineLimit(1)
-                    if let groupName {
-                        Text("·")
-                            .font(.system(size: 10))
-                            .foregroundStyle(surfaceStyle.tertiaryText)
-                        HStack(spacing: 2) {
-                            Image(systemName: "folder.fill")
-                                .font(.system(size: 8, weight: .semibold))
-                            Text(groupName)
-                        }
-                        .font(.system(size: 10))
-                        .foregroundStyle(Color.appAccent)
-                        .lineLimit(1)
-                    }
+                }
+
+                if !groupNames.isEmpty || !item.tags.isEmpty {
+                    ClipboardItemMetadataRail(
+                        groupNames: groupNames,
+                        tags: item.tags,
+                        fontSize: 8.5,
+                        maxTitleWidth: 76
+                    )
+                    .frame(height: 16)
                 }
             }
 
@@ -1151,6 +1159,14 @@ struct MenuBarRow: View {
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+
+            ClipboardItemMetadataRail(
+                groupNames: groupNames,
+                tags: item.tags,
+                fontSize: 8.5,
+                maxTitleWidth: 58
+            )
+            .frame(height: 16)
 
             HStack(spacing: 3) {
                 Text(item.sourceApp)

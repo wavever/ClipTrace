@@ -53,6 +53,14 @@ struct QuickPasteView: View {
         [.all] + sortedGroups.map { .group($0.id) }
     }
 
+    private func groupNames(for item: ClipboardItem) -> [String] {
+        let namesByID = Dictionary(
+            sortedGroups.map { ($0.id, $0.displayName) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        return item.groupIDs.compactMap { namesByID[$0] }
+    }
+
     private var selectedItems: [ClipboardItem] {
         selectedIDs.compactMap { id in items.first(where: { $0.id == id }) }
     }
@@ -550,6 +558,14 @@ struct QuickPasteView: View {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
 
+                ClipboardItemMetadataRail(
+                    groupNames: groupNames(for: item),
+                    tags: item.tags,
+                    fontSize: 8.5,
+                    maxTitleWidth: 58
+                )
+                .frame(height: 16)
+
                 HStack(spacing: 4) {
                     Text(item.sourceApp.isEmpty ? L("common.unknownSource") : item.sourceApp)
                         .lineLimit(1)
@@ -562,7 +578,7 @@ struct QuickPasteView: View {
                 .foregroundStyle(.tertiary)
             }
             .padding(6)
-            .frame(maxWidth: .infinity, minHeight: 128, maxHeight: 128, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: 150, maxHeight: 150, alignment: .topLeading)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(isSelected

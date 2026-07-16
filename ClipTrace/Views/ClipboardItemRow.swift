@@ -384,20 +384,14 @@ struct ClipboardItemGridCard: View, Equatable {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 7) {
             previewSurface
+
+            ClipboardItemMetadataRail(groupNames: groupNames, tags: item.tags)
+                .frame(height: 18)
 
             ZStack(alignment: .leading) {
                 HStack(spacing: 5) {
-                    if let firstGroup = groupNames.first {
-                        Image(systemName: "folder.fill")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(Color.appAccent)
-                        Text(firstGroup)
-                            .foregroundStyle(Color.appAccent)
-                            .lineLimit(1)
-                        rowDot
-                    }
                     Text(item.sourceApp)
                         .lineLimit(1)
                     Spacer(minLength: 4)
@@ -421,7 +415,7 @@ struct ClipboardItemGridCard: View, Equatable {
             .animation(.easeOut(duration: 0.12), value: isHovered)
         }
         .padding(10)
-        .frame(maxWidth: .infinity, minHeight: 242, maxHeight: 242, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 264, maxHeight: 264, alignment: .topLeading)
         .background {
             if staticSelected {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -625,13 +619,6 @@ struct ClipboardItemGridCard: View, Equatable {
         item.gridPreviewContent
     }
 
-    private var rowDot: some View {
-        Circle()
-            .fill(.tertiary)
-            .frame(width: 2.5, height: 2.5)
-            .opacity(0.7)
-    }
-
     private var imageTitleOverlay: some View {
         HStack(spacing: 5) {
             Image(systemName: "photo")
@@ -660,6 +647,105 @@ struct ClipboardItemGridCard: View, Equatable {
             FileManager.default.fileExists(atPath: path)
         }.value
         if fileExistsCache != exists { fileExistsCache = exists }
+    }
+}
+
+/// Compact, shared metadata rail for grid cards. `ViewThatFits` tries tag
+/// counts from most to least, so wide cards expose the real labels while the
+/// narrow two-column panels only fall back to `+N` for genuine overflow.
+struct ClipboardItemMetadataRail: View {
+    let groupNames: [String]
+    let tags: [String]
+    var fontSize: CGFloat = 9
+    var maxTitleWidth: CGFloat = 92
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            ForEach(tagCandidateCounts, id: \.self) { visibleTagCount in
+                metadataRow(visibleTagCount: visibleTagCount)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .clipped()
+    }
+
+    private var tagCandidateCounts: [Int] {
+        guard !tags.isEmpty else { return [0] }
+
+        // A grid rail cannot physically hold more than roughly eight compact
+        // chips. Still try the complete set first so short labels can use an
+        // unusually wide card without being collapsed prematurely.
+        let fallbackStart = min(tags.count - 1, 8)
+        return [tags.count] + Array(stride(from: fallbackStart, through: 0, by: -1))
+    }
+
+    private func metadataRow(visibleTagCount: Int) -> some View {
+        HStack(spacing: 5) {
+            if let group = groupNames.first {
+                metadataChip(
+                    title: group,
+                    icon: "folder.fill",
+                    trailingCount: groupNames.count - 1,
+                    help: groupNames.joined(separator: ", ")
+                )
+            }
+
+            ForEach(Array(tags.prefix(visibleTagCount)), id: \.self) { tag in
+                metadataChip(
+                    title: tag,
+                    icon: "tag.fill",
+                    help: tags.joined(separator: ", ")
+                )
+            }
+
+            let hiddenTagCount = tags.count - visibleTagCount
+            if hiddenTagCount > 0 {
+                metadataChip(
+                    title: "+\(hiddenTagCount)",
+                    icon: "tag.fill",
+                    help: tags.dropFirst(visibleTagCount).joined(separator: ", ")
+                )
+            }
+        }
+        // Candidate rows must report their natural width; otherwise the HStack
+        // compresses in place and `ViewThatFits` never tries the next count.
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private func metadataChip(
+        title: String,
+        icon: String,
+        trailingCount: Int = 0,
+        help: String
+    ) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: icon)
+                .font(.system(size: max(8, fontSize - 1), weight: .semibold))
+            Text(title)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: maxTitleWidth, alignment: .leading)
+            if trailingCount > 0 {
+                Text("+\(trailingCount)")
+                    .monospacedDigit()
+                    .foregroundStyle(Color.appAccent.opacity(0.72))
+                    .fixedSize()
+            }
+        }
+        .font(.system(size: fontSize, weight: .medium))
+        .foregroundStyle(Color.appAccent)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2.5)
+        .background(
+            Capsule(style: .continuous)
+                .fill(Color.appAccent.opacity(0.11))
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(Color.appAccent.opacity(0.24), lineWidth: 0.5)
+        )
+        .help(help)
+        .layoutPriority(1)
     }
 }
 
