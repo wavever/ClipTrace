@@ -31,6 +31,14 @@ private struct MainGridWidthPreferenceKey: PreferenceKey {
     }
 }
 
+/// A separate request value makes the protected preview sheet's lifetime
+/// explicit. Dismissing the sheet drops its SwiftUI tree, including the
+/// transient "reveal original" state, without mutating the stored clip.
+private struct ProtectedPreviewRequest: Identifiable {
+    let item: ClipboardItem
+    var id: UUID { item.id }
+}
+
 /// Thin wrapper that owns the pagination state and hands the current page
 /// size to `MainWindowContent`. Splitting the view here lets the inner view
 /// rebuild its `@Query` with a fresh `fetchLimit` whenever `pageSize` bumps,
@@ -159,6 +167,7 @@ struct MainWindowContent: View {
     @State private var isMergingSelection = false
     @State private var showGroupManager = false
     @State private var groupEditorRequest: GroupEditorRequest?
+    @State private var protectedPreviewRequest: ProtectedPreviewRequest?
     @StateObject private var itemContextMenu = ClipboardItemContextMenuCoordinator()
 
     /// Header-stat caches. With pagination, `allItems` only contains the
@@ -372,6 +381,15 @@ struct MainWindowContent: View {
                 onCancel: { groupEditorRequest = nil }
             )
         }
+        .sheet(item: $protectedPreviewRequest) { request in
+            PreviewPopover(
+                item: request.item,
+                allowsOriginalReveal: true,
+                onClose: { protectedPreviewRequest = nil }
+            )
+            .frame(minWidth: 620, idealWidth: 720, minHeight: 420, idealHeight: 520)
+            .background(Color.appPaper)
+        }
         .sheet(isPresented: $vm.showSnippetEditor) {
             SnippetEditorView(
                 onSave: { content, type, pinned in
@@ -555,6 +573,9 @@ struct MainWindowContent: View {
                         contentLayout == .grid ? gridColumnCount : 1
                     },
                     navigationSectionCounts: { navigableSectionCounts },
+                    previewAction: { item in
+                        showQuickLook(for: item)
+                    },
                     copyAction: { item in
                         vm.copyToClipboard(item)
                         ToastCenter.shared.show(L("common.copied"))
@@ -1433,9 +1454,16 @@ struct MainWindowContent: View {
         .buttonStyle(.plain)
     }
 
-    /// Open the native QuickLook panel for `item`, using the current filtered
-    /// list as the navigation stack so arrow keys move through neighbors.
+    /// Protected text stays in memory so the user can deliberately reveal it
+    /// without placing raw secrets in Quick Look's temporary files. Everything
+    /// else keeps native Quick Look and its rich media/navigation behavior.
     private func showQuickLook(for item: ClipboardItem) {
+        let protection = item.contentProtectionResult
+        if protection.isProtected,
+           item.itemType == .text || item.itemType == .url || item.itemType == .rtf {
+            protectedPreviewRequest = ProtectedPreviewRequest(item: item)
+            return
+        }
         let items = navigableItems
         let index = items.firstIndex(where: { $0.id == item.id }) ?? 0
         vm.focusedItemID = item.id

@@ -848,6 +848,11 @@ extension L10n {
         "preview.detection.json": "JSON",
         "preview.utcFormat": "UTC: %@",
         "preview.localFormat": "本地: %@",
+        "preview.protected": "敏感内容",
+        "preview.revealOriginal": "显示原文",
+        "preview.hideOriginal": "隐藏原文",
+        "preview.revealOriginal.tooltip": "仅在本次预览中临时显示未脱敏的原内容",
+        "preview.hideOriginal.tooltip": "恢复脱敏展示",
 
         // snippet editor
         "snippet.title": "新建片段",
@@ -1718,6 +1723,11 @@ extension L10n {
         "preview.detection.json": "JSON",
         "preview.utcFormat": "UTC: %@",
         "preview.localFormat": "Local: %@",
+        "preview.protected": "Sensitive content",
+        "preview.revealOriginal": "Show Original",
+        "preview.hideOriginal": "Hide Original",
+        "preview.revealOriginal.tooltip": "Temporarily show the unredacted content in this preview only",
+        "preview.hideOriginal.tooltip": "Return to the redacted preview",
 
         // snippet editor
         "snippet.title": "New Snippet",

@@ -4,10 +4,13 @@ import AppKit
 
 struct PreviewPopover: View {
     let item: ClipboardItem
+    var allowsOriginalReveal = false
+    var onClose: (() -> Void)? = nil
     @AppStorage("videoPreviewMode") private var videoPreviewModeRaw = VideoPreviewMode.video.rawValue
     @AppStorage("videoPreviewMuted") private var videoPreviewMuted = true
     @State private var previewImage: NSImage?
     @State private var didAttemptImageLoad = false
+    @State private var revealsOriginal = false
 
     private var videoPreviewMode: VideoPreviewMode {
         VideoPreviewMode(rawValue: videoPreviewModeRaw) ?? .video
@@ -24,6 +27,39 @@ struct PreviewPopover: View {
                 Text(item.formattedDate)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if canRevealOriginal {
+                    Label(L("preview.protected"), systemImage: "lock.shield.fill")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(.orange)
+                        .lineLimit(1)
+                    Button {
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            revealsOriginal.toggle()
+                        }
+                    } label: {
+                        Label(
+                            revealsOriginal
+                                ? L("preview.hideOriginal")
+                                : L("preview.revealOriginal"),
+                            systemImage: revealsOriginal ? "eye.slash" : "eye"
+                        )
+                    }
+                    .buttonStyle(PaperActionButtonStyle(role: .plain))
+                    .help(
+                        revealsOriginal
+                            ? L("preview.hideOriginal.tooltip")
+                            : L("preview.revealOriginal.tooltip")
+                    )
+                }
+                if let onClose {
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 12, weight: .bold))
+                    }
+                    .buttonStyle(PaperIconButtonStyle(size: 28))
+                    .help(L("common.close"))
+                    .keyboardShortcut(.cancelAction)
+                }
             }
             .padding(.horizontal, 12)
             .padding(.top, 10)
@@ -36,13 +72,38 @@ struct PreviewPopover: View {
           .task(id: item.id) {
               await loadPreviewImageIfNeeded()
           }
+          .onChange(of: item.id) { _, _ in
+              revealsOriginal = false
+          }
+          // Revealed text is session-only. Switching away from the app hides
+          // it before another app or screen-sharing surface becomes active.
+          .onReceive(NotificationCenter.default.publisher(
+              for: NSApplication.didResignActiveNotification
+          )) { _ in
+              revealsOriginal = false
+          }
     }
 
-    /// Display/egress-safe rendition of the clip. Sensitive spans are masked
-    /// before the popover renders or runs its base64/JSON decode helpers, so the
-    /// raw value never appears here even though it stays intact in storage.
+    private var protectionResult: ContentProtectionResult {
+        item.contentProtectionResult
+    }
+
+    /// Original-content disclosure is deliberately limited to the interactive
+    /// text preview. Passive dwell previews remain non-interactive and masked,
+    /// while file/image/video previews keep their native rendering behavior.
+    private var canRevealOriginal: Bool {
+        guard allowsOriginalReveal, protectionResult.isProtected else { return false }
+        return item.itemType == .text || item.itemType == .url || item.itemType == .rtf
+    }
+
+    /// Display/egress-safe by default; the raw value is read directly from the
+    /// model only during an explicit, in-memory reveal session.
     private var protectedContent: String {
-        item.redactedForDisplay(item.content)
+        protectionResult.redactedText
+    }
+
+    private var displayedContent: String {
+        canRevealOriginal && revealsOriginal ? item.content : protectedContent
     }
 
     @ViewBuilder
@@ -51,24 +112,26 @@ struct PreviewPopover: View {
         case .text, .url:
             VStack(spacing: 8) {
                 ScrollView {
-                    Text(protectedContent)
+                    Text(displayedContent)
                         .font(.system(size: 12, design: .monospaced))
                         .textSelection(.enabled)
+                        .privacySensitive(revealsOriginal)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                         .padding(12)
                 }
-                decodeCard(for: protectedContent)
+                decodeCard(for: displayedContent)
             }
         case .rtf:
             VStack(spacing: 8) {
                 ScrollView {
-                    Text(protectedContent)
+                    Text(displayedContent)
                         .font(.system(size: 12))
                         .textSelection(.enabled)
+                        .privacySensitive(revealsOriginal)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                         .padding(12)
                 }
-                decodeCard(for: protectedContent)
+                decodeCard(for: displayedContent)
             }
         case .image:
             if let img = previewImage {
@@ -140,10 +203,14 @@ struct PreviewPopover: View {
     private func decodeCard(for raw: String) -> some View {
         let epoch = PreviewPopover.epochInterpretation(of: raw)
         // Decoding can surface sensitive text that the encoded form hid from the
-        // detector (e.g. a Base64 blob of `appkey=…`), so the derived plaintext
-        // is run back through redaction before it is rendered.
-        let base64 = PreviewPopover.base64Decoded(of: raw).map { item.redactedForDisplay($0) }
-        let json = PreviewPopover.prettyJSON(of: raw).map { item.redactedForDisplay($0) }
+        // detector (e.g. a Base64 blob of `appkey=…`). Keep derived plaintext
+        // masked unless this is the same explicit in-memory reveal session.
+        let base64 = PreviewPopover.base64Decoded(of: raw).map {
+            revealsOriginal ? $0 : item.redactedForDisplay($0)
+        }
+        let json = PreviewPopover.prettyJSON(of: raw).map {
+            revealsOriginal ? $0 : item.redactedForDisplay($0)
+        }
 
         if epoch != nil || base64 != nil || json != nil {
             VStack(spacing: 8) {

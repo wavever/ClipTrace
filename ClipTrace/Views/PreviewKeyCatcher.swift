@@ -21,6 +21,7 @@ struct PreviewKeyCatcher: NSViewRepresentable {
     /// Visible section lengths (pinned and normal). Grid sections each restart
     /// at column zero, so navigation must not flatten across their headers.
     var navigationSectionCounts: () -> [Int] = { [] }
+    var previewAction: ((ClipboardItem) -> Void)?
     var copyAction: ((ClipboardItem) -> Void)?
     var deleteAction: ((ClipboardItem) -> Void)? = nil
 
@@ -31,6 +32,7 @@ struct PreviewKeyCatcher: NSViewRepresentable {
         view.setFocused = setFocused
         view.navigationColumnsProvider = navigationColumns
         view.navigationSectionCountsProvider = navigationSectionCounts
+        view.previewAction = previewAction
         view.copyAction = copyAction
         view.deleteAction = deleteAction
         return view
@@ -42,6 +44,7 @@ struct PreviewKeyCatcher: NSViewRepresentable {
         nsView.setFocused = setFocused
         nsView.navigationColumnsProvider = navigationColumns
         nsView.navigationSectionCountsProvider = navigationSectionCounts
+        nsView.previewAction = previewAction
         nsView.copyAction = copyAction
         nsView.deleteAction = deleteAction
     }
@@ -52,6 +55,7 @@ struct PreviewKeyCatcher: NSViewRepresentable {
         var setFocused: ((UUID?) -> Void)?
         var navigationColumnsProvider: (() -> Int)?
         var navigationSectionCountsProvider: (() -> [Int])?
+        var previewAction: ((ClipboardItem) -> Void)?
         var copyAction: ((ClipboardItem) -> Void)?
         var deleteAction: ((ClipboardItem) -> Void)?
 
@@ -102,7 +106,11 @@ struct PreviewKeyCatcher: NSViewRepresentable {
                 if event.isARepeat { return }
                 let targetIndex = currentIndex >= 0 ? currentIndex : 0
                 setFocused(items[targetIndex].id)
-                QuickLookCoordinator.shared.preview(items: items, startingAt: targetIndex)
+                if let previewAction {
+                    previewAction(items[targetIndex])
+                } else {
+                    QuickLookCoordinator.shared.preview(items: items, startingAt: targetIndex)
+                }
                 return
             case 123, 124, 125, 126: // ← / → / ↓ / ↑
                 let next = directionalIndex(
