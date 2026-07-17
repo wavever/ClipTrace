@@ -722,7 +722,7 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
             let name = appShortcut.name
             guard let shortcut = KeyboardShortcuts.getShortcut(for: name),
                   keyStore.captures(shortcut),
-                  KeyboardShortcuts.isEnabled(for: name) else { continue }
+                  AppShortcutActivation.isEnabled(name) else { continue }
             KeyboardShortcuts.disable(name)
             pausedGlobalShortcuts.append(name)
         }

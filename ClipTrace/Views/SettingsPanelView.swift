@@ -1364,7 +1364,7 @@ private struct GlobalShortcutRecorder: View {
             // through `finishRecording(nil)` and re-enables the old binding.
             isRecording = false
         } else {
-            KeyboardShortcuts.disable(name)
+            AppShortcutActivation.suspend(name)
             isRecording = true
         }
     }
@@ -1374,15 +1374,15 @@ private struct GlobalShortcutRecorder: View {
     private func finishRecording(_ event: NSEvent?) {
         isRecording = false
         if let event, event.keyCode != 53, let recorded = KeyboardShortcuts.Shortcut(event: event) {
-            KeyboardShortcuts.setShortcut(recorded, for: name)   // registers the new global hotkey
+            AppShortcutActivation.setShortcut(recorded, for: name)   // registers the new global hotkey
             current = recorded
         } else {
-            KeyboardShortcuts.enable(name)   // Esc / click-away / invalid → restore the paused binding
+            AppShortcutActivation.restore(name)   // Esc / click-away / invalid → restore the paused binding
         }
     }
 
     private func clear() {
-        KeyboardShortcuts.setShortcut(nil, for: name)
+        AppShortcutActivation.setShortcut(nil, for: name)
         current = nil
     }
 }
