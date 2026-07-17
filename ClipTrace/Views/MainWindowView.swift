@@ -31,10 +31,10 @@ private struct MainGridWidthPreferenceKey: PreferenceKey {
     }
 }
 
-/// A separate request value makes the protected preview sheet's lifetime
-/// explicit. Dismissing the sheet drops its SwiftUI tree, including the
-/// transient "reveal original" state, without mutating the stored clip.
-private struct ProtectedPreviewRequest: Identifiable {
+/// A separate request value makes the app-rendered preview sheet's lifetime
+/// explicit. Dismissing the sheet drops transient sensitive-text disclosure
+/// and AVPlayer state without mutating the stored clip.
+private struct InAppPreviewRequest: Identifiable {
     let item: ClipboardItem
     var id: UUID { item.id }
 }
@@ -161,13 +161,15 @@ struct MainWindowContent: View {
     @AppStorage("mainFeatureTourSeen") private var mainFeatureTourSeen = false
     @AppStorage("pinnedCollapsed") private var pinnedCollapsed = false
     @AppStorage("mainContentLayout") private var contentLayout: MainContentLayout = .list
+    @AppStorage("videoPreviewMode") private var videoPreviewModeRaw = VideoPreviewMode.video.rawValue
+    @AppStorage("videoPreviewMuted") private var videoPreviewMuted = true
     @AppStorage(SyncPreferenceKeys.provider) private var syncProviderRaw = SyncProvider.off.rawValue
     @AppStorage(SyncPreferenceKeys.automatic) private var automaticSync = true
     @State private var gridColumnCount = 1
     @State private var isMergingSelection = false
     @State private var showGroupManager = false
     @State private var groupEditorRequest: GroupEditorRequest?
-    @State private var protectedPreviewRequest: ProtectedPreviewRequest?
+    @State private var inAppPreviewRequest: InAppPreviewRequest?
     @StateObject private var itemContextMenu = ClipboardItemContextMenuCoordinator()
 
     /// Header-stat caches. With pagination, `allItems` only contains the
@@ -381,11 +383,11 @@ struct MainWindowContent: View {
                 onCancel: { groupEditorRequest = nil }
             )
         }
-        .sheet(item: $protectedPreviewRequest) { request in
+        .sheet(item: $inAppPreviewRequest) { request in
             PreviewPopover(
                 item: request.item,
                 allowsOriginalReveal: true,
-                onClose: { protectedPreviewRequest = nil }
+                onClose: { inAppPreviewRequest = nil }
             )
             .frame(minWidth: 620, idealWidth: 720, minHeight: 420, idealHeight: 520)
             .background(Color.appPaper)
@@ -574,7 +576,7 @@ struct MainWindowContent: View {
                     },
                     navigationSectionCounts: { navigableSectionCounts },
                     previewAction: { item in
-                        showQuickLook(for: item)
+                        showPreview(for: item)
                     },
                     copyAction: { item in
                         vm.copyToClipboard(item)
@@ -1292,7 +1294,7 @@ struct MainWindowContent: View {
                     onOpenURL: {
                         openInBrowser(item.content)
                     },
-                    onPreview: { showQuickLook(for: item) },
+                    onPreview: { showPreview(for: item) },
                     onAddTag: { tag in
                         vm.addTag(tag, to: item)
                         try? modelContext.save()
@@ -1336,7 +1338,7 @@ struct MainWindowContent: View {
                         ExportService.shared.exportItem(item)
                     },
                     onPreview: {
-                        showQuickLook(for: item)
+                        showPreview(for: item)
                     },
                     onAddTag: { tag in
                         vm.addTag(tag, to: item)
@@ -1454,14 +1456,20 @@ struct MainWindowContent: View {
         .buttonStyle(.plain)
     }
 
-    /// Protected text stays in memory so the user can deliberately reveal it
-    /// without placing raw secrets in Quick Look's temporary files. Everything
-    /// else keeps native Quick Look and its rich media/navigation behavior.
-    private func showQuickLook(for item: ClipboardItem) {
+    /// Quick Look does not expose first-frame or audio controls. Route previews
+    /// whose settings require either through our AVKit surface; unmuted video
+    /// playback and unaffected item types retain native Quick Look behavior.
+    private func showPreview(for item: ClipboardItem) {
         let protection = item.contentProtectionResult
-        if protection.isProtected,
-           item.itemType == .text || item.itemType == .url || item.itemType == .rtf {
-            protectedPreviewRequest = ProtectedPreviewRequest(item: item)
+        let isProtectedText = protection.isProtected && (
+            item.itemType == .text || item.itemType == .url || item.itemType == .rtf
+        )
+        let videoMode = VideoPreviewMode(rawValue: videoPreviewModeRaw) ?? .video
+        let needsControlledVideo = item.itemType == .video && (
+            videoMode == .firstFrame || videoPreviewMuted
+        )
+        if isProtectedText || needsControlledVideo {
+            inAppPreviewRequest = InAppPreviewRequest(item: item)
             return
         }
         let items = navigableItems
