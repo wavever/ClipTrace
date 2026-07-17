@@ -381,18 +381,28 @@ struct QuickPasteView: View {
         let isSelected = order != nil
         let isHover = hoverID == item.id
         let isFocused = focusedID == item.id
+        let detectedColor = item.itemType == .text
+            ? ColorValueParser.color(from: item.content)
+            : nil
 
         return HStack(spacing: 6) {
             HStack(spacing: 10) {
-                ZStack {
-                    Circle()
-                        .fill(isSelected ? Color.appAccent : Color.secondary.opacity(0.18))
-                        .frame(width: 22, height: 22)
-                    if let order {
+                if let order {
+                    ZStack {
+                        Circle()
+                            .fill(Color.appAccent)
+                            .frame(width: 22, height: 22)
                         Text("\(order)")
                             .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(.white)
-                    } else {
+                    }
+                } else if let detectedColor {
+                    ColorSwatchThumbnail(color: detectedColor, size: 22)
+                } else {
+                    ZStack {
+                        Circle()
+                            .fill(Color.secondary.opacity(0.18))
+                            .frame(width: 22, height: 22)
                         Image(systemName: item.itemType.icon)
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
@@ -488,6 +498,9 @@ struct QuickPasteView: View {
         let isFocused = focusedID == item.id
         let previewContent = item.gridPreviewContent
         let showsCopyButton = isHover || copiedIDs.contains(item.id)
+        let detectedColor = item.itemType == .text
+            ? ColorValueParser.color(from: item.content)
+            : nil
 
         return ZStack(alignment: .topTrailing) {
             VStack(alignment: .leading, spacing: 5) {
@@ -495,7 +508,15 @@ struct QuickPasteView: View {
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
                         .fill(Color.appChipFill)
 
-                    if showsGridThumbnail(item) {
+                    if let detectedColor {
+                        ColorValueGridPreview(
+                            color: detectedColor,
+                            text: previewContent,
+                            fontSize: 10.5,
+                            checkerSquareSize: 7,
+                            contentPadding: 7
+                        )
+                    } else if showsGridThumbnail(item) {
                         GeometryReader { proxy in
                             ThumbnailView(
                                 item: item,
@@ -539,22 +560,41 @@ struct QuickPasteView: View {
                     }
                 }
                 .frame(height: 99)
-                .overlay(alignment: .topLeading) {
-                    ZStack {
-                        Circle()
-                            .fill(isSelected ? Color.appAccent : Color.appPaper.opacity(0.92))
-                            .frame(width: 22, height: 22)
-                        if let order {
-                            Text("\(order)")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(.white)
-                        } else {
-                            Image(systemName: item.itemType.icon)
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(.secondary)
+                .overlay(alignment: .top) {
+                    HStack(spacing: 4) {
+                        ZStack {
+                            Circle()
+                                .fill(isSelected ? Color.appAccent : Color.appPaper.opacity(0.92))
+                                .frame(width: 22, height: 22)
+                            if let order {
+                                Text("\(order)")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(.white)
+                            } else {
+                                Image(systemName: item.itemType.icon)
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                            }
                         }
+
+                        if detectedColor != nil {
+                            Text(item.descriptiveTag)
+                                .font(.system(size: 8.5, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 4)
+                                .background(Capsule().fill(Color.appPaper.opacity(0.92)))
+                            ColorValueBadge(fontSize: 8.5)
+                        }
+
+                        Spacer(minLength: 0)
                     }
                     .padding(5)
+                    .padding(.trailing, gridTrailingControlWidth(
+                        isPinned: item.isPinned,
+                        showsCopyButton: showsCopyButton
+                    ))
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
 
@@ -633,6 +673,14 @@ struct QuickPasteView: View {
         switch item.itemType {
         case .image, .video, .file: return true
         case .text, .url, .rtf: return false
+        }
+    }
+
+    private func gridTrailingControlWidth(isPinned: Bool, showsCopyButton: Bool) -> CGFloat {
+        switch (isPinned, showsCopyButton) {
+        case (true, true): return 54
+        case (true, false), (false, true): return 27
+        case (false, false): return 0
         }
     }
 

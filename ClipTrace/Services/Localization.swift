@@ -179,6 +179,7 @@ extension L10n {
         "tag.rtfFile": "富文本文件",
         "tag.plainText": "文本文件",
         "tag.bundle": "软件包",
+        "tag.color": "色值",
 
         // remote / source app
         "remote.universalClipboard": "通用剪贴板",
@@ -1054,6 +1055,7 @@ extension L10n {
         "tag.rtfFile": "Rich Text File",
         "tag.plainText": "Text File",
         "tag.bundle": "Bundle",
+        "tag.color": "Color Value",
 
         // remote / source
         "remote.universalClipboard": "Universal Clipboard",

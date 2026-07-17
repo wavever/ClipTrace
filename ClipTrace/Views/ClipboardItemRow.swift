@@ -473,12 +473,13 @@ struct ClipboardItemGridCard: View, Equatable {
                 .fill(Color.appChipFill)
 
             if let detectedColor = detectedColorCache {
-                ZStack {
-                    Color.white
-                    Checkerboard(squareSize: 9)
-                        .fill(Color.secondary.opacity(0.25))
-                    detectedColor
-                }
+                ColorValueGridPreview(
+                    color: detectedColor,
+                    text: previewText,
+                    fontSize: 11.5,
+                    checkerSquareSize: 9,
+                    contentPadding: 10
+                )
             } else if showsLargeThumbnail {
                 GeometryReader { proxy in
                     ThumbnailView(
@@ -549,6 +550,10 @@ struct ClipboardItemGridCard: View, Equatable {
                     Capsule(style: .continuous)
                         .fill(Color.appPaper.opacity(0.92))
                 )
+
+            if detectedColorCache != nil {
+                ColorValueBadge()
+            }
 
             Spacer(minLength: 4)
 
@@ -1151,7 +1156,7 @@ enum ColorValueParser {
 
 /// Swatch shown in place of the text thumbnail for color-literal clips. A
 /// checkerboard sits behind the fill so semi-transparent colors read correctly.
-private struct ColorSwatchThumbnail: View {
+struct ColorSwatchThumbnail: View {
     let color: Color
     let size: CGFloat
     private let corner: CGFloat = 9
@@ -1170,6 +1175,63 @@ private struct ColorSwatchThumbnail: View {
                 .strokeBorder(.separator.opacity(0.5), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
+    }
+}
+
+/// Shared full-card rendition for color literals. All grid surfaces keep the
+/// raw text visible over the swatch and use a checkerboard for alpha values.
+struct ColorValueGridPreview: View {
+    let color: Color
+    let text: String
+    var fontSize: CGFloat = 10.5
+    var checkerSquareSize: CGFloat = 7
+    var contentPadding: CGFloat = 7
+    var labelForeground: Color = .appMetal
+    var labelBackground: Color = .appPaper.opacity(0.94)
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            Color.white
+            Checkerboard(squareSize: checkerSquareSize)
+                .fill(Color.secondary.opacity(0.25))
+            color
+
+            Text(text)
+                .font(.system(size: fontSize, weight: .semibold, design: .monospaced))
+                .foregroundStyle(labelForeground)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .background(Capsule(style: .continuous).fill(labelBackground))
+                .overlay(
+                    Capsule(style: .continuous)
+                        .strokeBorder(Color.appCardBorder.opacity(0.8), lineWidth: 0.5)
+                )
+                .shadow(color: Color.appCardShadow.opacity(0.35), radius: 3, y: 1)
+                .padding(contentPadding)
+        }
+    }
+}
+
+/// Semantic badge paired with the ordinary text-type badge on color cards.
+struct ColorValueBadge: View {
+    var fontSize: CGFloat = 10
+    var foreground: Color = .secondary
+    var background: Color = .appPaper.opacity(0.92)
+
+    var body: some View {
+        Text(L("tag.color"))
+            .font(.system(size: fontSize, weight: .semibold))
+            .foregroundStyle(foreground)
+            .lineLimit(1)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(Capsule(style: .continuous).fill(background))
+            .overlay(
+                Capsule(style: .continuous)
+                    .strokeBorder(Color.appCardBorder.opacity(0.8), lineWidth: 0.5)
+            )
     }
 }
 

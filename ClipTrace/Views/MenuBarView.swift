@@ -1037,7 +1037,11 @@ struct MenuBarRow: View {
 
     private var listContent: some View {
         HStack(spacing: 9) {
-            ThumbnailView(item: item, size: 26, cornerRadius: 5, placeholderTint: surfaceStyle.thumbnailTint)
+            if let detectedColor {
+                ColorSwatchThumbnail(color: detectedColor, size: 26)
+            } else {
+                ThumbnailView(item: item, size: 26, cornerRadius: 5, placeholderTint: surfaceStyle.thumbnailTint)
+            }
 
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
@@ -1093,7 +1097,17 @@ struct MenuBarRow: View {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(surfaceStyle.controlFill)
 
-                if showsGridThumbnail {
+                if let detectedColor {
+                    ColorValueGridPreview(
+                        color: detectedColor,
+                        text: gridPreviewText,
+                        fontSize: 10,
+                        checkerSquareSize: 7,
+                        contentPadding: 7,
+                        labelForeground: surfaceStyle.primaryText,
+                        labelBackground: surfaceStyle.background.opacity(0.94)
+                    )
+                } else if showsGridThumbnail {
                     GeometryReader { proxy in
                         ThumbnailView(
                             item: item,
@@ -1142,15 +1156,26 @@ struct MenuBarRow: View {
             .frame(height: 96)
             .overlay(alignment: .topLeading) {
                 HStack(spacing: 5) {
-                    Image(systemName: item.itemType.icon)
-                    if item.isPinned { Image(systemName: "pin.fill").foregroundStyle(.orange) }
-                    if item.isFavorite { Image(systemName: "star.fill").foregroundStyle(.yellow) }
+                    HStack(spacing: 5) {
+                        Image(systemName: item.itemType.icon)
+                        if detectedColor != nil { Text(item.descriptiveTag) }
+                        if item.isPinned { Image(systemName: "pin.fill").foregroundStyle(.orange) }
+                        if item.isFavorite { Image(systemName: "star.fill").foregroundStyle(.yellow) }
+                    }
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(surfaceStyle.secondaryText)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(surfaceStyle.background.opacity(0.92)))
+
+                    if detectedColor != nil {
+                        ColorValueBadge(
+                            fontSize: 9,
+                            foreground: surfaceStyle.secondaryText,
+                            background: surfaceStyle.background.opacity(0.92)
+                        )
+                    }
                 }
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(surfaceStyle.secondaryText)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 4)
-                .background(Capsule().fill(surfaceStyle.background.opacity(0.92)))
                 .padding(5)
             }
             .overlay(alignment: .topTrailing) {
@@ -1205,6 +1230,11 @@ struct MenuBarRow: View {
 
     private var gridPreviewText: String {
         item.gridPreviewContent
+    }
+
+    private var detectedColor: Color? {
+        guard item.itemType == .text else { return nil }
+        return ColorValueParser.color(from: item.content)
     }
 
     private var showsGridThumbnail: Bool {
