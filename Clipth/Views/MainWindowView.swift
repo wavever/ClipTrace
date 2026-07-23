@@ -198,13 +198,15 @@ struct MainWindowContent: View {
     /// Accessibility reminder is the front of the first-run queue; it also
     /// disappears on its own once the permission shows up as granted.
     private var showAXOnboarding: Bool {
-        !axOnboardingDismissed && !axTrusted
+        nav.featureTourReplayRequest == nil && !axOnboardingDismissed && !axTrusted
     }
 
     /// The feature tour waits until both permission cards are out of the way
     /// and only runs on the list screen, where its spotlight targets live.
     private var isTourActive: Bool {
-        !mainFeatureTourSeen && fdaOnboardingDismissed && !showAXOnboarding && nav.screen == .list
+        guard nav.screen == .list else { return false }
+        if nav.featureTourReplayRequest != nil { return true }
+        return !mainFeatureTourSeen && fdaOnboardingDismissed && !showAXOnboarding
     }
 
     private var hasSelectedSyncProvider: Bool {
@@ -255,7 +257,7 @@ struct MainWindowContent: View {
                 .zIndex(3)
             }
 
-            if !fdaOnboardingDismissed && !showAXOnboarding {
+            if nav.featureTourReplayRequest == nil && !fdaOnboardingDismissed && !showAXOnboarding {
                 Color.black.opacity(0.45)
                     .ignoresSafeArea()
                     .onTapGesture {
@@ -334,7 +336,10 @@ struct MainWindowContent: View {
         .overlayPreferenceValue(FeatureTourAnchorKey.self) { anchors in
             if isTourActive {
                 FeatureTourOverlay(anchors: anchors) {
-                    withAnimation(.easeOut(duration: 0.22)) { mainFeatureTourSeen = true }
+                    withAnimation(.easeOut(duration: 0.22)) {
+                        mainFeatureTourSeen = true
+                        nav.featureTourReplayRequest = nil
+                    }
                 }
                 .ignoresSafeArea()
                 .transition(.opacity)

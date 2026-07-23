@@ -69,12 +69,28 @@ enum WidgetPalette {
 
     /// Dynamic accent for the given `AccentPalette.rawValue`, adapting to the
     /// widget's light/dark rendering. Unknown values fall back to sage.
-    static func accent(_ raw: String) -> Color {
-        Color(nsColor: NSColor(name: nil) { appearance in
+    static func accent(_ raw: String, customHex: String? = nil) -> Color {
+        if raw == "custom", let custom = nsColor(fromHex: customHex) {
+            return Color(nsColor: custom)
+        }
+        return Color(nsColor: NSColor(name: nil) { appearance in
             let isDark = appearance.bestMatch(from: [.darkAqua, .vibrantDark]) != nil
             let table = isDark ? dark : light
             return table[raw] ?? table["sage"]!
         })
+    }
+
+    private static func nsColor(fromHex hex: String?) -> NSColor? {
+        guard let hex else { return nil }
+        var raw = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        if raw.hasPrefix("#") {
+            raw.removeFirst()
+        }
+        guard raw.count == 6, let value = Int(raw, radix: 16) else { return nil }
+        let red = CGFloat((value >> 16) & 0xFF) / 255
+        let green = CGFloat((value >> 8) & 0xFF) / 255
+        let blue = CGFloat(value & 0xFF) / 255
+        return NSColor(srgbRed: red, green: green, blue: blue, alpha: 1)
     }
 
     /// Warm paper background matching the app's surface (Theme.swift paper

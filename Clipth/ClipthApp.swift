@@ -98,7 +98,8 @@ struct ClipthApp: App {
     // Holding this `@AppStorage` on the root scene is what makes a palette
     // change trigger a body rebuild — `Color.appAccent` reads from the same
     // key, so descendants pick up the new colour on the next render pass.
-    @AppStorage("accentPalette") private var accentPaletteRaw = AccentPalette.sage.rawValue
+    @AppStorage(AccentThemeStore.paletteKey) private var accentPaletteRaw = AccentPalette.sage.rawValue
+    @AppStorage(AccentThemeStore.customColorKey) private var accentCustomColorHex = AccentThemeStore.defaultCustomColorHex
 
     private var appearanceTheme: AppearanceTheme {
         AppearanceTheme(rawValue: appearanceThemeRaw) ?? .system
@@ -109,6 +110,12 @@ struct ClipthApp: App {
     private var accentPalette: AccentPalette {
         AccentPalette(rawValue: accentPaletteRaw) ?? .sage
     }
+    private var accentColor: Color {
+        if accentPalette == .custom {
+            return Color(nsColor: AccentThemeStore.nsColor(fromHex: accentCustomColorHex) ?? AccentThemeStore.shared.customColor)
+        }
+        return accentPalette.color
+    }
 
     var body: some Scene {
         // `Window` (not `WindowGroup`) so opening from the menu bar reuses the
@@ -118,7 +125,7 @@ struct ClipthApp: App {
                 .environmentObject(clipboardVM)
                 .modelContainer(AppContainer.shared)
                 .environment(\.locale, appLanguage.locale ?? Locale.current)
-                .tint(accentPalette.color)
+                .tint(accentColor)
                 .onAppear {
                     applyActivationPolicy()
                     applyCaptureProtection()
@@ -145,7 +152,7 @@ struct ClipthApp: App {
                 .environmentObject(clipboardVM)
                 .modelContainer(AppContainer.shared)
                 .environment(\.locale, appLanguage.locale ?? Locale.current)
-                .tint(accentPalette.color)
+                .tint(accentColor)
                 .onAppear { applyAppearance() }
         }
         .menuBarExtraStyle(.window)

@@ -83,7 +83,10 @@ final class WidgetBridge {
         let dailyCounts = recentDailyCounts(from: stats)
 
         let language = (L10n.shared.effectiveLanguage == .zh) ? "zh" : "en"
-        let palette = UserDefaults.standard.string(forKey: "accentPalette") ?? "sage"
+        let palette = UserDefaults.standard.string(forKey: AccentThemeStore.paletteKey)
+            ?? AccentPalette.sage.rawValue
+        let customAccentHex = UserDefaults.standard.string(forKey: AccentThemeStore.customColorKey)
+            ?? AccentThemeStore.defaultCustomColorHex
 
         return ClipthWidgetSnapshot(
             total: total,
@@ -98,7 +101,8 @@ final class WidgetBridge {
             statsEnabled: stats.enabled,
             generatedAt: Date(),
             language: language,
-            accentPalette: palette
+            accentPalette: palette,
+            customAccentHex: palette == AccentPalette.custom.rawValue ? customAccentHex : nil
         )
     }
 

@@ -43,13 +43,18 @@ struct ClipthWidgetSnapshot: Codable, Hashable {
     /// `AccentPalette.rawValue` so the widget tints itself with the user's
     /// chosen accent (sage/clay/amber/…) instead of a hard-coded colour.
     var accentPalette: String
+    /// Present when `accentPalette == "custom"`. Stored as `#RRGGBB` so the
+    /// widget extension can reproduce the user's custom tint without reaching
+    /// into the app's UserDefaults.
+    var customAccentHex: String?
 
     /// Neutral zero-state used before the app has ever written a snapshot.
     static let placeholder = ClipthWidgetSnapshot(
         total: 0, byType: [:], favorites: 0, todayNew: 0,
         today: 0, last7: 0, last30: 0, totalCopies: 0,
         dailyCounts: [:], statsEnabled: true,
-        generatedAt: .distantPast, language: "zh", accentPalette: "sage"
+        generatedAt: .distantPast, language: "zh", accentPalette: "sage",
+        customAccentHex: nil
     )
 }
 

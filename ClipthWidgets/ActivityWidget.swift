@@ -19,7 +19,9 @@ struct ActivityWidgetView: View {
     @Environment(\.widgetFamily) private var family
     let snapshot: ClipthWidgetSnapshot
 
-    private var accent: Color { WidgetPalette.accent(snapshot.accentPalette) }
+    private var accent: Color {
+        WidgetPalette.accent(snapshot.accentPalette, customHex: snapshot.customAccentHex)
+    }
     private var lang: String { snapshot.language }
 
     var body: some View {

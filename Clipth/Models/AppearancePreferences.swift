@@ -86,13 +86,17 @@ enum AccentPalette: String, CaseIterable, Identifiable {
     case lavender  // 柔雾紫
     case teal      // 雾青
     case blue      // 经典蓝（比系统蓝更柔）
+    case custom    // User-picked colour, stored separately as an sRGB hex
 
     var id: String { rawValue }
 
     /// Dynamic NSColor so AppKit bridges and SwiftUI views resolve the same
     /// runtime accent in both light and dark appearances.
     var nsColor: NSColor {
-        NSColor(name: nil) { appearance in
+        if self == .custom {
+            return AccentThemeStore.shared.customColor
+        }
+        return NSColor(name: nil) { appearance in
             let isDark = appearance.bestMatch(from: [.darkAqua, .vibrantDark]) != nil
             return isDark ? Self.darkValues[self]! : Self.lightValues[self]!
         }
@@ -110,7 +114,12 @@ enum AccentPalette: String, CaseIterable, Identifiable {
         case .lavender: return L("settings.accent.lavender")
         case .teal:     return L("settings.accent.teal")
         case .blue:     return L("settings.accent.blue")
+        case .custom:   return L("settings.accent.custom")
         }
+    }
+
+    static var presetCases: [AccentPalette] {
+        allCases.filter { $0 != .custom }
     }
 
     private static let lightValues: [AccentPalette: NSColor] = [
@@ -142,18 +151,58 @@ enum AccentPalette: String, CaseIterable, Identifiable {
 @Observable
 final class AccentThemeStore {
     static let shared = AccentThemeStore()
+    static let paletteKey = "accentPalette"
+    static let customColorKey = "accentCustomColor"
+    static let defaultCustomColorHex = "#7AA487"
 
     var palette: AccentPalette {
         didSet {
             guard palette != oldValue else { return }
-            UserDefaults.standard.set(palette.rawValue, forKey: "accentPalette")
+            UserDefaults.standard.set(palette.rawValue, forKey: Self.paletteKey)
+        }
+    }
+
+    var customColor: NSColor {
+        didSet {
+            UserDefaults.standard.set(Self.hexString(from: customColor), forKey: Self.customColorKey)
         }
     }
 
     private init() {
-        let raw = UserDefaults.standard.string(forKey: "accentPalette")
+        let raw = UserDefaults.standard.string(forKey: Self.paletteKey)
             ?? AccentPalette.sage.rawValue
         self.palette = AccentPalette(rawValue: raw) ?? .sage
+        let customHex = UserDefaults.standard.string(forKey: Self.customColorKey)
+        self.customColor = Self.nsColor(fromHex: customHex) ?? Self.nsColor(fromHex: Self.defaultCustomColorHex)!
+    }
+
+    var color: Color {
+        Color(nsColor: nsColor)
+    }
+
+    var nsColor: NSColor {
+        palette == .custom ? customColor : palette.nsColor
+    }
+
+    static func nsColor(fromHex hex: String?) -> NSColor? {
+        guard let hex else { return nil }
+        var raw = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        if raw.hasPrefix("#") {
+            raw.removeFirst()
+        }
+        guard raw.count == 6, let value = Int(raw, radix: 16) else { return nil }
+        let red = CGFloat((value >> 16) & 0xFF) / 255
+        let green = CGFloat((value >> 8) & 0xFF) / 255
+        let blue = CGFloat(value & 0xFF) / 255
+        return NSColor(srgbRed: red, green: green, blue: blue, alpha: 1)
+    }
+
+    static func hexString(from color: NSColor) -> String {
+        let rgb = color.usingColorSpace(.sRGB) ?? color
+        let red = Int(round(max(0, min(1, rgb.redComponent)) * 255))
+        let green = Int(round(max(0, min(1, rgb.greenComponent)) * 255))
+        let blue = Int(round(max(0, min(1, rgb.blueComponent)) * 255))
+        return String(format: "#%02X%02X%02X", red, green, blue)
     }
 }
 
@@ -162,7 +211,7 @@ extension Color {
     /// runtime palette changes take effect — see `AccentThemeStore` for why
     /// we can't just rely on `Color.accentColor`.
     static var appAccent: Color {
-        AccentThemeStore.shared.palette.color
+        AccentThemeStore.shared.color
     }
 }
 

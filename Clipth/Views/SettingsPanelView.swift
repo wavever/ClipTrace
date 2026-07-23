@@ -688,6 +688,18 @@ private struct GeneralSection: View {
                 }
             }
 
+            SettingInlineCard(
+                title: L("settings.guide.title"),
+                subtitle: L("settings.guide.subtitle")
+            ) {
+                Button {
+                    nav.replayFeatureTour()
+                } label: {
+                    Label(L("settings.guide.viewTour"), systemImage: "sparkles")
+                }
+                .buttonStyle(PaperActionButtonStyle(role: .plain))
+            }
+
             SettingsGroup(
                 icon: "rectangle.grid.2x2",
                 title: L("settings.panelLayout.title"),
@@ -2899,32 +2911,97 @@ enum LoginItemService {
 // the `.tint()` modifier applied there.
 private struct AccentSwatches: View {
     @Binding var selection: AccentPalette
+    @Bindable private var accentStore = AccentThemeStore.shared
 
     var body: some View {
         HStack(spacing: 10) {
-            ForEach(AccentPalette.allCases) { palette in
+            ForEach(AccentPalette.presetCases) { palette in
                 Button {
                     withAnimation(.easeOut(duration: 0.15)) { selection = palette }
                 } label: {
-                    ZStack {
-                        Circle()
-                            .fill(palette.color)
-                            .frame(width: 22, height: 22)
-                            .overlay(
-                                Circle().strokeBorder(.black.opacity(0.12), lineWidth: 0.5)
-                            )
-                        if selection == palette {
-                            Circle()
-                                .strokeBorder(palette.color, lineWidth: 2)
-                                .frame(width: 30, height: 30)
-                        }
-                    }
-                    .frame(width: 32, height: 32)
-                    .contentShape(Circle())
+                    AccentSwatchCircle(color: palette.color, isSelected: selection == palette)
                 }
                 .buttonStyle(.plain)
                 .help(palette.displayName)
             }
+
+            Button {
+                openCustomColorPanel()
+            } label: {
+                AccentSwatchCircle(
+                    color: Color(nsColor: accentStore.customColor),
+                    isSelected: selection == .custom,
+                    symbolName: "plus"
+                )
+            }
+            .buttonStyle(.plain)
+            .help(AccentPalette.custom.displayName)
         }
+    }
+
+    private func openCustomColorPanel() {
+        withAnimation(.easeOut(duration: 0.15)) {
+            selection = .custom
+        }
+
+        let panel = NSColorPanel.shared
+        panel.showsAlpha = false
+        panel.isContinuous = true
+        panel.color = accentStore.customColor
+        AccentColorPanelBridge.shared.onColorChange = { color in
+            accentStore.customColor = color.usingColorSpace(.sRGB) ?? color
+            if selection != .custom {
+                selection = .custom
+            }
+        }
+        panel.setTarget(AccentColorPanelBridge.shared)
+        panel.setAction(#selector(AccentColorPanelBridge.colorDidChange(_:)))
+        panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+private final class AccentColorPanelBridge: NSObject {
+    static let shared = AccentColorPanelBridge()
+
+    var onColorChange: ((NSColor) -> Void)?
+
+    @objc func colorDidChange(_ sender: NSColorPanel) {
+        onColorChange?(sender.color)
+    }
+}
+
+private struct AccentSwatchCircle: View {
+    let color: Color
+    let isSelected: Bool
+    var symbolName: String?
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(color)
+                .frame(width: 22, height: 22)
+                .overlay(
+                    Circle().strokeBorder(.black.opacity(0.12), lineWidth: 0.5)
+                )
+            if isSelected {
+                Circle()
+                    .strokeBorder(color, lineWidth: 2)
+                    .frame(width: 30, height: 30)
+            }
+            if let symbolName {
+                Circle()
+                    .fill(Color.appPaper.opacity(0.88))
+                    .frame(width: 14, height: 14)
+                    .overlay(
+                        Circle().strokeBorder(.black.opacity(0.10), lineWidth: 0.5)
+                    )
+                Image(systemName: symbolName)
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(Color.appMetal)
+            }
+        }
+        .frame(width: 32, height: 32)
+        .contentShape(Circle())
     }
 }

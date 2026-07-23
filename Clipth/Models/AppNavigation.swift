@@ -18,6 +18,11 @@ final class AppNavigation: ObservableObject {
     /// update is waiting). `nil` leaves the panel on its default tab.
     @Published var pendingSettingsSection: SettingsPanelView.Section?
 
+    /// One-shot request consumed by `MainWindowView` to replay the main feature
+    /// tour from Settings. Kept separate from the persisted first-run flag so
+    /// replaying the tour does not resurrect permission onboarding cards.
+    @Published var featureTourReplayRequest: UUID?
+
     private init() {}
 
     func showSettings(section: SettingsPanelView.Section? = nil) {
@@ -27,4 +32,8 @@ final class AppNavigation: ObservableObject {
     func showList() { screen = .list }
     func showStats() { screen = .stats }
     func showTrash() { screen = .trash }
+    func replayFeatureTour() {
+        featureTourReplayRequest = UUID()
+        screen = .list
+    }
 }
