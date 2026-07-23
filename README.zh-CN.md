@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="ClipTrace/Assets.xcassets/AppLogo.imageset/AppLogo@2x.png" width="96" alt="剪迹 logo" />
+  <img src="Clipth/Assets.xcassets/AppLogo.imageset/AppLogo@2x.png" width="96" alt="剪迹 logo" />
 </p>
 
-<h1 align="center">剪迹 / ClipTrace</h1>
+<h1 align="center">剪迹 / Clipth</h1>
 
 <p align="center">
   <a href="README.md">English</a> · <strong>中文</strong>
@@ -13,14 +13,16 @@
 </p>
 
 <p align="center">
-  <a href="https://wavever.github.io/ClipTrace/"><img src="https://img.shields.io/badge/%E5%AE%98%E7%BD%91-%E5%9C%A8%E7%BA%BF-7AA487" alt="官网" /></a>
-  <a href="https://github.com/wavever/ClipTrace/actions/workflows/ci.yml"><img src="https://github.com/wavever/ClipTrace/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="https://github.com/wavever/ClipTrace/releases/latest"><img src="https://img.shields.io/github/v/release/wavever/ClipTrace" alt="最新版本" /></a>
+  <a href="https://wavever.github.io/Clipth/"><img src="https://img.shields.io/badge/%E5%AE%98%E7%BD%91-%E5%9C%A8%E7%BA%BF-7AA487" alt="官网" /></a>
+  <a href="https://github.com/wavever/Clipth/actions/workflows/ci.yml"><img src="https://github.com/wavever/Clipth/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/wavever/Clipth/releases/latest"><img src="https://img.shields.io/github/v/release/wavever/Clipth" alt="最新版本" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="MIT License" /></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-blue" alt="macOS 14+" />
 </p>
 
 剪迹是一个开源 macOS 剪贴板历史管理工具，内置离线语义搜索和 [Model Context Protocol](https://modelcontextprotocol.io/) 服务器。你可以在本机搜索、整理、复用剪贴板历史，也可以让 Claude Desktop、Claude Code、Cursor 等 AI 客户端在本地查询这些内容。云同步默认关闭，只会连接你主动配置的存储位置。
+
+Clipth 取自 "clip path"，对应中文名“剪迹”：被你复制过的内容留下的一条路径。
 
 ## 为什么是剪迹？
 
@@ -121,7 +123,7 @@
 - 加密增量日志保护并发写入并压缩为条件写快照；已获设备确认的删除墓碑、旧日志和孤儿附件会被保守回收
 - 同步历史、图片、标签、分组、收藏、置顶、垃圾桶状态及单个不超过 25 MB 的文件附件；设备设置、统计和语义向量仍保留在本机
 - 另一台 Mac 必须使用同一恢复密钥；密钥丢失后，现有远端数据无法恢复
-- 旧版 v1 清单会在下次成功同步时原位升级；恢复密钥和远端 `.cliptrace-sync-v1` 目录都无需更换
+- 旧版 v1 清单会在下次成功同步时原位升级；恢复密钥会继续复用，远端 `.clipth-sync-v1` 目录在 Clipth 版本中保持稳定
 - 合并、提交、迁移和回收约束详见 [同步架构](docs/sync-architecture.md)
 
 ## MCP Server
@@ -132,7 +134,7 @@
 {
   "mcpServers": {
     "clipboard": {
-      "command": "/Applications/ClipTrace.app/Contents/MacOS/ClipTrace",
+      "command": "/Applications/Clipth.app/Contents/MacOS/Clipth",
       "args": ["--mcp"]
     }
   }
@@ -157,7 +159,7 @@
 
 ## 安装
 
-从 [GitHub Releases](https://github.com/wavever/ClipTrace/releases/latest) 下载最新 DMG，打开后将 ClipTrace 拖入 Applications。
+从 [GitHub Releases](https://github.com/wavever/Clipth/releases/latest) 下载最新 DMG，打开后将 Clipth 拖入 Applications。
 
 当前公开版本使用稳定的自签名身份签名，以便 macOS 在更新后保留辅助功能权限。公开 notarization 在路线图中。如果 macOS 拦截下载版本，也可以直接从源码构建。
 
@@ -168,14 +170,14 @@
 
 ## 从源码构建
 
-用 Xcode 打开 `ClipTrace.xcodeproj`，选择 "My Mac"，点击运行。
+用 Xcode 打开 `Clipth.xcodeproj`，选择 "My Mac"，点击运行。
 
 命令行构建：
 
 ```bash
 xcodebuild \
-  -project ClipTrace.xcodeproj \
-  -scheme ClipTrace \
+  -project Clipth.xcodeproj \
+  -scheme Clipth \
   -configuration Debug \
   -destination 'platform=macOS' \
   -derivedDataPath build \

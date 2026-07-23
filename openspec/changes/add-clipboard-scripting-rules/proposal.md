@@ -1,6 +1,6 @@
 ## Why
 
-ClipTrace already matches every captured clip against user rules (`FilterSettingsStore.shouldExclude`), but the only action it can take is "drop it." Power users (the CopyQ / Pastebot / Keyboard Maestro crowd) want to *do* things to clips — pretty-print JSON, strip noise, auto-tag secrets, pipe to their own CLI tools — and today the only programmable surface is the LLM-facing MCP server, which can't run on capture. Generalizing the existing matcher from "match → exclude" into "match → run a script" turns a one-trick filter into a user-programmable automation engine, without touching the privacy invariants that already protect sensitive content.
+Clipth already matches every captured clip against user rules (`FilterSettingsStore.shouldExclude`), but the only action it can take is "drop it." Power users (the CopyQ / Pastebot / Keyboard Maestro crowd) want to *do* things to clips — pretty-print JSON, strip noise, auto-tag secrets, pipe to their own CLI tools — and today the only programmable surface is the LLM-facing MCP server, which can't run on capture. Generalizing the existing matcher from "match → exclude" into "match → run a script" turns a one-trick filter into a user-programmable automation engine, without touching the privacy invariants that already protect sensitive content.
 
 ## What Changes
 
@@ -31,5 +31,5 @@ ClipTrace already matches every captured clip against user rules (`FilterSetting
 - **Code (new types)**: rule model, match evaluator, Effect model, shell runner, JS runner, run-log. Per project convention (explicit pbxproj file refs), prefer adding these to existing target files; any genuinely new `.swift` file requires a `project.pbxproj` edit.
 - **Invariant preserved**: concealed/transient/sensitive clips are filtered in `ClipboardMonitor.checkForChanges` *before* the capture callback, so scripts structurally never see them — no new sensitive-data handling needed, but the invariant must be documented and protected.
 - **Runtime/permissions**: introduces in-process JS evaluation (`JavaScriptCore`, system framework) and external process execution (`Process`) — both available without new entitlements, so the self-signed / no-hardened-runtime signing flow is unaffected. No new dependencies.
-- **Persistence**: rules and their settings serialize alongside the existing `filterSettings.v1` UserDefaults blob (or a sibling key); user `.sh` files live under `~/Library/Application Support/ClipTrace/Scripts/`.
+- **Persistence**: rules and their settings serialize alongside the existing `filterSettings.v1` UserDefaults blob (or a sibling key); user `.sh` files live under `~/Library/Application Support/Clipth/Scripts/`.
 - **UI/UX**: all new controls use the paper design-system tokens; any panel transitions follow the established interpolating-spring motion.

@@ -1,6 +1,6 @@
 # Roadmap
 
-This roadmap is directional, not a promise. ClipTrace is local-first, privacy-first, and focused on native macOS productivity.
+This roadmap is directional, not a promise. Clipth is local-first, privacy-first, and focused on native macOS productivity.
 
 ## Current Focus
 

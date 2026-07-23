@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Generate a STABLE self-signed code-signing certificate for ClipTrace and
+# Generate a STABLE self-signed code-signing certificate for Clipth and
 # install it into your login keychain so every local build is signed with the
 # same identity.
 #
@@ -11,7 +11,7 @@
 # requirement — its requirement is the binary's cdhash, which changes on every
 # rebuild and every release. The grant is then silently invalidated even though
 # the toggle in System Settings still looks enabled, and the app re-prompts
-# ("ClipTrace wants to control this computer using accessibility features").
+# ("Clipth wants to control this computer using accessibility features").
 #
 # Signing with a fixed certificate gives the bundle a stable requirement
 # (identifier + this cert's leaf hash), so the grant survives rebuilds and
@@ -24,10 +24,10 @@
 # and will re-grant + update the GitHub secrets).
 set -euo pipefail
 
-CERT_NAME="ClipTrace Self-Signed"   # MUST match CODE_SIGN_IDENTITY in the Xcode project
+CERT_NAME="Clipth Self-Signed"      # MUST match CODE_SIGN_IDENTITY in the Xcode project
 LOGIN_KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
-OUT_DIR="${TMPDIR:-/tmp}/cliptrace-signing"
-P12_PATH="$OUT_DIR/cliptrace-signing.p12"
+OUT_DIR="${TMPDIR:-/tmp}/clipth-signing"
+P12_PATH="$OUT_DIR/clipth-signing.p12"
 
 force=0
 [ "${1:-}" = "--force" ] && force=1

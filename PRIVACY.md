@@ -1,10 +1,10 @@
 # Privacy
 
-ClipTrace is designed as a local-first clipboard manager. This document explains what the app stores, when it talks to the network, and where the privacy boundaries are.
+Clipth is designed as a local-first clipboard manager. This document explains what the app stores, when it talks to the network, and where the privacy boundaries are.
 
-## What ClipTrace Stores
+## What Clipth Stores
 
-ClipTrace can store clipboard entries for:
+Clipth can store clipboard entries for:
 
 - Text, URLs, rich text, images, videos, and files
 - Source app name and bundle identifier when available
@@ -13,11 +13,11 @@ ClipTrace can store clipboard entries for:
 - Local semantic-search vectors generated from clipboard text and OCR text
 - User preferences such as retention, filters, and MCP tool toggles
 
-The history database is stored locally through SwiftData in the app's Application Support storage for the bundle identifier `com.wavever.cliptrace`. The exact path can vary by build, signing, and sandbox configuration.
+The history database is stored locally through SwiftData in the app's Application Support storage for the bundle identifier `com.wavever.clipth`. The exact path can vary by build, signing, and sandbox configuration.
 
-## What ClipTrace Does Not Collect
+## What Clipth Does Not Collect
 
-ClipTrace does not include:
+Clipth does not include:
 
 - Analytics
 - Telemetry
@@ -29,10 +29,10 @@ Clipboard history is not uploaded unless you explicitly enable and configure a s
 
 ## Network Access
 
-ClipTrace has these intended background network features:
+Clipth has these intended background network features:
 
 - Sparkle update checks read the appcast configured by `SUFeedURL`.
-- When sync is enabled, ClipTrace connects only to the WebDAV or S3-compatible endpoint you configure. iCloud Drive and local-folder sync write through the corresponding local filesystem location, whose provider may then transfer those files.
+- When sync is enabled, Clipth connects only to the WebDAV or S3-compatible endpoint you configure. iCloud Drive and local-folder sync write through the corresponding local filesystem location, whose provider may then transfer those files.
 
 Other explicit user actions may open project links, issue pages, or release pages in the browser. The clipboard monitor, semantic search, OCR processing, and MCP server do not require outbound network access.
 
@@ -41,8 +41,8 @@ Other explicit user actions may open project links, issue pages, or release page
 Sync is disabled by default. You can opt into iCloud Drive, WebDAV, S3-compatible object storage, or a local folder such as one managed by Dropbox, OneDrive, Syncthing, or a network drive.
 
 - Sync snapshots, incremental journals, conflict copies, and every attachment are encrypted locally with AES-256-GCM before being written or uploaded.
-- ClipTrace generates a random 256-bit recovery key and stores it in macOS Keychain. WebDAV passwords and S3 secret/session credentials are also stored in Keychain, not UserDefaults.
-- A second Mac must be configured with the same recovery key. ClipTrace and the storage provider cannot recover a lost key.
+- Clipth generates a random 256-bit recovery key and stores it in macOS Keychain. WebDAV passwords and S3 secret/session credentials are also stored in Keychain, not UserDefaults.
+- A second Mac must be configured with the same recovery key. Clipth and the storage provider cannot recover a lost key.
 - WebDAV Basic authentication should normally be used over HTTPS. The app warns before using a plain HTTP endpoint because transport credentials are not protected by HTTP.
 - S3 requests use AWS Signature Version 4. HTTPS should be used outside a trusted LAN because HTTP does not protect signed requests or transferred metadata from observation.
 - Sync includes clipboard history, OCR text, images, organization metadata, trash state, and regular-file attachments up to 25 MB each. Semantic vectors, statistics, and device preferences are not synced.
@@ -68,7 +68,7 @@ Important boundaries:
 
 ## Sensitive Clipboard Content
 
-Clipboard managers are inherently sensitive. ClipTrace attempts to avoid capturing entries marked by common sensitive/transient pasteboard types, including:
+Clipboard managers are inherently sensitive. Clipth attempts to avoid capturing entries marked by common sensitive/transient pasteboard types, including:
 
 - `org.nspasteboard.ConcealedType`
 - `org.nspasteboard.TransientType`
@@ -79,7 +79,7 @@ This depends on source applications marking sensitive content correctly. You sho
 
 ## Local Controls
 
-ClipTrace includes several privacy controls:
+Clipth includes several privacy controls:
 
 - Pause clipboard monitoring
 - Exclude specific source apps from capture

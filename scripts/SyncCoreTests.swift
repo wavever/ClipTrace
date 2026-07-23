@@ -320,7 +320,7 @@ struct SyncCoreTests {
 
     private static func testFileTransportCompareAndSwap() async throws {
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ClipTraceSyncTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("ClipthSyncTests-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let transport = FileSyncTransport(rootURL: root, securityScoped: false)
         try await transport.prepare()
@@ -430,7 +430,7 @@ struct SyncCoreTests {
             configuration: S3SyncConfiguration(
                 endpoint: URL(string: "https://s3.example.test")!,
                 region: "us-east-1",
-                bucket: "cliptrace-test",
+                bucket: "clipth-test",
                 prefix: "alice",
                 accessKeyID: "AKIDEXAMPLE",
                 secretAccessKey: "secret",
@@ -617,9 +617,9 @@ private final class MockWebDAVURLProtocol: URLProtocol {
             let values = isJournal ? Self.journals : Self.attachments
             let directory = isJournal ? "journal" : "attachments"
             let children = values.keys.sorted().map {
-                "<d:response><d:href>/user/.cliptrace-sync-v1/\(directory)/\($0)</d:href><d:propstat><d:prop><d:getlastmodified>Tue, 14 Jul 2026 00:00:00 GMT</d:getlastmodified></d:prop></d:propstat></d:response>"
+                "<d:response><d:href>/user/.clipth-sync-v1/\(directory)/\($0)</d:href><d:propstat><d:prop><d:getlastmodified>Tue, 14 Jul 2026 00:00:00 GMT</d:getlastmodified></d:prop></d:propstat></d:response>"
             }.joined()
-            body = Data("<?xml version=\"1.0\"?><d:multistatus xmlns:d=\"DAV:\"><d:response><d:href>/user/.cliptrace-sync-v1/\(directory)/</d:href></d:response>\(children)</d:multistatus>".utf8)
+            body = Data("<?xml version=\"1.0\"?><d:multistatus xmlns:d=\"DAV:\"><d:response><d:href>/user/.clipth-sync-v1/\(directory)/</d:href></d:response>\(children)</d:multistatus>".utf8)
             status = 207
         } else if path.contains("/attachments/") {
             let name = url.lastPathComponent
@@ -741,7 +741,7 @@ private final class MockS3URLProtocol: URLProtocol {
             uniquingKeysWith: { _, latest in latest }
         )
         let key = url.path.removingPercentEncoding?
-            .replacingOccurrences(of: "/cliptrace-test/", with: "", options: [.anchored]) ?? ""
+            .replacingOccurrences(of: "/clipth-test/", with: "", options: [.anchored]) ?? ""
         var status = 200
         var headers: [String: String] = [:]
         var body = Data()

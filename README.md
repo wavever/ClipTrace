@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="ClipTrace/Assets.xcassets/AppLogo.imageset/AppLogo@2x.png" width="96" alt="ClipTrace logo" />
+  <img src="Clipth/Assets.xcassets/AppLogo.imageset/AppLogo@2x.png" width="96" alt="Clipth logo" />
 </p>
 
-<h1 align="center">ClipTrace</h1>
+<h1 align="center">Clipth</h1>
 
 <p align="center">
   <strong>English</strong> · <a href="README.zh-CN.md">中文</a>
@@ -13,16 +13,18 @@
 </p>
 
 <p align="center">
-  <a href="https://wavever.github.io/ClipTrace/"><img src="https://img.shields.io/badge/website-cliptrace-7AA487" alt="Website" /></a>
-  <a href="https://github.com/wavever/ClipTrace/actions/workflows/ci.yml"><img src="https://github.com/wavever/ClipTrace/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="https://github.com/wavever/ClipTrace/releases/latest"><img src="https://img.shields.io/github/v/release/wavever/ClipTrace" alt="Latest release" /></a>
+  <a href="https://wavever.github.io/Clipth/"><img src="https://img.shields.io/badge/website-clipth-7AA487" alt="Website" /></a>
+  <a href="https://github.com/wavever/Clipth/actions/workflows/ci.yml"><img src="https://github.com/wavever/Clipth/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/wavever/Clipth/releases/latest"><img src="https://img.shields.io/github/v/release/wavever/Clipth" alt="Latest release" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="MIT License" /></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-blue" alt="macOS 14+" />
 </p>
 
-ClipTrace is an open-source macOS clipboard manager with offline semantic search and a built-in [Model Context Protocol](https://modelcontextprotocol.io/) server. It lets you search clipboard history locally, organize useful clips, and optionally let AI clients such as Claude Desktop, Claude Code, or Cursor query your clipboard. Cloud sync is off by default and only connects to a destination you configure.
+Clipth is an open-source macOS clipboard manager with offline semantic search and a built-in [Model Context Protocol](https://modelcontextprotocol.io/) server. It lets you search clipboard history locally, organize useful clips, and optionally let AI clients such as Claude Desktop, Claude Code, or Cursor query your clipboard. Cloud sync is off by default and only connects to a destination you configure.
 
-## Why ClipTrace?
+The name comes from "clip path": a trail of things you copied.
+
+## Why Clipth?
 
 - **Local-first by default** - clipboard history, OCR text, tags, and embeddings stay on your Mac unless you explicitly enable encrypted sync.
 - **Conflict-resilient encrypted sync** - optionally sync through iCloud Drive, WebDAV, S3-compatible storage, or a local folder without exposing clipboard plaintext.
@@ -34,11 +36,11 @@ ClipTrace is an open-source macOS clipboard manager with offline semantic search
 
 ## Highlight: Encrypted Sync That Merges, Not Overwrites
 
-ClipTrace does not replace one Mac's entire database with another. It sends encrypted incremental operations, merges each field independently, and keeps a recoverable copy when two devices change non-mergeable content.
+Clipth does not replace one Mac's entire database with another. It sends encrypted incremental operations, merges each field independently, and keeps a recoverable copy when two devices change non-mergeable content.
 
 Choose automatic sync or keep it manual. The main window always exposes a compact sync state: one-click sync when automation is off, an immediate in-progress indicator, and explicit success or failure feedback when the run finishes.
 
-| What happens | How ClipTrace protects it |
+| What happens | How Clipth protects it |
 |---|---|
 | Two Macs edit different fields | Hybrid logical clocks and field versions preserve both changes |
 | Both devices write at once | Immutable encrypted journals survive the snapshot race |
@@ -121,7 +123,7 @@ Everything is encrypted locally with AES-256-GCM before it reaches iCloud Drive,
 - Encrypted incremental journals protect concurrent writers and compact into conditional-write snapshots; acknowledged deletion tombstones, old journals, and orphan attachments are garbage-collected conservatively
 - Syncs history, images, tags, groups, favorites, pins, trash state, and individual file attachments up to 25 MB; device settings, statistics, and semantic vectors remain local
 - Another Mac needs the same recovery key. Losing it makes existing remote data unrecoverable.
-- Existing v1 manifests are upgraded in place on the next successful sync; the recovery key and remote `.cliptrace-sync-v1` location do not change.
+- Existing v1 manifests are upgraded in place on the next successful sync; the recovery key is reused and the remote `.clipth-sync-v1` location stays stable for Clipth releases.
 - See [Sync Architecture](docs/sync-architecture.md) for merge, commit, migration, and retention invariants.
 
 ## MCP Server
@@ -132,7 +134,7 @@ The app binary doubles as an MCP stdio server. Configure a compatible client wit
 {
   "mcpServers": {
     "clipboard": {
-      "command": "/Applications/ClipTrace.app/Contents/MacOS/ClipTrace",
+      "command": "/Applications/Clipth.app/Contents/MacOS/Clipth",
       "args": ["--mcp"]
     }
   }
@@ -157,7 +159,7 @@ Protected clips are redacted in MCP responses by default and carry `isProtected`
 
 ## Install
 
-Download the latest DMG from [GitHub Releases](https://github.com/wavever/ClipTrace/releases/latest), open it, and drag ClipTrace into Applications.
+Download the latest DMG from [GitHub Releases](https://github.com/wavever/Clipth/releases/latest), open it, and drag Clipth into Applications.
 
 Current public releases are signed with a stable self-signed identity so macOS can keep Accessibility permission across updates. Public notarization is on the roadmap. If macOS blocks a downloaded build, you can build from source with unsigned local signing disabled.
 
@@ -168,14 +170,14 @@ Current public releases are signed with a stable self-signed identity so macOS c
 
 ## Build from Source
 
-Open `ClipTrace.xcodeproj` in Xcode, select "My Mac", and run.
+Open `Clipth.xcodeproj` in Xcode, select "My Mac", and run.
 
 Command line:
 
 ```bash
 xcodebuild \
-  -project ClipTrace.xcodeproj \
-  -scheme ClipTrace \
+  -project Clipth.xcodeproj \
+  -scheme Clipth \
   -configuration Debug \
   -destination 'platform=macOS' \
   -derivedDataPath build \
@@ -224,4 +226,4 @@ Before contributing, read [CONTRIBUTING.md](CONTRIBUTING.md). For private securi
 
 ## License
 
-ClipTrace is released under the [MIT License](LICENSE).
+Clipth is released under the [MIT License](LICENSE).

@@ -1,6 +1,6 @@
 # Security Policy
 
-ClipTrace handles clipboard history, so security and privacy reports are treated seriously even when the issue looks small.
+Clipth handles clipboard history, so security and privacy reports are treated seriously even when the issue looks small.
 
 ## Supported Versions
 

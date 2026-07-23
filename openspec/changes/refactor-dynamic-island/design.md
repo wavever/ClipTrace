@@ -68,7 +68,7 @@ Content layout: a compact bar of fixed `notchHeight` with a left wing, a reserve
 
 ### 4. Geometry helper
 
-Add a small notch-geometry resolver (e.g. `NotchGeometry`) exposing `hasNotch(_:)`, `notchWidth(for:)`, `notchHeight(for:)`, and the preferred notched built-in screen — built on the existing `isBuiltIn` / `displayID` helpers plus `auxiliaryTopLeftArea` / `auxiliaryTopRightArea` / `safeAreaInsets.top`. Keep the existing `hasNotchedDisplay` / eligibility surface so `ClipTraceApp` and `SettingsPanelView` keep compiling.
+Add a small notch-geometry resolver (e.g. `NotchGeometry`) exposing `hasNotch(_:)`, `notchWidth(for:)`, `notchHeight(for:)`, and the preferred notched built-in screen — built on the existing `isBuiltIn` / `displayID` helpers plus `auxiliaryTopLeftArea` / `auxiliaryTopRightArea` / `safeAreaInsets.top`. Keep the existing `hasNotchedDisplay` / eligibility surface so `ClipthApp` and `SettingsPanelView` keep compiling.
 
 ### 5. Motion constants
 
@@ -85,14 +85,14 @@ Use a `KeyablePanel` subclass (`canBecomeKey = true`) and an `NSHostingView` sub
 - **First-click swallowed by non-activating panel** → `acceptsFirstMouse` + `makeKey()` on `mouseDown`; covered by the "first click is actionable" scenario.
 - **Hosting re-entrancy crash** under rapid state changes → deferred constraint/layout updates in the hosting subclass.
 - **Non-notched built-in display** (simulated notch) could look odd → keep current gating; only show where already permitted, and the simulated width is bounded.
-- **Regression in "island replaces menu bar" eligibility** in `ClipTraceApp`/`SettingsPanelView` → preserve the public `hasNotchedDisplay`/`isEnabled` API shape so callers are unaffected.
+- **Regression in "island replaces menu bar" eligibility** in `ClipthApp`/`SettingsPanelView` → preserve the public `hasNotchedDisplay`/`isEnabled` API shape so callers are unaffected.
 
 ## Migration Plan
 
 1. Add `NotchGeometry` + shared notch animation/shape definitions (no behavior change yet).
 2. Rewrite `DynamicIslandView` to the single morphing surface with `.collapsed` / `.notification` / `.expanded` states and the new shape; embed `MenuBarView(surfaceStyle: .dynamicIsland)` for expanded.
 3. Rewrite `DynamicIslandController` to one top-anchored panel; map `flash(...)` → `.notification`, click → `.expanded`; remove `menuPanel` and its positioning/dismiss plumbing (fold dismiss handling into the single panel).
-4. Keep `isEnabled`, `setEnabled`, `hasNotchedDisplay`, and `flash(itemIcon:preview:)` signatures stable so `ClipTraceApp`, `ClipboardViewModel`, and `SettingsPanelView` need no changes (or minimal ones).
+4. Keep `isEnabled`, `setEnabled`, `hasNotchedDisplay`, and `flash(itemIcon:preview:)` signatures stable so `ClipthApp`, `ClipboardViewModel`, and `SettingsPanelView` need no changes (or minimal ones).
 5. Per project rule, build then launch the app on a notched Mac and verify each spec scenario.
 
 **Rollback:** the change is contained to the two Dynamic Island files plus the new helpers; reverting the commit restores the dual-panel behavior with no data or settings migration.

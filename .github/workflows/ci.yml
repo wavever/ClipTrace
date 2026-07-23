@@ -35,18 +35,18 @@ jobs:
       - name: Test sync v2, encryption, and transports
         run: |
           swiftc \
-            ClipTrace/Models/SyncModels.swift \
-            ClipTrace/Services/SyncSecurity.swift \
-            ClipTrace/Services/SyncTransports.swift \
+            Clipth/Models/SyncModels.swift \
+            Clipth/Services/SyncSecurity.swift \
+            Clipth/Services/SyncTransports.swift \
             scripts/SyncCoreTests.swift \
-            -o /tmp/cliptrace-sync-tests
-          /tmp/cliptrace-sync-tests
+            -o /tmp/clipth-sync-tests
+          /tmp/clipth-sync-tests
 
       - name: Build
         run: |
           xcodebuild \
-            -project ClipTrace.xcodeproj \
-            -scheme ClipTrace \
+            -project Clipth.xcodeproj \
+            -scheme Clipth \
             -configuration Debug \
             -destination 'platform=macOS' \
             -derivedDataPath build \

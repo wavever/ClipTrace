@@ -25,7 +25,7 @@
 
 ## 5. Shell runner
 
-- [x] 5.1 Implement a managed scripts directory at `~/Library/Application Support/ClipTrace/Scripts/` (create on demand; reveal-in-Finder helper)
+- [x] 5.1 Implement a managed scripts directory at `~/Library/Application Support/Clipth/Scripts/` (create on demand; reveal-in-Finder helper)
 - [x] 5.2 Implement `ShellScriptRunner` using `Process` off the main actor: clip text → stdin; `CLIP_TYPE`/`CLIP_SOURCE_APP`/`CLIP_BUNDLE_ID`/`CLIP_TAGS` env; image bytes → temp file at `CLIP_IMAGE_PATH` (cleaned up after)
 - [x] 5.3 Map results to `ScriptEffect`: exit 0 + stdout → `replaceText`; non-zero → `none`/error; optional stdout-JSON envelope → richer Effect (document the envelope)
 - [x] 5.4 Enforce per-run timeout with `Process.terminate()` on overflow; ensure a hung process cannot wedge the app or capture

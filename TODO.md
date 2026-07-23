@@ -1,4 +1,4 @@
-# ClipTrace TODO
+# Clipth TODO
 
 来源:2026-05-27 对 Maccy / Paste / Pastebot / Raycast / Alfred / CopyQ / VeloxClip 的功能对标。
 完成一项就把 `- [ ]` 改成 `- [x]`,需要的话在条目下补一行实施备注。

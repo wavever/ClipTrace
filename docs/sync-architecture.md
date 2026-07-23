@@ -1,6 +1,6 @@
 # Sync Architecture
 
-ClipTrace sync is optional, local-first, and end-to-end encrypted. The storage
+Clipth sync is optional, local-first, and end-to-end encrypted. The storage
 backend only sees encrypted object sizes, names, and update timing.
 
 ## Format and migration
@@ -8,7 +8,7 @@ backend only sees encrypted object sizes, names, and update timing.
 - `SyncArchive.currentFormatVersion` is `2`.
 - Version 1 snapshots remain readable. The first successful merge seeds hybrid
   logical timestamps and per-field versions, then writes a version 2 snapshot.
-- The recovery key, attachment encryption, and remote `.cliptrace-sync-v1`
+- The recovery key, attachment encryption, and remote `.clipth-sync-v1`
   directory remain compatible. No destructive remote migration is required.
 - Archives reject invalid versions, duplicate entity identifiers, live/deleted
   identifier collisions, invalid clock metadata, and content-hash mismatches.

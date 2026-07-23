@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for considering a contribution to ClipTrace.
+Thanks for considering a contribution to Clipth.
 
 The most useful contributions are focused, reproducible, and mindful that this app stores sensitive local clipboard data.
 
@@ -15,15 +15,15 @@ Requirements:
 Open the project:
 
 ```bash
-open ClipTrace.xcodeproj
+open Clipth.xcodeproj
 ```
 
 Build from the command line:
 
 ```bash
 xcodebuild \
-  -project ClipTrace.xcodeproj \
-  -scheme ClipTrace \
+  -project Clipth.xcodeproj \
+  -scheme Clipth \
   -configuration Debug \
   -destination 'platform=macOS' \
   -derivedDataPath build \

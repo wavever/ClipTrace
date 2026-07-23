@@ -1,6 +1,6 @@
 ## Context
 
-ClipTrace is a local-first, privacy-first macOS clipboard manager. The capture path already contains a small rule engine: `ClipboardMonitor.checkForChanges()` (main-thread `Timer`, 0.5s) filters sensitive/internal/dedup cases, then hands a new clip to `ClipboardViewModel`'s `onNewContent` closure, which runs `FilterSettingsStore.shouldExclude(type:content:sourceBundleId:)` and either drops the clip or inserts a `ClipboardItem` and kicks off asynchronous OCR/embedding backfill in a detached `Task`.
+Clipth is a local-first, privacy-first macOS clipboard manager. The capture path already contains a small rule engine: `ClipboardMonitor.checkForChanges()` (main-thread `Timer`, 0.5s) filters sensitive/internal/dedup cases, then hands a new clip to `ClipboardViewModel`'s `onNewContent` closure, which runs `FilterSettingsStore.shouldExclude(type:content:sourceBundleId:)` and either drops the clip or inserts a `ClipboardItem` and kicks off asynchronous OCR/embedding backfill in a detached `Task`.
 
 This change generalizes that matcher from "match → exclude" into "match → action," where an action may run user-authored code. Constraints that shape the design:
 
@@ -52,7 +52,7 @@ JS runs in a bare `JSContext` with only a `clip` object injected — no `fetch`,
 - **Alternative considered:** Shell-only (simpler, instantly powerful) — rejected as the default because auto-running arbitrary shell on every clipboard event in a non-sandboxed app holding sensitive data is the worst-case posture. JS-only — rejected because it abandons the user's stated CLI-piping use case.
 
 ### Decision 5: Application-level safety rails (no OS backstop)
-Per-run timeout with termination (`Process.terminate()` / JSC execution-time interruption), error routing through the existing `ToastCenter`, a bounded recent-run log, a managed `~/Library/Application Support/ClipTrace/Scripts/` directory for `.sh` files, and an explicit enable-time authorization gate (reuse `ConfirmationCenter`) before any script rule arms.
+Per-run timeout with termination (`Process.terminate()` / JSC execution-time interruption), error routing through the existing `ToastCenter`, a bounded recent-run log, a managed `~/Library/Application Support/Clipth/Scripts/` directory for `.sh` files, and an explicit enable-time authorization gate (reuse `ConfirmationCenter`) before any script rule arms.
 - **Why:** Because the app is non-sandboxed, these are the only guardrails. The authorization gate ensures a user consciously accepts "this runs code on my clipboard." The run log makes script behavior auditable instead of invisible magic.
 - **Trade-off:** Guardrails are best-effort — a determined shell script can ignore them. Documented as a non-goal to "sandbox" shell.
 

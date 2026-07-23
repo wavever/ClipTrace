@@ -4,7 +4,7 @@
 - [x] 1.2 Compute `notchWidth` as `screen.frame.width - auxiliaryTopLeftArea.width - auxiliaryTopRightArea.width`, with a bounded simulated width fallback when auxiliary areas are absent.
 - [x] 1.3 Compute `notchHeight` from `screen.safeAreaInsets.top`, falling back to menu-bar height when zero.
 - [x] 1.4 Add a shared `NotchAnimation` enum (open / close / pop) honoring Reduce Motion, with close critically damped (dampingFraction 1.0).
-- [x] 1.5 Preserve the public `DynamicIslandController.hasNotchedDisplay` (delegating to `NotchGeometry`) so `ClipTraceApp` and `SettingsPanelView` are unaffected.
+- [x] 1.5 Preserve the public `DynamicIslandController.hasNotchedDisplay` (delegating to `NotchGeometry`) so `ClipthApp` and `SettingsPanelView` are unaffected.
 
 ## 2. Morphing notch surface (DynamicIslandView)
 
@@ -26,7 +26,7 @@
 
 ## 4. Integration & verification
 
-- [x] 4.1 `ClipboardViewModel` `flash(...)` call sites and `ClipTraceApp` enable/anchor wiring compile unchanged (stable `flash` / `setEnabled` / `isEnabled` / `hasNotchedDisplay` API) — confirmed by a clean Debug build.
+- [x] 4.1 `ClipboardViewModel` `flash(...)` call sites and `ClipthApp` enable/anchor wiring compile unchanged (stable `flash` / `setEnabled` / `isEnabled` / `hasNotchedDisplay` API) — confirmed by a clean Debug build.
 - [x] 4.2 `SettingsPanelView` notch gating + "island replaces menu bar" eligibility compile against `NotchGeometry` via `hasNotchedDisplay` — confirmed by a clean Debug build.
 - [x] 4.3 Build the app (BUILD SUCCEEDED), then launch it (per project rule).
 - [ ] 4.4 Verify each spec scenario on device: notch-anchored placement, content clear of camera, notification→expanded morph continuity, collapse with no cutout exposure, first-click actionable, dismiss on outside/Escape, stable across spaces/full screen.

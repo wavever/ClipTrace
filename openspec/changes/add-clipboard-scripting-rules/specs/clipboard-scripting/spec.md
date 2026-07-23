@@ -62,7 +62,7 @@ Every script run (shell or JavaScript) SHALL be bounded by a timeout. When a run
 
 ### Requirement: Managed scripts directory
 
-Shell scripts SHALL be resolved from a managed directory under the application's Application Support location (`~/Library/Application Support/ClipTrace/Scripts/`). The app SHALL provide a way to reveal this directory. Only regular, executable files within the managed directory tree SHALL be runnable as shell actions.
+Shell scripts SHALL be resolved from a managed directory under the application's Application Support location (`~/Library/Application Support/Clipth/Scripts/`). The app SHALL provide a way to reveal this directory. Only regular, executable files within the managed directory tree SHALL be runnable as shell actions.
 
 #### Scenario: Reveal the scripts directory
 - **WHEN** the user chooses to open the scripts folder from settings

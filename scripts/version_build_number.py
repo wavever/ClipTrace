@@ -2,7 +2,7 @@
 """Convert a public semver into Sparkle/Xcode's internal build number.
 
 Sparkle compares appcast `sparkle:version` with the app bundle's
-`CFBundleVersion`. Older ClipTrace releases shipped with CFBundleVersion=1,
+`CFBundleVersion`. Older Clipth releases shipped with CFBundleVersion=1,
 so pre-1.0 public versions like 0.9.12 must map to a build number greater
 than 1 or those older builds will think they are already newer.
 """

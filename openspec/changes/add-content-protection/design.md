@@ -2,7 +2,7 @@
 
 ### Preserve Utility, Reduce Ambient Exposure
 
-The feature must not turn sensitive clips into unusable clips. ClipTrace should
+The feature must not turn sensitive clips into unusable clips. Clipth should
 continue to store the raw value locally and use it for explicit copy/paste
 actions. The protection layer applies when content is being observed or leaving
 the app by default.
@@ -10,14 +10,14 @@ the app by default.
 The user-facing model is:
 
 - "I can still reuse the original clip."
-- "ClipTrace will not casually show the original value on screen."
+- "Clipth will not casually show the original value on screen."
 - "Bulk export and MCP will not leak protected raw values unless I explicitly
   allow that."
 
 ### Default State
 
 Content Protection should be enabled by default for built-in detectors. This is
-consistent with ClipTrace's privacy positioning and avoids a feature that only
+consistent with Clipth's privacy positioning and avoids a feature that only
 works after the first accidental exposure.
 
 Settings should still allow users to disable the whole feature or individual
@@ -149,5 +149,5 @@ concealed/transient pasteboard filter remains the hard privacy boundary before
 any storage or scripting.
 
 Settings copy should make the distinction clear: Content Protection hides
-sensitive values in ClipTrace surfaces and guarded egress paths; it is not a
+sensitive values in Clipth surfaces and guarded egress paths; it is not a
 secret manager or a sandbox for user-authored scripts.

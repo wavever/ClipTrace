@@ -48,8 +48,7 @@ Carthage/Build/
 *.swo
 *~
 
-# Legacy marketing-site working copy (wavever/ClipTrace-HomePage). The
-# canonical site is now served from docs/ at wavever.github.io/ClipTrace.
+# Local marketing-site working copy. The canonical site is served from docs/.
 website/
 
 # Local Claude Code state (machine-local settings + agent worktrees)

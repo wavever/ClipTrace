@@ -5,7 +5,7 @@
 A rule SHALL consist of (1) a set of zero or more match conditions, (2) exactly one action, and (3) metadata: a user-facing name, an enabled flag, and a position in an ordered list. Rules SHALL be persisted across launches. A rule whose enabled flag is false SHALL never run, automatically or manually.
 
 #### Scenario: A rule round-trips through persistence
-- **WHEN** the user creates a rule, quits, and relaunches ClipTrace
+- **WHEN** the user creates a rule, quits, and relaunches Clipth
 - **THEN** the rule reappears with its name, conditions, action, enabled state, and ordinal position intact
 
 #### Scenario: Disabled rules never run
@@ -102,7 +102,7 @@ When several rules match one clip, the engine SHALL run them in order; a `drop` 
 
 ### Requirement: Sensitive-content exclusion invariant
 
-The rule engine SHALL only ever evaluate and run against clips that have already passed ClipTrace's concealed/transient/sensitive pasteboard-type filter. Clips bearing those markers (e.g. password-manager fields) SHALL NOT be passed to any rule, condition evaluation, or script under any circumstance.
+The rule engine SHALL only ever evaluate and run against clips that have already passed Clipth's concealed/transient/sensitive pasteboard-type filter. Clips bearing those markers (e.g. password-manager fields) SHALL NOT be passed to any rule, condition evaluation, or script under any circumstance.
 
 #### Scenario: Concealed clip bypasses all rules
 - **WHEN** content marked `org.nspasteboard.ConcealedType` is copied

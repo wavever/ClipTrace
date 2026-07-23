@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible problem in ClipTrace.
+description: Report a reproducible problem in Clipth.
 title: "[Bug]: "
 labels: ["bug"]
 body:
@@ -26,7 +26,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: ClipTrace version
+      label: Clipth version
       placeholder: "0.9.7, main@abcdef, etc."
     validations:
       required: true

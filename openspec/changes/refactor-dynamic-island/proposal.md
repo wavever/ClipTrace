@@ -24,8 +24,8 @@ The fix is an architectural one: replace the two separate below-notch panels wit
 
 ## Impact
 
-- **Code (rewritten):** `ClipTrace/Services/DynamicIslandController.swift` (panel lifecycle, positioning, single-panel model), `ClipTrace/Views/DynamicIslandView.swift` (states, morphing notch shape, content layout).
-- **Code (touched):** integration points that call `DynamicIslandController.shared.flash(...)` in `ClipTrace/ViewModels/ClipboardViewModel.swift`; enable/anchor wiring in `ClipTrace/ClipTraceApp.swift`; settings/eligibility checks in `ClipTrace/Views/SettingsPanelView.swift`; reuse of `MenuBarView(surfaceStyle: .dynamicIsland)` as the expanded content.
+- **Code (rewritten):** `Clipth/Services/DynamicIslandController.swift` (panel lifecycle, positioning, single-panel model), `Clipth/Views/DynamicIslandView.swift` (states, morphing notch shape, content layout).
+- **Code (touched):** integration points that call `DynamicIslandController.shared.flash(...)` in `Clipth/ViewModels/ClipboardViewModel.swift`; enable/anchor wiring in `Clipth/ClipthApp.swift`; settings/eligibility checks in `Clipth/Views/SettingsPanelView.swift`; reuse of `MenuBarView(surfaceStyle: .dynamicIsland)` as the expanded content.
 - **New helpers:** notch geometry resolver and shared notch animation/shape definitions.
 - **Behavior:** Notch-display detection and the "island replaces menu bar" eligibility logic are preserved; external/non-notched displays continue to be excluded (or use the simulated notch only where already gated).
 - **No new third-party dependencies.** Pure AppKit + SwiftUI.

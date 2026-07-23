@@ -1,16 +1,16 @@
 # Open Source Launch Kit
 
-This document is a maintainer checklist for launching ClipTrace as an open-source project.
+This document is a maintainer checklist for launching Clipth as an open-source project.
 
 ## Positioning
 
 Primary message:
 
-> ClipTrace is a local-first clipboard history app for macOS and AI tools.
+> Clipth is a local-first clipboard history app for macOS and AI tools.
 
 Longer version:
 
-> ClipTrace is an open-source macOS clipboard manager with offline semantic search and a built-in MCP server, so Claude Desktop, Claude Code, Cursor, and other MCP clients can search clipboard history without uploading it to a cloud service.
+> Clipth is an open-source macOS clipboard manager with offline semantic search and a built-in MCP server, so Claude Desktop, Claude Code, Cursor, and other MCP clients can search clipboard history without uploading it to a cloud service.
 
 Do not position it as "just another clipboard manager." Lead with:
 
@@ -79,7 +79,7 @@ Good first batch:
 Keep the demo short:
 
 1. Copy a URL, a code snippet, and an image.
-2. Open ClipTrace with `Command-Shift-V`.
+2. Open Clipth with `Command-Shift-V`.
 3. Search with a natural-language query.
 4. Show a source-app or time filter, such as `app:Safari since:2d`.
 5. Open MCP settings and show the config snippet.
@@ -93,20 +93,20 @@ Keep the demo short:
 Title:
 
 ```text
-Show HN: ClipTrace, a local-first clipboard manager for macOS with MCP search
+Show HN: Clipth, a local-first clipboard manager for macOS with MCP search
 ```
 
 First comment:
 
 ```text
-Hi HN, I built ClipTrace, an open-source macOS clipboard manager focused on local-first search and AI-tool workflows.
+Hi HN, I built Clipth, an open-source macOS clipboard manager focused on local-first search and AI-tool workflows.
 
 The angle is not "yet another clipboard history app." I wanted a local clipboard memory that Claude Desktop, Claude Code, Cursor, and other MCP clients could query without sending clipboard contents to a hosted service.
 
 The app is SwiftUI + SwiftData. Semantic search uses Apple's on-device NLEmbedding. The same binary can run as an MCP stdio server with tools for search, recent history, tags, favorites, pins, delete/restore, and snippet creation.
 
 Privacy boundaries are documented here:
-https://github.com/wavever/ClipTrace/blob/main/PRIVACY.md
+https://github.com/wavever/Clipth/blob/main/PRIVACY.md
 
 I would especially appreciate feedback on the MCP interface, privacy model, and macOS release/signing experience.
 ```
@@ -114,9 +114,9 @@ I would especially appreciate feedback on the MCP interface, privacy model, and 
 ### Reddit / r/macapps
 
 ```text
-[Open Source] ClipTrace - local-first clipboard history for macOS with offline semantic search and MCP
+[Open Source] Clipth - local-first clipboard history for macOS with offline semantic search and MCP
 
-I open-sourced ClipTrace, a native macOS clipboard manager built with SwiftUI.
+I open-sourced Clipth, a native macOS clipboard manager built with SwiftUI.
 
 Main points:
 - local clipboard history
@@ -127,7 +127,7 @@ Main points:
 - no analytics, no telemetry, no cloud sync
 
 Repo:
-https://github.com/wavever/ClipTrace
+https://github.com/wavever/Clipth
 
 I am looking for feedback on the install experience, privacy model, and which MCP tools should come next.
 ```
@@ -135,7 +135,7 @@ I am looking for feedback on the install experience, privacy model, and which MC
 ### V2EX
 
 ```text
-我把自己做的 macOS 剪贴板历史工具 ClipTrace 开源了。
+我把自己做的 macOS 剪贴板历史工具 Clipth 开源了。
 
 它不是想做「又一个剪贴板管理器」，主要差异是：
 
@@ -146,7 +146,7 @@ I am looking for feedback on the install experience, privacy model, and which MC
 - 无分析、无遥测、无云同步
 
 仓库：
-https://github.com/wavever/ClipTrace
+https://github.com/wavever/Clipth
 
 希望听听大家对隐私边界、安装体验、MCP 工具设计的反馈。
 ```
@@ -154,11 +154,11 @@ https://github.com/wavever/ClipTrace
 ### X / Threads
 
 ```text
-I open-sourced ClipTrace, a local-first clipboard history app for macOS.
+I open-sourced Clipth, a local-first clipboard history app for macOS.
 
 It has offline semantic search and a built-in MCP server, so Claude Desktop / Claude Code / Cursor can search clipboard history without uploading it to the cloud.
 
-GitHub: https://github.com/wavever/ClipTrace
+GitHub: https://github.com/wavever/Clipth
 ```
 
 ## Launch Order

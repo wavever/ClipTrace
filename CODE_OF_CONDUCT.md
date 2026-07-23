@@ -1,6 +1,6 @@
 # Code of Conduct
 
-ClipTrace is a small open-source project. The contribution standard is simple:
+Clipth is a small open-source project. The contribution standard is simple:
 
 - Be respectful and specific.
 - Criticize code, behavior, and tradeoffs, not people.

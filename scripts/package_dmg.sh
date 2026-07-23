@@ -8,7 +8,7 @@ fi
 
 APP_PATH="$1"
 OUTPUT_DMG="$2"
-VOLUME_NAME="${3:-ClipTrace}"
+VOLUME_NAME="${3:-Clipth}"
 APP_NAME="${4:-$(basename "$APP_PATH" .app)}"
 
 if [ ! -d "$APP_PATH" ]; then
@@ -18,9 +18,9 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-ICON_PATH="$ROOT_DIR/ClipTrace/Assets.xcassets/AppIcon.appiconset/icon_512x512@2x.png"
+ICON_PATH="$ROOT_DIR/Clipth/Assets.xcassets/AppIcon.appiconset/icon_512x512@2x.png"
 if [ ! -f "$ICON_PATH" ]; then
-  ICON_PATH="$ROOT_DIR/ClipTrace/Assets.xcassets/AppIcon.appiconset/icon_512x512.png"
+  ICON_PATH="$ROOT_DIR/Clipth/Assets.xcassets/AppIcon.appiconset/icon_512x512.png"
 fi
 
 WORK_DIR="$(mktemp -d)"

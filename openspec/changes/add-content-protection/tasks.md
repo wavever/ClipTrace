@@ -57,7 +57,7 @@
 ## 5. Verification
 
 - [x] 5.1 Build the app with Xcode command-line settings used by this repo.
-  (`xcodebuild -scheme ClipTrace -configuration Debug` — BUILD SUCCEEDED.)
+  (`xcodebuild -scheme Clipth -configuration Debug` — BUILD SUCCEEDED.)
 - [ ] 5.2 Manual pass: copy a phone number, an `appkey=...` value, an API token,
   a UUID/hash false-positive sample, and a normal URL; verify display masking
   and raw copy behavior. (Detector behavior covered by the deterministic harness;

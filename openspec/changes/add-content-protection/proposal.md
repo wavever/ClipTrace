@@ -1,6 +1,6 @@
 ## Why
 
-ClipTrace is local-first, but it still renders clipboard text verbatim across
+Clipth is local-first, but it still renders clipboard text verbatim across
 ambient surfaces: the main history list, menu bar, Dynamic Island copy feedback,
 Quick Paste, previews, exports, widgets, and MCP tools. When users copy values
 such as app keys, API tokens, passwords, or phone numbers, keeping the clip is
@@ -8,7 +8,7 @@ useful, while showing the raw value in every surface is unnecessarily risky.
 
 Dropping these clips would destroy the core clipboard-manager workflow. The
 better product behavior is to keep the original value available for explicit
-reuse, but redact sensitive spans whenever ClipTrace displays, previews, exports
+reuse, but redact sensitive spans whenever Clipth displays, previews, exports
 by default, or exposes clipboard text to AI clients.
 
 ## What Changes

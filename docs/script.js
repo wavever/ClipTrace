@@ -1,298 +1,153 @@
-/* ClipTrace · 剪迹 — landing page behaviour
-   No build step, no dependencies. */
+/* Clipth · landing-page behaviour
+ * Language state, workbench position, and the post-tour download dock.
+ */
+
 (() => {
-  'use strict';
-
   const root = document.documentElement;
-  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  root.classList.add('js');
 
-  /* ----------------------------------------------------------
-     i18n — every translatable node carries data-en / data-zh.
-     Values may contain inline HTML, so we set innerHTML.
-     Choice persists in localStorage; first visit auto-detects.
-  ---------------------------------------------------------- */
+  const langToggle = document.getElementById('langToggle');
+  const downloadDock = document.getElementById('downloadDock');
+  const copyNodes = Array.from(document.querySelectorAll('[data-en][data-zh]'));
+  const translatedImages = Array.from(document.querySelectorAll('img[data-alt-en][data-alt-zh]'));
+  const railItems = Array.from(document.querySelectorAll('[data-rail]'));
+  const chapters = Array.from(document.querySelectorAll('[data-chapter]'));
+  const featureRows = Array.from(document.querySelectorAll('.feature-row'));
+
   const META = {
     en: {
-      title: '剪迹 · ClipTrace — Local-first clipboard history for macOS & AI',
-      description: 'ClipTrace is an open-source macOS clipboard manager with offline semantic search, conflict-resilient encrypted sync, and a built-in MCP server.',
-      toggleLabel: 'Switch language to Chinese',
-      swQuery: 'meeting notes from last week'
+      title: '剪迹 · Clipth — Local-first clipboard history for macOS',
+      description: 'Clipth is an open-source, local-first clipboard manager for macOS with offline semantic search, encrypted sync, content protection, and a built-in MCP server.',
+      social: 'Copy once. Find it when it matters. Local-first clipboard history for macOS.',
+      toggle: 'Switch language to Chinese'
     },
     zh: {
-      title: '剪迹 · ClipTrace — 面向 macOS 与 AI 工具的本地优先剪贴板历史',
-      description: '剪迹是一款开源 macOS 剪贴板管理工具，支持离线语义搜索、可抗冲突的端到端加密同步和内置 MCP 服务器。',
-      toggleLabel: '切换语言为 English',
-      swQuery: '上周的会议记录'
+      title: '剪迹 · Clipth — 本地优先的 macOS 剪贴板历史',
+      description: '剪迹是一款开源、本地优先的 macOS 剪贴板管理工具，支持离线语义搜索、加密同步、内容保护和内置 MCP 服务器。',
+      social: '复制过的，需要时都找得回来。本地优先的 macOS 剪贴板历史。',
+      toggle: 'Switch language to English'
     }
   };
 
-  const nodes = Array.from(document.querySelectorAll('[data-en],[data-zh]'));
-  const langToggle = document.getElementById('langToggle');
   const setMeta = (selector, value) => {
     document.querySelector(selector)?.setAttribute('content', value);
   };
 
-  function applyLang(lang) {
-    root.setAttribute('lang', lang);
+  function applyLanguage(language) {
+    const lang = language === 'zh' ? 'zh' : 'en';
+    root.lang = lang === 'zh' ? 'zh-CN' : 'en';
     document.title = META[lang].title;
+
+    copyNodes.forEach((node) => {
+      node.innerHTML = node.dataset[lang];
+    });
+
+    translatedImages.forEach((image) => {
+      image.alt = image.dataset[`alt${lang === 'zh' ? 'Zh' : 'En'}`];
+    });
+
+    document.querySelectorAll('.lang-toggle [data-lang]').forEach((option) => {
+      option.classList.toggle('is-active', option.dataset.lang === lang);
+    });
+
+    langToggle?.setAttribute('aria-label', META[lang].toggle);
     setMeta('meta[name="description"]', META[lang].description);
-    setMeta('meta[property="og:title"]', '剪迹 · ClipTrace');
-    setMeta('meta[property="og:description"]', META[lang].description);
-    setMeta('meta[name="twitter:title"]', '剪迹 · ClipTrace');
-    setMeta('meta[name="twitter:description"]', META[lang].description);
-    langToggle?.setAttribute('aria-label', META[lang].toggleLabel);
+    setMeta('meta[property="og:description"]', META[lang].social);
+    setMeta('meta[name="twitter:description"]', META[lang].social);
 
-    nodes.forEach((el) => {
-      const val = el.dataset[lang];
-      if (val != null) el.innerHTML = val;
-    });
-
-    document.querySelectorAll('.lang-opt').forEach((o) => {
-      o.classList.toggle('active', o.dataset.lang === lang);
-    });
-
-    try { localStorage.setItem('cliptrace-lang', lang); } catch (_) {}
-    // restart the typing demo in the new language
-    startTyping(META[lang].swQuery);
+    try {
+      localStorage.setItem('clipth-language', lang);
+    } catch (_) {
+      // The language still applies when storage is unavailable.
+    }
   }
 
-  function initLang() {
-    let lang = new URLSearchParams(location.search).get('lang');
-    if (lang !== 'en' && lang !== 'zh') {
-      try { lang = localStorage.getItem('cliptrace-lang'); } catch (_) {}
+  function initialLanguage() {
+    const queryLanguage = new URLSearchParams(window.location.search).get('lang');
+    if (queryLanguage === 'en' || queryLanguage === 'zh') return queryLanguage;
+
+    try {
+      const storedLanguage = localStorage.getItem('clipth-language');
+      if (storedLanguage === 'en' || storedLanguage === 'zh') return storedLanguage;
+    } catch (_) {
+      // Fall through to the browser language.
     }
-    if (lang !== 'en' && lang !== 'zh') {
-      lang = (navigator.language || 'en').toLowerCase().startsWith('zh') ? 'zh' : 'en';
-    }
-    applyLang(lang);
+
+    return (navigator.language || 'en').toLowerCase().startsWith('zh') ? 'zh' : 'en';
   }
 
   langToggle?.addEventListener('click', () => {
-    applyLang(root.getAttribute('lang') === 'zh' ? 'en' : 'zh');
+    applyLanguage(root.lang.startsWith('zh') ? 'en' : 'zh');
   });
 
-  /* ----------------------------------------------------------
-     Sticky-nav shadow on scroll
-  ---------------------------------------------------------- */
-  const nav = document.getElementById('nav');
-  const onScroll = () => nav.classList.toggle('scrolled', window.scrollY > 12);
-  onScroll();
-  window.addEventListener('scroll', onScroll, { passive: true });
+  if ('IntersectionObserver' in window && chapters.length) {
+    const chapterObserver = new IntersectionObserver((entries) => {
+      const visible = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
 
-  /* ----------------------------------------------------------
-     Scroll reveals
-  ---------------------------------------------------------- */
-  const revealIO = new IntersectionObserver((entries) => {
-    entries.forEach((e) => {
-      if (e.isIntersecting) { e.target.classList.add('in'); revealIO.unobserve(e.target); }
-    });
-  }, { threshold: 0.16, rootMargin: '0px 0px -8% 0px' });
-  document.querySelectorAll('.reveal').forEach((el) => revealIO.observe(el));
-
-  // search-demo result rows animate when the window is in view
-  const swDemo = document.querySelector('.search-window');
-  if (swDemo) {
-    const rowIO = new IntersectionObserver((entries) => {
-      entries.forEach((e) => {
-        if (e.isIntersecting) {
-          e.target.querySelectorAll('.sw-row').forEach((r) => r.classList.add('in'));
-          rowIO.unobserve(e.target);
-        }
+      if (!visible) return;
+      const activeChapter = visible.target.dataset.chapter;
+      railItems.forEach((item) => {
+        item.classList.toggle('is-active', item.dataset.rail === activeChapter);
       });
-    }, { threshold: 0.4 });
-    rowIO.observe(swDemo);
+    }, {
+      threshold: [0.25, 0.5, 0.75],
+      rootMargin: '-18% 0px -42% 0px'
+    });
+
+    chapters.forEach((chapter) => chapterObserver.observe(chapter));
   }
 
-  /* ----------------------------------------------------------
-     Photo stack — pull forward the print actually under the pointer.
-     We prefer stable layout boxes so an animating/raised print cannot steal
-     the pointer from the photo currently under the cursor.
-  ---------------------------------------------------------- */
-  const stack = document.getElementById('photoStack');
-  if (stack && !reduceMotion && window.matchMedia('(pointer:fine)').matches) {
-    const P = {
-      stats: stack.querySelector('.ph-stats'),
-      main:  stack.querySelector('.ph-main'),
-      mcp:   stack.querySelector('.ph-mcp'),
+  if ('IntersectionObserver' in window && featureRows.length) {
+    const featureObserver = new IntersectionObserver((entries, observer) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        entry.target.classList.add('is-visible');
+        observer.unobserve(entry.target);
+      });
+    }, {
+      threshold: 0.12,
+      rootMargin: '0px 0px -8% 0px'
+    });
+
+    featureRows.forEach((row) => featureObserver.observe(row));
+  } else {
+    featureRows.forEach((row) => row.classList.add('is-visible'));
+  }
+
+  if ('IntersectionObserver' in window && downloadDock) {
+    const privacySection = document.getElementById('privacy');
+    const downloadSection = document.getElementById('download');
+    let featureTourCompleted = false;
+    let downloadVisible = false;
+
+    const syncDock = () => {
+      const visible = featureTourCompleted && !downloadVisible;
+      downloadDock.classList.toggle('is-visible', visible);
+      downloadDock.setAttribute('aria-hidden', String(!visible));
     };
-    if (P.stats && P.main && P.mcp) {
-      stack.classList.add('controlled');   // hand control to JS, disable CSS :hover
-      const photos = [P.stats, P.main, P.mcp];
-      let active = null, lastClientX = 0, lastClientY = 0, raf = null;
-      const departureTimers = new Map();
 
-      const clearDeparture = (el) => {
-        const timer = departureTimers.get(el);
-        if (timer) clearTimeout(timer);
-        departureTimers.delete(el);
-        el.classList.remove('is-departing');
-      };
+    if (privacySection) {
+      new IntersectionObserver((entries, observer) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          featureTourCompleted = true;
+          syncDock();
+          observer.disconnect();
+        }
+      }, { threshold: 0.25 }).observe(privacySection);
+    }
 
-      const markDeparting = (el) => {
-        if (!el) return;
-        clearDeparture(el);
-        el.classList.add('is-departing');
-        departureTimers.set(el, setTimeout(() => {
-          el.classList.remove('is-departing');
-          departureTimers.delete(el);
-        }, 760));
-      };
-
-      const clearAllDepartures = () => {
-        photos.forEach(clearDeparture);
-      };
-
-      const syncActiveClass = (el) => {
-        stack.classList.remove('active-stats', 'active-main', 'active-mcp');
-        if (el === P.stats) stack.classList.add('active-stats');
-        if (el === P.main) stack.classList.add('active-main');
-        if (el === P.mcp) stack.classList.add('active-mcp');
-      };
-
-      const setActive = (el, options = {}) => {
-        if (el === active) return;
-        const { keepDeparture = Boolean(el) } = options;
-        const previous = active;
-        active = el;
-        if (previous && keepDeparture) markDeparting(previous);
-        if (!keepDeparture) clearAllDepartures();
-        if (el) clearDeparture(el);
-        syncActiveClass(el);
-        P.stats.classList.toggle('is-active', el === P.stats);
-        P.main.classList.toggle('is-active',  el === P.main);
-        P.mcp.classList.toggle('is-active',   el === P.mcp);
-      };
-
-      const uniquePhotoHits = (clientX, clientY) => {
-        const seen = new Set();
-        return document.elementsFromPoint(clientX, clientY)
-          .map((el) => el.closest?.('.photo'))
-          .filter((photo) => {
-            if (!photo || !stack.contains(photo) || !photos.includes(photo) || seen.has(photo)) return false;
-            seen.add(photo);
-            return !photo.classList.contains('is-departing');
-          });
-      };
-
-      const stableLayoutPick = (clientX, clientY) => {
-        const r = stack.getBoundingClientRect();
-        const x = clientX - r.left;
-        const y = clientY - r.top;
-        const candidates = photos.filter((photo) => {
-          if (photo.classList.contains('is-departing')) return false;
-          return x >= photo.offsetLeft &&
-            x <= photo.offsetLeft + photo.offsetWidth &&
-            y >= photo.offsetTop &&
-            y <= photo.offsetTop + photo.offsetHeight;
-        });
-        if (!candidates.length) return null;
-
-        return candidates
-          .map((photo) => {
-            const cx = photo.offsetLeft + photo.offsetWidth / 2;
-            const cy = photo.offsetTop + photo.offsetHeight / 2;
-            const dx = Math.abs(x - cx) / (photo.offsetWidth / 2);
-            const dy = Math.abs(y - cy) / (photo.offsetHeight / 2);
-            const activeBias = photo === active ? 0.18 : 0;
-            const frontBias = photo === P.main ? 0.04 : 0;
-            return { photo, score: Math.hypot(dx, dy) - activeBias - frontBias };
-          })
-          .sort((a, b) => a.score - b.score)[0].photo;
-      };
-
-      const pick = (clientX, clientY) => {
-        return stableLayoutPick(clientX, clientY) || uniquePhotoHits(clientX, clientY)[0];
-      };
-
-      const update = () => {
-        raf = null;
-        const picked = pick(lastClientX, lastClientY);
-        stack.classList.toggle('engaged', Boolean(picked));
-        setActive(picked);
-      };
-
-      stack.addEventListener('pointermove', (e) => {
-        lastClientX = e.clientX;
-        lastClientY = e.clientY;
-        if (!raf) raf = requestAnimationFrame(update);
-      });
-      stack.addEventListener('pointerleave', () => {
-        if (raf) { cancelAnimationFrame(raf); raf = null; }
-        stack.classList.remove('engaged');
-        setActive(null, { keepDeparture: false });
-      });
+    if (downloadSection) {
+      new IntersectionObserver((entries) => {
+        downloadVisible = entries.some((entry) => entry.isIntersecting);
+        syncDock();
+      }, { threshold: 0.2 }).observe(downloadSection);
     }
   }
 
-  /* ----------------------------------------------------------
-     Trace-spine: highlight the node for the section in view
-  ---------------------------------------------------------- */
-  const spineNodes = Array.from(document.querySelectorAll('.spine-node'));
-  if (spineNodes.length) {
-    const sections = spineNodes
-      .map((n) => document.getElementById(n.dataset.target))
-      .filter(Boolean);
-    const spineIO = new IntersectionObserver((entries) => {
-      entries.forEach((e) => {
-        if (e.isIntersecting) {
-          const id = e.target.id;
-          spineNodes.forEach((n) => n.classList.toggle('active', n.dataset.target === id));
-        }
-      });
-    }, { threshold: 0.5, rootMargin: '-40% 0px -40% 0px' });
-    sections.forEach((s) => spineIO.observe(s));
-    // node click → scroll to section
-    spineNodes.forEach((n) => {
-      n.style.pointerEvents = 'auto';
-      n.addEventListener('click', () => {
-        document.getElementById(n.dataset.target)?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth' });
-      });
-    });
-  }
+  const year = document.getElementById('year');
+  if (year) year.textContent = String(new Date().getFullYear());
 
-  /* ----------------------------------------------------------
-     Typing demo in the search window
-  ---------------------------------------------------------- */
-  const typed = document.getElementById('swTyped');
-  let typeTimer = null;
-  function startTyping(text) {
-    if (!typed) return;
-    clearTimeout(typeTimer);
-    if (reduceMotion) { typed.textContent = text; return; }
-    typed.textContent = '';
-    let i = 0;
-    const tick = () => {
-      typed.textContent = text.slice(0, i);
-      if (i++ <= text.length) typeTimer = setTimeout(tick, 55 + Math.random() * 40);
-    };
-    // delay until the demo is likely on screen
-    typeTimer = setTimeout(tick, 600);
-  }
-
-  /* ----------------------------------------------------------
-     Copy the MCP config
-  ---------------------------------------------------------- */
-  const copyBtn = document.getElementById('termCopy');
-  copyBtn?.addEventListener('click', async () => {
-    const cfg = {
-      mcpServers: {
-        clipboard: {
-          command: '/Applications/ClipTrace.app/Contents/MacOS/ClipTrace',
-          args: ['--mcp']
-        }
-      }
-    };
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(cfg, null, 2));
-      const original = copyBtn.dataset[root.getAttribute('lang')] || 'Copy';
-      copyBtn.textContent = root.getAttribute('lang') === 'zh' ? '已复制 ✓' : 'Copied ✓';
-      copyBtn.classList.add('copied');
-      setTimeout(() => { copyBtn.textContent = original; copyBtn.classList.remove('copied'); }, 1800);
-    } catch (_) { /* clipboard blocked — no-op */ }
-  });
-
-  /* ----------------------------------------------------------
-     Boot
-  ---------------------------------------------------------- */
-  initLang();
+  applyLanguage(initialLanguage());
 })();

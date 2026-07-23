@@ -74,12 +74,12 @@ on the raw clip.
 #### Scenario: Copy action reuses raw value
 
 - **WHEN** the user explicitly copies or quick-pastes a protected clip
-- **THEN** ClipTrace writes the original raw clip content to the pasteboard
+- **THEN** Clipth writes the original raw clip content to the pasteboard
 - **AND** the UI still does not reveal the raw sensitive span
 
 ### Requirement: Protected presentation surfaces
 
-Every ClipTrace surface that displays clipboard text SHALL render protected
+Every Clipth surface that displays clipboard text SHALL render protected
 display text for protected clips instead of raw content. This includes main
 history rows, menu bar rows, Dynamic Island content, Quick Paste, copy feedback,
 preview popovers, text/RTF Quick Look materialization, widget snapshots, search
@@ -150,7 +150,7 @@ SHALL be enabled by default.
 #### Scenario: Master toggle disables protection
 
 - **WHEN** the user disables Content Protection
-- **THEN** ClipTrace displays raw content according to the previous app behavior
+- **THEN** Clipth displays raw content according to the previous app behavior
 - **AND** the user can re-enable protection without losing stored clips
 
 ### Requirement: Existing privacy boundaries remain intact

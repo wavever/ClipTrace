@@ -281,9 +281,9 @@ def main() -> None:
         '<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" '
         'xmlns:dc="http://purl.org/dc/elements/1.1/">\n'
         "    <channel>\n"
-        "        <title>ClipTrace</title>\n"
+        "        <title>Clipth</title>\n"
         f"        <link>{REPO_URL}</link>\n"
-        "        <description>ClipTrace release feed</description>\n"
+        "        <description>Clipth release feed</description>\n"
         "        <language>en</language>\n"
         f"{item}{prev_block}\n"
         "    </channel>\n"

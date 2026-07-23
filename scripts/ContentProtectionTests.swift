@@ -7,7 +7,7 @@ import Foundation
 // before compiling:
 //
 //   cp scripts/ContentProtectionTests.swift /tmp/main.swift && \
-//   swiftc ClipTrace/Services/ContentProtection.swift /tmp/main.swift \
+//   swiftc Clipth/Services/ContentProtection.swift /tmp/main.swift \
 //       -o /tmp/cptests && /tmp/cptests
 //
 // Exit code 0 = all cases passed; non-zero = at least one failure (printed).

@@ -4,10 +4,10 @@
 
 ## 这是什么
 
-**剪迹 / ClipTrace** —— 原生 macOS 菜单栏剪贴板管理器。
+**剪迹 / Clipth** —— 原生 macOS 菜单栏剪贴板管理器。
 
 - SwiftUI + SwiftData (SQLite)，macOS 14.0+，Swift 5（Xcode 16）。
-- Bundle id `com.wavever.cliptrace`；仓库 `wavever/ClipTrace`。
+- Bundle id `com.wavever.clipth`；仓库 `wavever/Clipth`。
 - 默认本地 / 离线：语义搜索用 Apple `NLEmbedding`，OCR 用 `Vision`，本地 MCP
   服务走 stdio。无遥测；网络仅用于 Sparkle 更新检查和用户主动配置的端到端加密同步
   （iCloud 云盘 / WebDAV / 本地同步文件夹）。
@@ -16,7 +16,7 @@
 ### 目录结构
 
 ```
-ClipTrace/
+Clipth/
   Models/       SwiftData @Model 类型 + 偏好存储（AppearancePreferences 等）
   ViewModels/   ClipboardViewModel（列表/搜索/选择的核心）
   Views/        SwiftUI 视图 + Theme.swift（设计系统）
@@ -34,9 +34,9 @@ scripts/        generate-signing-cert.sh（一次性签名配置）
 ## 本地构建运行
 
 ```bash
-xcodebuild -project ClipTrace.xcodeproj -scheme ClipTrace -configuration Debug \
+xcodebuild -project Clipth.xcodeproj -scheme Clipth -configuration Debug \
   -derivedDataPath build build
-open build/Build/Products/Debug/ClipTrace.app
+open build/Build/Products/Debug/Clipth.app
 ```
 
 **准则：开发阶段，每次完成代码开发后都必须构建并把 App 运行起来。** 不要只报告编译通过；
@@ -44,20 +44,20 @@ open build/Build/Products/Debug/ClipTrace.app
 App 里验证：
 
 ```bash
-pkill -f "ClipTrace.app/Contents/MacOS/ClipTrace" || true
-open build/Build/Products/Debug/ClipTrace.app
+pkill -f "Clipth.app/Contents/MacOS/Clipth" || true
+open build/Build/Products/Debug/Clipth.app
 ```
 
 若本次构建使用了不同的 `-derivedDataPath` 或 Xcode 默认 DerivedData，必须启动对应路径下
-最新生成的 `ClipTrace.app`，不要启动旧产物。
+最新生成的 `Clipth.app`，不要启动旧产物。
 
-本地构建会自动用 `ClipTrace Self-Signed` 身份签名（见下）。若该身份不在钥匙串里，构建会
+本地构建会自动用 `Clipth Self-Signed` 身份签名（见下）。若该身份不在钥匙串里，构建会
 失败——要么运行一次 `scripts/generate-signing-cert.sh`，要么用 `CODE_SIGNING_ALLOWED=NO`
 做无签名构建。
 
 ## 代码签名（动签名相关的任何东西前必读）
 
-App 使用**固定的自签名证书**（`CN = ClipTrace Self-Signed`）签名，而**不是** ad-hoc。
+App 使用**固定的自签名证书**（`CN = Clipth Self-Signed`）签名，而**不是** ad-hoc。
 这是关键，不能退回 ad-hoc：
 
 - macOS 把**辅助功能（TCC）**授权绑定在 bundle 的代码签名*指定要求（designated
@@ -76,19 +76,19 @@ App 使用**固定的自签名证书**（`CN = ClipTrace Self-Signed`）签名�
   并打印 CI 需要的两个 GitHub Secret。
 - **绝不重新生成证书。** 新证书 = 新指纹 = 新要求 = 所有用户的辅助功能授权再次失效。脚本
   不加 `--force` 会拒绝执行。
-- 项目签名设置在 `ClipTrace.xcodeproj/project.pbxproj`：Debug 和 Release 都是
-  `CODE_SIGN_STYLE = Manual`、`CODE_SIGN_IDENTITY = "ClipTrace Self-Signed"`。
+- 项目签名设置在 `Clipth.xcodeproj/project.pbxproj`：Debug 和 Release 都是
+  `CODE_SIGN_STYLE = Manual`、`CODE_SIGN_IDENTITY = "Clipth Self-Signed"`。
 
 ### 这套方案没解决的
 
 App **未公证**（需要付费 Developer ID）。首次启动仍会有 Gatekeeper「无法验证开发者」
 提示；用户需把 App 移到 `/Applications` 并执行
-`xattr -dr com.apple.quarantine /Applications/ClipTrace.app`。
+`xattr -dr com.apple.quarantine /Applications/Clipth.app`。
 
 ### 老用户一次性迁移（ad-hoc → 签名）
 
 从未签名旧版升级上来的用户，会留下一条对不上的旧 TCC 记录（身份确实变了）。在受影响的
-机器上做一次：`tccutil reset Accessibility com.wavever.cliptrace`，把 App 移到
+机器上做一次：`tccutil reset Accessibility com.wavever.clipth`，把 App 移到
 `/Applications`，去掉 quarantine，重启，重新授权。此后所有更新都稳定保留授权。
 
 ## 发布流程
@@ -97,7 +97,7 @@ App **未公证**（需要付费 Developer ID）。首次启动仍会有 Gatekee
 
 1. **导入签名证书**：从 Secret `SIGNING_CERT_P12_BASE64`、`SIGNING_CERT_PASSWORD`
    导入临时钥匙串；未设置则直接失败。
-2. **Release 构建**：用 `ClipTrace Self-Signed` 签名；校验产物非 ad-hoc，且烤进去的
+2. **Release 构建**：用 `Clipth Self-Signed` 签名；校验产物非 ad-hoc，且烤进去的
    版本号与 tag 一致。
 3. 通过 `scripts/package_dmg.sh` 打包 `.app` 成带背景指引的 DMG（拖入 Applications
    安装），用 **Sparkle EdDSA 签名** DMG，重新生成 `appcast.xml`，发布 GitHub Release。
@@ -108,7 +108,7 @@ target 开了 `GENERATE_INFOPLIST_FILE = YES`，所以 Xcode 在构建时会从 
 **重新生成** `CFBundleShortVersionString`、从 `CURRENT_PROJECT_VERSION` 重新生成
 `CFBundleVersion`。因此：
 
-- **不要**在 `ClipTrace/Info.plist` 里写版本号，也不要用 `plutil` 去改——会被生成值覆盖。
+- **不要**在 `Clipth/Info.plist` 里写版本号，也不要用 `plutil` 去改——会被生成值覆盖。
   （那两个键已被故意移除。）
 - Release 构建从 git tag 传入 `MARKETING_VERSION="$VERSION"` 和
   `CURRENT_PROJECT_VERSION="$VERSION"`。`CFBundleVersion` 必须跟着版本走，否则 Sparkle
@@ -123,7 +123,7 @@ target 开了 `GENERATE_INFOPLIST_FILE = YES`，所以 Xcode 在构建时会从 
 ## 设计语言 / 风格规范
 
 整体是温暖的**「纸张」质感**：奶油色纸卡漂浮在柔和的**鼠尾草（sage）**外框上，配**暖橄榄色
-阴影**而非冷灰/黑。整套系统在 `ClipTrace/Views/Theme.swift`。
+阴影**而非冷灰/黑。整套系统在 `Clipth/Views/Theme.swift`。
 
 - **暖色、低饱和的大地色系。避免冷感/科技蓝。** sage 是验证过的默认色，连「蓝」这个 accent
   都做得更柔。
