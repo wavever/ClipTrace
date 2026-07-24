@@ -44,6 +44,7 @@ NOTES_DIR = os.environ.get("NOTES_DIR", "docs/release-notes")
 OUT_APPCAST = os.environ.get("OUT_APPCAST", "appcast.xml")
 OUT_BODY = os.environ.get("OUT_BODY", "")
 PUBDATE = os.environ.get("PUBDATE", "")
+APP_NAME = "Clipth"
 
 
 if not BUILD_VERSION:
@@ -215,6 +216,11 @@ def previous_items() -> str:
     if not PREV_APPCAST or not os.path.exists(PREV_APPCAST):
         return ""
     xml = open(PREV_APPCAST).read()
+    channel_title = re.search(r"<channel>.*?<title>(.*?)</title>", xml, flags=re.S)
+    if not channel_title or html.unescape(channel_title.group(1).strip()) != APP_NAME:
+        print("Previous appcast belongs to a different app identity; starting fresh history.")
+        return ""
+
     items = re.findall(r"<item>.*?</item>", xml, flags=re.S)
     seen = {VERSION, BUILD_VERSION}
     kept = []
@@ -281,9 +287,9 @@ def main() -> None:
         '<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" '
         'xmlns:dc="http://purl.org/dc/elements/1.1/">\n'
         "    <channel>\n"
-        "        <title>Clipth</title>\n"
+        f"        <title>{APP_NAME}</title>\n"
         f"        <link>{REPO_URL}</link>\n"
-        "        <description>Clipth release feed</description>\n"
+        f"        <description>{APP_NAME} release feed</description>\n"
         "        <language>en</language>\n"
         f"{item}{prev_block}\n"
         "    </channel>\n"
