@@ -658,7 +658,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.9.18;
+				MARKETING_VERSION = 0.9.90;
 				PRODUCT_BUNDLE_IDENTIFIER = com.wavever.clipth;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -687,7 +687,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.9.18;
+				MARKETING_VERSION = 0.9.90;
 				PRODUCT_BUNDLE_IDENTIFIER = com.wavever.clipth;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -712,7 +712,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.9.18;
+				MARKETING_VERSION = 0.9.90;
 				PRODUCT_BUNDLE_IDENTIFIER = com.wavever.clipth.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -738,7 +738,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.9.18;
+				MARKETING_VERSION = 0.9.90;
 				PRODUCT_BUNDLE_IDENTIFIER = com.wavever.clipth.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
