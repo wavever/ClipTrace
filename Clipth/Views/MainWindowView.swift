@@ -1618,8 +1618,7 @@ private struct GroupManagementSheet: View {
     let onClose: () -> Void
 
     @State private var newGroupName = ""
-    @State private var deleteTarget: ClipboardGroup?
-    @State private var showDeleteAlert = false
+    @State private var deleteRequest: ConfirmRequest?
     @FocusState private var newGroupFocused: Bool
 
     private var sortedGroups: [ClipboardGroup] {
@@ -1627,28 +1626,41 @@ private struct GroupManagementSheet: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            content
-            Divider()
-            footer
+        ZStack {
+            VStack(spacing: 0) {
+                header
+                Divider()
+                content
+                Divider()
+                footer
+            }
+            .disabled(deleteRequest != nil)
+
+            // This sheet lives in its own window, so the main-window
+            // ConfirmationCenter host would render underneath it.
+            if let request = deleteRequest {
+                Color.black.opacity(0.45)
+                    .ignoresSafeArea()
+                    .onTapGesture { dismissDeleteConfirmation() }
+                    .transition(.opacity)
+                    .zIndex(1)
+
+                ConfirmationDialogView(
+                    request: request,
+                    onConfirm: {
+                        request.action()
+                        dismissDeleteConfirmation()
+                    },
+                    onCancel: dismissDeleteConfirmation
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                .zIndex(2)
+            }
         }
         .frame(width: 520, height: 500)
         .background(Color.appPaper)
-        .alert(L("confirm.deleteGroup.title"), isPresented: $showDeleteAlert) {
-            Button(L("common.cancel"), role: .cancel) {
-                deleteTarget = nil
-            }
-            Button(L("common.delete"), role: .destructive) {
-                confirmDelete()
-            }
-        } message: {
-            Text(L("confirm.deleteGroup.message"))
-        }
-        .onChange(of: showDeleteAlert) { _, showing in
-            if !showing { deleteTarget = nil }
-        }
+        .animation(.spring(response: 0.34, dampingFraction: 0.84), value: deleteRequest?.id)
     }
 
     private var header: some View {
@@ -1729,8 +1741,7 @@ private struct GroupManagementSheet: View {
                                     }
                                 },
                                 onDelete: {
-                                    deleteTarget = group
-                                    showDeleteAlert = true
+                                    requestDelete(group)
                                 }
                             )
                         }
@@ -1767,16 +1778,30 @@ private struct GroupManagementSheet: View {
         )
     }
 
-    private func confirmDelete() {
-        guard let deleteTarget else { return }
-        let name = deleteTarget.displayName
-        vm.deleteGroup(deleteTarget, context: modelContext)
+    private func requestDelete(_ group: ClipboardGroup) {
+        deleteRequest = ConfirmRequest(
+            title: L("confirm.deleteGroup.title"),
+            message: L("confirm.deleteGroup.message"),
+            confirmLabel: L("common.delete"),
+            cancelLabel: L("common.cancel"),
+            icon: "trash",
+            isDestructive: true,
+            action: { deleteGroup(group) }
+        )
+    }
+
+    private func dismissDeleteConfirmation() {
+        deleteRequest = nil
+    }
+
+    private func deleteGroup(_ group: ClipboardGroup) {
+        let name = group.displayName
+        vm.deleteGroup(group, context: modelContext)
         ToastCenter.shared.show(
             L("group.deletedFormat", name),
             systemImage: "folder.badge.minus",
             tint: .red
         )
-        self.deleteTarget = nil
     }
 }
 

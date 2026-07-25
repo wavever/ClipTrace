@@ -140,7 +140,7 @@ struct QuickPasteView: View {
             scheduleSearch(draft)
         }
         .onChange(of: state.session) { _, _ in
-            resetSearchSession()
+            resetPanelSession()
         }
         .background(PanelWindowReader { hostWindow = $0 })
         // Dwell preview: resting on a row — keyboard focus or pointer, the
@@ -792,13 +792,16 @@ struct QuickPasteView: View {
         keyClaimToken &+= 1
     }
 
-    /// The panel window is reused across invocations, so scrub any search
-    /// left over from the previous session and give the key catcher back
-    /// first-responder before the panel becomes visible again.
-    private func resetSearchSession() {
+    /// The panel window and SwiftUI view are reused across invocations. Reset
+    /// every transient interaction state explicitly because an unchanged item
+    /// id snapshot will not trigger the list-change cleanup on its own.
+    private func resetPanelSession() {
         searchDebounce?.cancel()
         copyFeedbackTask?.cancel()
+        selectedIDs.removeAll(keepingCapacity: true)
         copiedIDs.removeAll(keepingCapacity: true)
+        hoverID = nil
+        focusedID = visualItems.first?.id
         searchDraft = ""
         contextMenuKeyboardRequest = nil
         exitSearch()
