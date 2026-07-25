@@ -468,17 +468,23 @@ struct PaperMenuPicker<Value: Hashable>: View {
     @Binding var selection: Value
     var width: CGFloat?
     var help: String?
+    var displayTitle: String?
+    var onSelect: ((Value) -> Void)?
 
     init(
         options: [PaperMenuOption<Value>],
         selection: Binding<Value>,
         width: CGFloat? = nil,
-        help: String? = nil
+        help: String? = nil,
+        displayTitle: String? = nil,
+        onSelect: ((Value) -> Void)? = nil
     ) {
         self.options = options
         self._selection = selection
         self.width = width
         self.help = help
+        self.displayTitle = displayTitle
+        self.onSelect = onSelect
     }
 
     @State private var hovering = false
@@ -498,7 +504,7 @@ struct PaperMenuPicker<Value: Hashable>: View {
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(Color.appAccent)
                 }
-                Text(selected?.title ?? "")
+                Text(displayTitle ?? selected?.title ?? "")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Color.appMetal)
                     .lineLimit(1)
@@ -537,6 +543,7 @@ struct PaperMenuPicker<Value: Hashable>: View {
                 selected: selection,
                 width: menuWidth,
                 onSelect: { value in
+                    onSelect?(value)
                     if selection != value { selection = value }
                     controller.close()
                 }

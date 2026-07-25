@@ -9,7 +9,9 @@ struct SettingsPanelView: View {
     @ObservedObject private var nav = AppNavigation.shared
     @State private var section: Section = .general
 
-    @AppStorage("maxRecords") private var maxRecords = 500
+    // Zero is the persisted sentinel for unlimited history. Existing users who
+    // explicitly chose a numeric cap keep that value; fresh installs stay open-ended.
+    @AppStorage("maxRecords") private var maxRecords = 0
     @AppStorage("pollInterval") private var pollInterval = 0.5
     @AppStorage("launchAtLogin") private var launchAtLogin = false
     @AppStorage("showInDock") private var showInDock = true
@@ -470,6 +472,11 @@ struct SettingCard<Control: View>: View {
 
 // MARK: - General
 
+private enum MaxRecordsMode: String, Hashable {
+    case unlimited
+    case manual
+}
+
 private struct GeneralSection: View {
     @Binding var maxRecords: Int
     @Binding var pollInterval: Double
@@ -488,6 +495,10 @@ private struct GeneralSection: View {
     @AppStorage("videoPreviewMuted") private var videoPreviewMuted = true
     @AppStorage("menuBarContentLayout") private var menuBarContentLayoutRaw = PanelContentLayout.list.rawValue
     @AppStorage("quickPasteContentLayout") private var quickPasteContentLayoutRaw = PanelContentLayout.list.rawValue
+    @AppStorage("maxRecordsManualValue") private var manualMaxRecords = 500
+    @State private var maxRecordsMenuSelection = MaxRecordsMode.unlimited
+    @State private var manualMaxRecordsDraft = 500
+    @State private var isEditingMaxRecords = false
     @ObservedObject private var hoverPreview = HoverPreviewSettings.shared
     @ObservedObject private var nav = AppNavigation.shared
     @EnvironmentObject private var vm: ClipboardViewModel
@@ -822,10 +833,55 @@ private struct GeneralSection: View {
                     title: L("settings.storage.maxRecords"),
                     subtitle: L("settings.storage.maxRecords.subtitle")
                 ) {
-                    MaxRecordsField(value: $maxRecords)
-                        .onChange(of: maxRecords) { _, _ in
-                            vm.enforceMaxRecords(context: modelContext)
+                    PaperMenuPicker(
+                        options: [
+                            PaperMenuOption(
+                                MaxRecordsMode.unlimited,
+                                L("settings.storage.maxRecords.unlimited"),
+                                icon: "infinity"
+                            ),
+                            PaperMenuOption(
+                                MaxRecordsMode.manual,
+                                L("settings.storage.maxRecords.manual"),
+                                icon: "number"
+                            )
+                        ],
+                        selection: $maxRecordsMenuSelection,
+                        width: 176,
+                        displayTitle: maxRecords > 0
+                            ? L("settings.storage.maxRecordsFormat", maxRecords)
+                            : L("settings.storage.maxRecords.unlimited"),
+                        onSelect: handleMaxRecordsSelection
+                    )
+                    .onAppear {
+                        if maxRecords > 0 {
+                            manualMaxRecords = maxRecords
+                            manualMaxRecordsDraft = maxRecords
+                            maxRecordsMenuSelection = .manual
+                        } else {
+                            manualMaxRecordsDraft = manualMaxRecords
+                            maxRecordsMenuSelection = .unlimited
                         }
+                    }
+                    .sheet(
+                        isPresented: $isEditingMaxRecords,
+                        onDismiss: syncMaxRecordsMenuSelection
+                    ) {
+                        ManualMaxRecordsEditor(
+                            initialValue: manualMaxRecordsDraft,
+                            onCancel: {
+                                isEditingMaxRecords = false
+                            },
+                            onSave: { limit in
+                                manualMaxRecords = limit
+                                manualMaxRecordsDraft = limit
+                                maxRecords = limit
+                                maxRecordsMenuSelection = .manual
+                                isEditingMaxRecords = false
+                                vm.enforceMaxRecords(context: modelContext)
+                            }
+                        )
+                    }
                 }
                 SettingsRow(
                     icon: "timer",
@@ -870,6 +926,27 @@ private struct GeneralSection: View {
                 }
             }
         }
+    }
+
+    private func handleMaxRecordsSelection(_ mode: MaxRecordsMode) {
+        switch mode {
+        case .unlimited:
+            if maxRecords > 0 {
+                manualMaxRecords = maxRecords
+            }
+            maxRecords = 0
+            maxRecordsMenuSelection = .unlimited
+        case .manual:
+            manualMaxRecordsDraft = max(
+                50,
+                min(maxRecords > 0 ? maxRecords : manualMaxRecords, 100_000)
+            )
+            isEditingMaxRecords = true
+        }
+    }
+
+    private func syncMaxRecordsMenuSelection() {
+        maxRecordsMenuSelection = maxRecords > 0 ? .manual : .unlimited
     }
 }
 
@@ -2818,50 +2895,105 @@ private struct AcknowledgementRow: View {
     }
 }
 
-// MARK: - Max records field
-//
-// A numeric input that lets the user type any value within `range` directly.
-// Commits on Return / focus loss and clamps out-of-range entries; a non-numeric
-// entry reverts to the last valid value so the UI never holds an invalid state.
-private struct MaxRecordsField: View {
-    @Binding var value: Int
-    var range: ClosedRange<Int> = 50...100_000
+// MARK: - Manual max-record editor
 
-    @State private var text: String = ""
+/// Numeric editing lives in a focused sheet instead of expanding the dense
+/// settings row. The persisted limit changes only after Save, so opening or
+/// cancelling this editor can never prune history accidentally.
+private struct ManualMaxRecordsEditor: View {
+    private let range = 50...100_000
+    let onCancel: () -> Void
+    let onSave: (Int) -> Void
+
+    @State private var text: String
     @FocusState private var focused: Bool
 
+    init(
+        initialValue: Int,
+        onCancel: @escaping () -> Void,
+        onSave: @escaping (Int) -> Void
+    ) {
+        self._text = State(initialValue: "\(initialValue)")
+        self.onCancel = onCancel
+        self.onSave = onSave
+    }
+
     var body: some View {
-        HStack(spacing: 6) {
-            TextField("", text: $text)
-                .font(.system(size: 13, design: .monospaced))
-                .multilineTextAlignment(.trailing)
-                .frame(width: 100)
-                .focused($focused)
-                .paperTextField(focused: focused)
-                .onAppear { text = "\(value)" }
-                .onChange(of: value) { _, newValue in
-                    if !focused { text = "\(newValue)" }
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.appAccent.opacity(0.13))
+                    Image(systemName: "number")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Color.appAccent)
                 }
-                .onChange(of: focused) { _, isFocused in
-                    if !isFocused { commit() }
+                .frame(width: 40, height: 40)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(L("settings.storage.maxRecords.editor.title"))
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Color.appMetal)
+                    Text(L("settings.storage.maxRecords.editor.subtitle"))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
                 }
-                .onSubmit { commit() }
-            Text(L("settings.storage.maxRecordsUnit"))
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 8) {
+                TextField("", text: $text)
+                    .font(.system(size: 15, weight: .medium, design: .rounded))
+                    .monospacedDigit()
+                    .multilineTextAlignment(.trailing)
+                    .focused($focused)
+                    .paperTextField(focused: focused)
+                    .onSubmit { save() }
+                Text(L("settings.storage.maxRecordsUnit"))
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.appChipFill.opacity(0.6))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+            )
+
+            HStack(spacing: 10) {
+                Button(L("common.cancel"), action: onCancel)
+                    .buttonStyle(PaperActionButtonStyle(role: .plain))
+                    .keyboardShortcut(.cancelAction)
+
+                Button(L("common.save"), action: save)
+                    .buttonStyle(PaperActionButtonStyle(role: .primary))
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(parsedValue == nil)
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .padding(22)
+        .frame(width: 380)
+        .background(Color.appPaper)
+        .onAppear {
+            Task { @MainActor in
+                focused = true
+            }
         }
     }
 
-    private func commit() {
-        let digits = text.filter(\.isNumber)
-        if let parsed = Int(digits) {
-            let clamped = min(max(parsed, range.lowerBound), range.upperBound)
-            value = clamped
-            text = "\(clamped)"
-        } else {
-            // Reject empty / non-numeric — fall back to the last good value.
-            text = "\(value)"
-        }
+    private var parsedValue: Int? {
+        guard let parsed = Int(text.trimmingCharacters(in: .whitespaces)),
+              range.contains(parsed) else { return nil }
+        return parsed
+    }
+
+    private func save() {
+        guard let parsedValue else { return }
+        onSave(parsedValue)
     }
 }
 

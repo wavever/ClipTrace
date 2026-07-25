@@ -309,11 +309,11 @@ class ClipboardViewModel: ObservableObject {
     // MARK: - User-configurable limits (read from the same UserDefaults keys
     // the settings UI writes via @AppStorage).
 
-    /// History cap; falls back to the settings default of 500 and is clamped to
-    /// the field's allowed range.
+    /// History cap. Zero means unlimited; positive values are clamped to the
+    /// settings field's allowed range.
     static func resolvedMaxRecords() -> Int {
         let raw = UserDefaults.standard.integer(forKey: "maxRecords")
-        return raw > 0 ? min(max(raw, 50), 100_000) : 500
+        return raw > 0 ? min(max(raw, 50), 100_000) : 0
     }
 
     /// Clipboard poll interval in seconds; falls back to 0.5s.
@@ -335,6 +335,7 @@ class ClipboardViewModel: ObservableObject {
         // Cheap headcount first; only materialise the tail when over the cap so
         // we don't fault every image blob into memory on each paste.
         let limit = Self.resolvedMaxRecords()
+        guard limit > 0 else { return }
         let countAll = FetchDescriptor<ClipboardItem>()
         guard let total = try? context.fetchCount(countAll), total > limit else { return }
         var tailDescriptor = FetchDescriptor<ClipboardItem>(
@@ -362,6 +363,7 @@ class ClipboardViewModel: ObservableObject {
         // retention boundary surviving for ~2s is harmless.
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 2_000_000_000)
+            self?.backfillStatsHistoryIfNeeded(context: context)
             self?.applyRetentionCleanup(context: context)
         }
         scheduleRetentionTimer(context: context)
@@ -414,7 +416,10 @@ class ClipboardViewModel: ObservableObject {
                    let mostRecent = existing.first {
                     mostRecent.createdAt = Date()
                     try? context.save()
-                    CopyStatsStore.shared.recordCopy()
+                    CopyStatsStore.shared.recordCopy(
+                        sourceApp: sourceApp,
+                        bundleIdentifier: bundleId
+                    )
                     WidgetBridge.shared.requestRefresh(context: context)
                     DynamicIslandController.shared.flash(
                         itemIcon: type.icon,
@@ -446,7 +451,10 @@ class ClipboardViewModel: ObservableObject {
             }
 
             // Bump today's copy counter (guarded by user's toggle).
-            CopyStatsStore.shared.recordCopy()
+            CopyStatsStore.shared.recordCopy(
+                sourceApp: sourceApp,
+                bundleIdentifier: bundleId
+            )
 
             // Refresh the widget snapshot (debounced) so the data/activity
             // widgets reflect the new clip.
@@ -500,6 +508,25 @@ class ClipboardViewModel: ObservableObject {
         if isCapturePaused {
             monitor.setPaused(true, interval: Self.resolvedPollInterval())
         }
+    }
+
+    private func backfillStatsHistoryIfNeeded(context: ModelContext) {
+        let stats = CopyStatsStore.shared
+        guard stats.needsHistoryBackfill else { return }
+
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let cutoff = calendar.date(byAdding: .day, value: -365, to: today) ?? today
+        var descriptor = FetchDescriptor<ClipboardItem>(
+            predicate: #Predicate { $0.createdAt >= cutoff }
+        )
+        // App backfill needs no clipboard payload. Keeping blobs faulted avoids
+        // turning a one-time statistics migration into a large memory spike.
+        descriptor.propertiesToFetch = [\.sourceApp, \.createdAt]
+        guard let items = try? context.fetch(descriptor) else { return }
+        stats.backfillHistory(
+            items.map { AppCopySeed(sourceApp: $0.sourceApp, createdAt: $0.createdAt) }
+        )
     }
     
     func stopMonitoring() {
