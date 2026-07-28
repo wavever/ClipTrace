@@ -106,7 +106,7 @@ Everything is encrypted locally with AES-256-GCM before it reaches iCloud Drive,
 - Redacted display across the history list, previews, menu bar, Dynamic Island, Quick Paste, Quick Look, and search snippets, with a lock badge on protected clips
 - The original value is never modified in storage — copy, quick paste, paste-as-plain-text, and edits still use the raw clip
 - Default exports and MCP responses return redacted content with `isProtected` metadata; raw egress requires an explicit opt-in
-- Master switch and one editable rule list in Settings → Privacy: the built-in phone/app-key rules can be edited, reset, or turned off, alongside your own keyword or regex rules
+- Master switch and one editable rule list in Settings → Data → Privacy: the built-in phone/app-key rules can be edited, reset, or turned off, alongside your own keyword or regex rules
 
 ### Export and Stats
 
@@ -169,7 +169,7 @@ Available tools:
 | `delete_clip` / `restore_clip` | Soft-delete, permanently delete, or restore entries |
 | `create_snippet` | Create a snippet with optional title and tags |
 
-Protected clips are redacted in MCP responses by default and carry `isProtected` metadata; returning raw protected content requires an explicit opt-in in Settings → Privacy. MCP can still expose other clipboard contents to the client you configure — read [PRIVACY.md](PRIVACY.md) before enabling it for sensitive workflows.
+Protected clips are redacted in MCP responses by default and carry `isProtected` metadata; returning raw protected content requires an explicit opt-in in Settings → Data → Privacy. MCP can still expose other clipboard contents to the client you configure — read [PRIVACY.md](PRIVACY.md) before enabling it for sensitive workflows.
 
 ## Install
 

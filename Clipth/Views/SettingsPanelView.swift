@@ -23,13 +23,13 @@ struct SettingsPanelView: View {
     @AppStorage("appearanceTheme") private var appearanceThemeRaw = AppearanceTheme.system.rawValue
     @AppStorage("appLanguage") private var appLanguageRaw = AppLanguage.system.rawValue
 
+    /// Filtering, privacy and merge used to be tabs of their own; they now live
+    /// inside Data, which is where the whole capture → protect → store → export
+    /// chain belongs.
     enum Section: String, CaseIterable, Identifiable {
         case general
         case shortcut
-        case filter
         case rules
-        case privacy
-        case merge
         case ai
         case data
         case about
@@ -38,10 +38,7 @@ struct SettingsPanelView: View {
             switch self {
             case .general:  return L("settings.tab.general")
             case .shortcut: return L("settings.tab.shortcut")
-            case .filter:   return L("settings.tab.filter")
             case .rules:    return L("settings.tab.rules")
-            case .privacy:  return L("settings.tab.privacy")
-            case .merge:    return L("settings.tab.merge")
             case .ai:       return L("settings.tab.ai")
             case .data:     return L("settings.tab.data")
             case .about:    return L("settings.tab.about")
@@ -173,14 +170,8 @@ struct SettingsPanelView: View {
             )
         case .shortcut:
             ShortcutSection()
-        case .filter:
-            FilterSection()
         case .rules:
             RulesSection()
-        case .privacy:
-            PrivacySection()
-        case .merge:
-            MergeSection()
         case .ai:
             AISection()
         case .data:
@@ -1891,12 +1882,6 @@ private struct PrivacySection: View {
                 ForEach(store.rules) { rule in
                     let binding = elementBinding($store.rules, id: rule.id, fallback: rule)
                     HStack(spacing: 8) {
-                        Toggle("", isOn: binding.isEnabled)
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                            .controlSize(.small)
-                            .tint(.appAccent)
-
                         Group {
                             if let kind = rule.builtin {
                                 // Built-ins keep a fixed name in the picker's
@@ -1933,28 +1918,42 @@ private struct PrivacySection: View {
                                     .help(L("settings.privacy.customRules.invalidRegex"))
                             }
 
-                            if let kind = rule.builtin {
-                                if rule.pattern != ProtectionRule.defaultPattern(for: kind) {
+                            // Reserve the slot whether or not this row has a
+                            // button, so the switches stay in one column: a
+                            // built-in only offers reset once its pattern has
+                            // actually been edited.
+                            HStack(spacing: 0) {
+                                if let kind = rule.builtin {
+                                    if rule.pattern != ProtectionRule.defaultPattern(for: kind) {
+                                        Button {
+                                            binding.wrappedValue.pattern = ProtectionRule.defaultPattern(for: kind)
+                                        } label: {
+                                            Image(systemName: "arrow.uturn.backward")
+                                        }
+                                        .buttonStyle(PaperIconButtonStyle(size: 28))
+                                        .help(L("settings.privacy.rules.reset"))
+                                    }
+                                } else {
                                     Button {
-                                        binding.wrappedValue.pattern = ProtectionRule.defaultPattern(for: kind)
+                                        store.rules.removeAll { $0.id == rule.id }
                                     } label: {
-                                        Image(systemName: "arrow.uturn.backward")
+                                        Image(systemName: "minus.circle.fill")
                                     }
                                     .buttonStyle(PaperIconButtonStyle(size: 28))
-                                    .help(L("settings.privacy.rules.reset"))
+                                    .foregroundStyle(Color.appDanger)
+                                    .help(L("common.remove"))
                                 }
-                            } else {
-                                Button {
-                                    store.rules.removeAll { $0.id == rule.id }
-                                } label: {
-                                    Image(systemName: "minus.circle.fill")
-                                }
-                                .buttonStyle(PaperIconButtonStyle(size: 28))
-                                .foregroundStyle(Color.appDanger)
-                                .help(L("common.remove"))
                             }
+                            .frame(width: 28)
                         }
                         .opacity(rule.isEnabled ? 1 : 0.55)
+
+                        // Trailing, like every other switch in Settings.
+                        Toggle("", isOn: binding.isEnabled)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                            .tint(.appAccent)
                     }
                 }
                 HStack {
@@ -2988,7 +2987,15 @@ private struct DataSection: View {
     }
 
     var body: some View {
+        // Ordered along the life of a clip: what gets captured, how it is
+        // protected, how items combine, then where they are stored, kept and
+        // exported. Each of these composes its own titled groups, so the page
+        // stays readable despite its length.
         VStack(spacing: 18) {
+            FilterSection()
+            PrivacySection()
+            MergeSection()
+
             SyncSettingsView()
 
             SettingsGroup(icon: "trash", title: L("settings.data.trash.title"), tint: .appAccent) {
