@@ -308,20 +308,62 @@ struct MainWindowContent: View {
 
                 RuleEditorPanel(
                     rule: rule,
+                    sample: ruleEditor.editingSample,
                     onSave: { saved in
                         FilterSettingsStore.shared.upsertScriptingRule(saved)
                         ruleEditor.dismiss()
                     },
                     onCancel: { ruleEditor.dismiss() }
                 )
+                // Keyed by rule so swapping the edited rule (picking a template)
+                // rebuilds the editor's draft state instead of reusing the old one.
+                .id(rule.id)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .transition(.opacity.combined(with: .scale(scale: 0.95)))
                 .zIndex(7)
+            }
+
+            // AI prompt composer — same overlay idiom; importing from it hands
+            // straight over to the editor for review.
+            if ruleEditor.isComposingPrompt {
+                Color.black.opacity(0.45)
+                    .ignoresSafeArea()
+                    .onTapGesture { ruleEditor.dismissPromptComposer() }
+                    .transition(.opacity)
+                    .zIndex(10)
+
+                RulePromptPanel(
+                    onImport: { ruleEditor.adopt(imported: $0) },
+                    onCancel: { ruleEditor.dismissPromptComposer() }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                .zIndex(11)
+            }
+
+            // Template gallery — sits above the editor so picking a template can
+            // hand straight over to a pre-filled editor.
+            if ruleEditor.isBrowsingTemplates {
+                Color.black.opacity(0.45)
+                    .ignoresSafeArea()
+                    .onTapGesture { ruleEditor.dismissTemplates() }
+                    .transition(.opacity)
+                    .zIndex(8)
+
+                RuleTemplateGalleryPanel(
+                    onPick: { ruleEditor.adopt($0) },
+                    onCancel: { ruleEditor.dismissTemplates() }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                .zIndex(9)
             }
         }
         .animation(.easeOut(duration: 0.22), value: nav.screen)
         .animation(.spring(response: 0.34, dampingFraction: 0.84), value: confirm.request?.id)
         .animation(.spring(response: 0.34, dampingFraction: 0.84), value: ruleEditor.editing?.id)
+        .animation(.spring(response: 0.34, dampingFraction: 0.84), value: ruleEditor.isBrowsingTemplates)
+        .animation(.spring(response: 0.34, dampingFraction: 0.84), value: ruleEditor.isComposingPrompt)
         .animation(.easeOut(duration: 0.22), value: fdaOnboardingDismissed)
         .animation(.easeOut(duration: 0.22), value: showAXOnboarding)
         // Re-check AX trust whenever the app regains focus — coming back from

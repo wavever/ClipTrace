@@ -42,7 +42,11 @@ enum MCPServer {
 
         let container: ModelContainer
         do {
-            container = try AppContainer.makeContainer()
+            // Skip the legacy-store recovery/merge: it is a one-time migration
+            // owned by the GUI, and its filesystem scan can block for a long
+            // time in a headless process (no window to answer a TCC prompt),
+            // which reads to an MCP client as a server that never comes up.
+            container = try AppContainer.makeContainer(recoverLegacy: false)
         } catch {
             log("Failed to open ModelContainer: \(error)")
             return
@@ -220,6 +224,16 @@ enum MCPServer {
             description: "Create a snippet entry, optionally with a title and tags.",
             descriptionLocalizationKey: "settings.mcp.tools.create_snippet.desc"
         ),
+        ToolInfo(
+            name: "list_rules",
+            description: "List the automation rules configured in Clipth, in evaluation order, with their conditions and actions.",
+            descriptionLocalizationKey: "settings.mcp.tools.list_rules.desc"
+        ),
+        ToolInfo(
+            name: "create_rule",
+            description: "Create an automation rule (match conditions + action, including JavaScript or shell scripts). The rule is always created DISABLED — the user must review and enable it in Clipth's settings before it can ever run.",
+            descriptionLocalizationKey: "settings.mcp.tools.create_rule.desc"
+        ),
     ]
 
     /// UserDefaults key that gates whether a tool is advertised in
@@ -245,6 +259,95 @@ enum MCPServer {
     private static let idSchema: [String: Any] = [
         "type": "string",
         "description": "UUID of the clipboard item"
+    ]
+
+    /// String-condition sub-schema, shared by the text and file-name conditions.
+    private static let matchSchema: [String: Any] = [
+        "type": "object",
+        "properties": [
+            "mode": [
+                "type": "string",
+                "enum": ["any", "contains", "notContains", "regex"],
+                "description": "any = no condition (default)"
+            ],
+            "value": [
+                "type": "string",
+                "description": "Keyword, or an ICU regular expression when mode is regex"
+            ]
+        ]
+    ]
+
+    /// The rule format, spelled out for an agent that has never seen Clipth.
+    /// This schema *is* the contract: every field an agent can set, the exact
+    /// vocabulary for each, and what the runner does with the result.
+    private static let ruleInputSchema: [String: Any] = [
+        "type": "object",
+        "properties": [
+            "name": [
+                "type": "string",
+                "description": "Short human-readable rule name shown in Clipth's settings"
+            ],
+            "triggers": [
+                "type": "array",
+                "items": ["type": "string", "enum": ["copy", "paste"]],
+                "description": "When the rule runs. copy = as a clip is captured (changes what gets stored); paste = as text leaves Clipth for another app (changes only that paste, history untouched). Defaults to [\"copy\"]."
+            ],
+            "apps": [
+                "type": "array",
+                "items": [
+                    "oneOf": [
+                        ["type": "string"],
+                        [
+                            "type": "object",
+                            "properties": [
+                                "bundleId": ["type": "string"],
+                                "name": ["type": "string"]
+                            ],
+                            "required": ["bundleId"]
+                        ]
+                    ]
+                ],
+                "description": "Bundle ids the rule is scoped to — the source app on copy, the target app on paste. Omit or leave empty for every app."
+            ],
+            "categories": [
+                "type": "array",
+                "items": ["type": "string", "enum": ["text", "image", "video", "audio", "file"]],
+                "description": "Content kinds the rule applies to. text covers plain text, links and rich text; audio is recognised by file extension. Omit for every kind."
+            ],
+            "contentMatch": matchSchema.merging([
+                "description": "Condition on the clip's text (text/link/rich-text clips only)"
+            ]) { current, _ in current },
+            "fileNameMatch": matchSchema.merging([
+                "description": "Condition on the clip's file name (image/video/audio/file clips only)"
+            ]) { current, _ in current },
+            "fileExtensions": [
+                "type": "array",
+                "items": ["type": "string"],
+                "description": "Extensions a file clip must carry, without the dot (e.g. [\"mp3\",\"m4a\"]). Omit for any extension."
+            ],
+            "action": [
+                "type": "object",
+                "properties": [
+                    "type": [
+                        "type": "string",
+                        "enum": ["drop", "replaceRegex", "shell", "javascript"],
+                        "description": "drop = exclude the clip from history; replaceRegex = regex find/replace; shell/javascript = run a script"
+                    ],
+                    "pattern": ["type": "string", "description": "replaceRegex: the pattern to find"],
+                    "replacement": ["type": "string", "description": "replaceRegex: the replacement template ($1 for groups)"],
+                    "source": [
+                        "type": "string",
+                        "description": "shell/javascript: the script body. JavaScript runs in a sandboxed JSContext with a `clip` object ({text, type, sourceApp, bundleId, tags}) — define `function run(clip) {…}` and return a string to replace the text, an object {text, tags, title, newClip, copy, drop} for richer effects, or null to skip. console.log output is visible in the rule editor's test panel. Shell scripts read the clip on stdin and return the result on stdout (a JSON envelope with the same keys also works); metadata arrives as CLIP_TYPE / CLIP_SOURCE_APP / CLIP_BUNDLE_ID / CLIP_TAGS / CLIP_IMAGE_PATH, a non-zero exit means skip, and stderr shows up in the test panel."
+                    ]
+                ],
+                "required": ["type"]
+            ],
+            "timeoutSeconds": [
+                "type": "number",
+                "description": "Per-run timeout for script actions, 0–30 seconds (default 3)"
+            ]
+        ],
+        "required": ["name", "action"]
     ]
 
     private static func toolDescriptors() -> [[String: Any]] {
@@ -431,6 +534,19 @@ enum MCPServer {
                     ],
                     "required": ["content"]
                 ]
+            ],
+            [
+                "name": "list_rules",
+                "description": toolDescription("list_rules"),
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [String: Any]()
+                ]
+            ],
+            [
+                "name": "create_rule",
+                "description": toolDescription("create_rule"),
+                "inputSchema": ruleInputSchema
             ]
         ]
         // Only advertise enabled tools so disabled ones don't occupy the
@@ -472,6 +588,10 @@ enum MCPServer {
             return try restoreClip(arguments: arguments, context: context)
         case "create_snippet":
             return try createSnippet(arguments: arguments, context: context)
+        case "list_rules":
+            return listRules()
+        case "create_rule":
+            return try createRule(arguments: arguments)
         default:
             throw MCPError.toolNotFound(name)
         }
@@ -935,6 +1055,99 @@ enum MCPServer {
         if let title = item.effectiveCustomTitle { lines.append("Title: \(title)") }
         if !item.tags.isEmpty { lines.append("Tags: \(item.tags.joined(separator: ", "))") }
         return lines.joined(separator: "\n")
+    }
+
+    // MARK: list_rules / create_rule
+
+    /// Rules live in UserDefaults, not SwiftData, and this process doesn't share
+    /// the GUI's in-memory copy — so both tools go through the store's
+    /// cross-process helpers.
+    @MainActor
+    private static func listRules() -> String {
+        let rules = FilterSettingsStore.rulesFromDefaults()
+        guard !rules.isEmpty else {
+            return "No rules configured yet. Use create_rule to add one."
+        }
+        var lines = ["\(rules.count) rule(s), evaluated top-down (a drop halts the rest):"]
+        for (index, rule) in rules.enumerated() {
+            lines.append("\(index + 1). \(describe(rule))")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Compact, agent-readable rendering of a rule. Shared by `list_rules` and
+    /// the `create_rule` confirmation so an agent can verify what it just wrote.
+    private static func describe(_ rule: ScriptingRule) -> String {
+        var parts: [String] = [
+            "\(rule.displayName) [\(rule.isEnabled ? "enabled" : "disabled")] id=\(rule.id.uuidString)"
+        ]
+        let triggers = RuleTrigger.allCases.filter { rule.triggers.contains($0) }.map(\.rawValue).joined(separator: "+")
+        var conditions = ["on=\(triggers)"]
+        if !rule.apps.isEmpty {
+            conditions.append("apps=\(rule.apps.map(\.bundleId).joined(separator: ","))")
+        }
+        if !rule.matchCategories.isEmpty {
+            let categories = RuleMatchCategory.allCases.filter { rule.matchCategories.contains($0) }.map(\.rawValue)
+            conditions.append("types=\(categories.joined(separator: ","))")
+        }
+        if rule.contentMatch.isActive {
+            conditions.append("content \(rule.contentMatch.mode.rawValue) \"\(rule.contentMatch.value)\"")
+        }
+        if rule.fileNameMatch.isActive {
+            conditions.append("filename \(rule.fileNameMatch.mode.rawValue) \"\(rule.fileNameMatch.value)\"")
+        }
+        if !rule.fileExtensions.isEmpty {
+            conditions.append("ext=\(rule.fileExtensions.joined(separator: ","))")
+        }
+        parts.append("   " + conditions.joined(separator: " | "))
+
+        switch rule.action {
+        case .drop:
+            parts.append("   action: drop")
+        case .replaceRegex(let pattern, let replacement):
+            parts.append("   action: replaceRegex /\(pattern)/ -> \"\(replacement)\"")
+        case .shell(let source):
+            parts.append("   action: shell (\(source.count) chars) — \(firstLine(of: source))")
+        case .javascript(let source):
+            parts.append("   action: javascript (\(source.count) chars) — \(firstLine(of: source))")
+        }
+        return parts.joined(separator: "\n")
+    }
+
+    private static func firstLine(of source: String) -> String {
+        let line = source.split(separator: "\n").first.map(String.init) ?? ""
+        return line.count > 80 ? String(line.prefix(80)) + "…" : line
+    }
+
+    /// Build a rule from an agent-supplied spec.
+    ///
+    /// The parsing/validation lives in `RuleSpec` because the very same format
+    /// is what the copy-paste prompt asks a model for — one grammar, one set of
+    /// error messages, no drift between the two AI entry points.
+    ///
+    /// The rule is stored **disabled** no matter what the caller asks: arming
+    /// one means letting it run against everything the user copies (and, for
+    /// script actions, running code), which only the human can decide.
+    @MainActor
+    private static func createRule(arguments: [String: Any]) throws -> String {
+        let rule: ScriptingRule
+        do {
+            rule = try RuleSpec.rule(from: arguments)
+        } catch let failure as RuleSpec.Failure {
+            throw MCPError.invalidParams(failure.message)
+        }
+
+        guard FilterSettingsStore.appendRuleToDefaults(rule) else {
+            throw MCPError.invalidParams("failed to persist the rule")
+        }
+
+        return """
+        Created rule (disabled, pending the user's approval):
+        \(describe(rule))
+
+        It will not run until the user enables it in Clipth → Settings → Rules. \
+        Script rules additionally require an explicit "allow this rule to run code" confirmation there.
+        """
     }
 
     // MARK: - Formatting helpers

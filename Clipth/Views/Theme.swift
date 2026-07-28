@@ -552,6 +552,109 @@ struct PaperMenuPicker<Value: Hashable>: View {
     }
 }
 
+/// Left-packed wrapping row of chips.
+///
+/// `LazyVGrid(.adaptive:)` is the usual reflex for this, but it lays items into
+/// equal-width columns — a short chip beside a long one leaves a wide hole in
+/// the middle of the line. Here every chip keeps its own width and the line
+/// wraps only when it is actually full, so the gaps are always `spacing`.
+struct PaperFlowLayout: Layout {
+    var spacing: CGFloat = 6
+    var lineSpacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var lineHeight: CGFloat = 0
+        var widest: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + spacing + size.width > maxWidth {
+                y += lineHeight + lineSpacing
+                x = 0
+                lineHeight = 0
+            }
+            x += (x > 0 ? spacing : 0) + size.width
+            lineHeight = max(lineHeight, size.height)
+            widest = max(widest, x)
+        }
+        return CGSize(width: maxWidth.isFinite ? min(widest, maxWidth) : widest, height: y + lineHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var lineHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                y += lineHeight + lineSpacing
+                x = bounds.minX
+                lineHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            lineHeight = max(lineHeight, size.height)
+        }
+    }
+}
+
+/// Icon-only sibling of `PaperMenuPicker` for row-level "more" menus. A picker
+/// advertises a current value (icon + title + up/down chevrons); an action menu
+/// has no value to show, so the trigger is a single glyph and nothing in the
+/// list carries a checkmark.
+struct PaperIconMenu: View {
+    let icon: String
+    let options: [PaperMenuOption<String>]
+    var size: CGFloat = 28
+    var menuWidth: CGFloat = 180
+    var help: String?
+    let onSelect: (String) -> Void
+
+    @State private var hovering = false
+    @StateObject private var controller = PaperDropdownController()
+
+    var body: some View {
+        Button {
+            controller.toggle(width: menuWidth) {
+                PaperMenuList(
+                    options: options,
+                    selected: "",
+                    width: menuWidth,
+                    onSelect: { value in
+                        onSelect(value)
+                        controller.close()
+                    }
+                )
+            }
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.appMetal)
+                .frame(width: size, height: size)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(hovering || controller.isOpen ? Color.appCardHover : Color.appChipFill)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(
+                            controller.isOpen ? Color.appAccent.opacity(0.55) : Color.appCardBorder,
+                            lineWidth: controller.isOpen ? 1 : 0.75
+                        )
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .background(PaperDropdownAnchor(controller: controller))
+        .help(help ?? "")
+    }
+}
+
 /// Owns the borderless child `NSPanel` that hosts an open menu. Kept as an
 /// `ObservableObject` so the trigger can reflect the open state, and so the
 /// panel + its event monitors are torn down deterministically.

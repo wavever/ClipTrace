@@ -826,14 +826,14 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
 
         if items.count == 1, let item = items.first {
             if plainText {
-                pasteboard.setString(plainTextRendition(of: item), forType: .string)
+                pasteboard.setString(pasteText(plainTextRendition(of: item), type: .text), forType: .string)
                 return
             }
             // Single-select: preserve the item's native type (image, file URL,
             // text, etc.) so paste behaves like a normal re-copy.
             switch item.itemType {
             case .text, .url, .rtf:
-                pasteboard.setString(item.content, forType: .string)
+                pasteboard.setString(pasteText(item.content, type: item.itemType), forType: .string)
               case .image:
                   _ = ImagePayloadStore.writeImage(
                       for: ImagePayloadStore.reference(for: item),
@@ -864,7 +864,18 @@ final class QuickPasteController: NSObject, NSWindowDelegate {
                 return item.resolvedFileURL?.path ?? ""
             }
         }.joined(separator: "\n")
-        pasteboard.setString(joined, forType: .string)
+        pasteboard.setString(pasteText(joined, type: .text), forType: .string)
+    }
+
+    /// Hand outgoing text to the paste-time rule chain. Quick Paste knows
+    /// exactly which app the text is heading for (`previousApp`), which is the
+    /// signal an app-scoped paste rule needs.
+    private func pasteText(_ text: String, type: ClipboardItemType) -> String {
+        ClipboardRuntime.shared.viewModel.applyPasteRules(
+            to: text,
+            type: type,
+            targetBundleId: previousApp?.bundleIdentifier ?? ""
+        )
     }
 
     /// Best-effort plain-text rendition of `item`. Mirrors `ClipboardViewModel`'s

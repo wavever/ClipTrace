@@ -554,6 +554,11 @@ class ClipboardViewModel: ObservableObject {
                     options: .regularExpression
                 )
             }
+            output = applyPasteRules(
+                to: output,
+                type: item.itemType,
+                targetBundleId: Self.pasteTargetBundleId()
+            )
             pasteboard.setString(output, forType: .string)
         case .image:
             _ = ImagePayloadStore.writeImage(
@@ -1050,7 +1055,7 @@ class ClipboardViewModel: ObservableObject {
     func preInsertDropMatches(type: ClipboardItemType, content: String, bundleId: String) -> Bool {
         for rule in FilterSettingsStore.shared.scriptingRules where rule.isEnabled {
             if case .drop = rule.action,
-               rule.matches(type: type, content: content, sourceBundleId: bundleId) {
+               rule.matches(trigger: .copy, type: type, content: content, appBundleId: bundleId) {
                 return true
             }
         }
@@ -1061,20 +1066,83 @@ class ClipboardViewModel: ObservableObject {
     /// runs off the main actor; effects apply back on the main actor. Rules run
     /// in order; a `drop` short-circuits the rest. Never blocks capture.
     func runRulesOnCapture(for item: ClipboardItem, bundleId: String, context: ModelContext) {
-        let rules = FilterSettingsStore.shared.scriptingRules.filter(\.isEnabled)
+        let rules = FilterSettingsStore.shared.scriptingRules.filter { $0.isEnabled && $0.triggers.contains(.copy) }
         guard !rules.isEmpty else { return }
         Task { @MainActor [weak self, weak item] in
             guard let self, let item else { return }
             for rule in rules {
                 // Source app is immutable for a clip, so the capture-time bundleId
                 // stays valid; content may have changed via an earlier rule.
-                guard rule.matches(type: item.itemType, content: item.content, sourceBundleId: bundleId) else { continue }
+                guard rule.matches(trigger: .copy, type: item.itemType, content: item.content, appBundleId: bundleId) else { continue }
                 if await self.runOneRule(rule, on: item, bundleId: bundleId, context: context) {
                     break // dropped
                 }
             }
         }
     }
+
+    // MARK: - Paste-time rules
+
+    /// Bundle id of the app a paste is heading for, as best we can tell. Clipth
+    /// itself is never the answer — when we're frontmost the target is unknown,
+    /// and an app-scoped rule treats unknown as "not my app".
+    static func pasteTargetBundleId() -> String {
+        let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+        return front == Bundle.main.bundleIdentifier ? "" : front
+    }
+
+    /// Transform text on its way out to another app.
+    ///
+    /// Paste-time rules deliberately never touch stored history: the clip you
+    /// keep and the text you paste are allowed to differ (paste a token as
+    /// `****`, paste a URL without its tracking tail). Only `replaceText` is
+    /// honoured here — tags, renames and drops are capture-time concepts with no
+    /// meaning for an outgoing string.
+    ///
+    /// Runs synchronously because the pasteboard write it feeds is synchronous;
+    /// script timeouts are clamped hard so a slow rule can't stall a paste.
+    func applyPasteRules(to text: String, type: ClipboardItemType, targetBundleId: String) -> String {
+        let rules = FilterSettingsStore.shared.scriptingRules.filter { $0.isEnabled && $0.triggers.contains(.paste) }
+        guard !rules.isEmpty else { return text }
+
+        var output = text
+        for rule in rules {
+            guard rule.matches(trigger: .paste, type: type, content: output, appBundleId: targetBundleId) else { continue }
+            let input = ScriptClipInput(
+                text: output,
+                type: type.rawValue,
+                sourceApp: "",
+                bundleId: targetBundleId,
+                tags: [],
+                imageData: nil
+            )
+            let timeout = min(rule.timeoutSeconds ?? ScriptRuleEngine.defaultTimeout, Self.pasteTimeoutCap)
+            do {
+                let effects = try ScriptRuleEngine.runAction(
+                    rule.action,
+                    input: input,
+                    timeout: timeout,
+                    capabilities: rule.grantedCapabilities
+                )
+                var changed = false
+                for case .replaceText(let replacement) in effects {
+                    output = replacement
+                    changed = true
+                }
+                let outcome: ScriptRunRecord.Outcome = changed ? .applied : .skipped
+                ScriptRunLog.shared.record(rule: rule.displayName, outcome: outcome, detail: L("rule.log.onPaste"))
+                RuleStatsStore.shared.record(rule: rule.id, outcome: outcome)
+            } catch {
+                ScriptRunLog.shared.record(rule: rule.displayName, outcome: .error, detail: String(describing: error))
+                RuleStatsStore.shared.record(rule: rule.id, outcome: .error, detail: String(describing: error))
+            }
+        }
+        return output
+    }
+
+    /// A paste is an interactive moment — anything slower than this is a bug in
+    /// the rule, not something the user should wait through.
+    private static let pasteTimeoutCap: TimeInterval = 1.5
 
     /// Run a single rule on demand (context menu), ignoring its match conditions
     /// per the manual-invocation contract.
@@ -1112,9 +1180,12 @@ class ClipboardViewModel: ObservableObject {
                 try ScriptRuleEngine.runAction(action, input: input, timeout: timeout, capabilities: caps)
             }.value
             let dropped = applyScriptEffects(effects, to: item, context: context)
-            ScriptRunLog.shared.record(rule: rule.displayName, outcome: effects.isEmpty ? .skipped : .applied)
+            let outcome: ScriptRunRecord.Outcome = effects.isEmpty ? .skipped : .applied
+            ScriptRunLog.shared.record(rule: rule.displayName, outcome: outcome)
+            RuleStatsStore.shared.record(rule: rule.id, outcome: outcome)
             return dropped
         } catch {
+            RuleStatsStore.shared.record(rule: rule.id, outcome: .error, detail: String(describing: error))
             ScriptRunLog.shared.record(rule: rule.displayName, outcome: .error, detail: String(describing: error))
             ToastCenter.shared.show(
                 L("rule.toast.failed") + " " + rule.displayName,
