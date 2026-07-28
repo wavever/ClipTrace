@@ -69,6 +69,24 @@ final class QuickLookCoordinator: NSObject, QLPreviewPanelDataSource, QLPreviewP
         preview(items: [item], startingAt: 0)
     }
 
+    /// Show an on-disk file that isn't a clipboard item — currently an agent's
+    /// MCP config file. `items` stays empty so nothing here is materialized (or
+    /// cleaned up): the URL belongs to the user, not to our temp directory.
+    func preview(fileURL: URL) {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
+        cleanupTempFiles()
+        items = []
+        previewURLs = [fileURL]
+        currentIndex = 0
+
+        guard let panel = QLPreviewPanel.shared() else { return }
+        panel.dataSource = self
+        panel.delegate = self
+        panel.reloadData()
+        panel.currentPreviewItemIndex = 0
+        panel.makeKeyAndOrderFront(nil)
+    }
+
     /// True while the shared panel is on-screen showing our data. The main
     /// window uses this to decide whether Space should open a new preview vs.
     /// be ignored (the panel handles its own key events when it has focus).
@@ -85,13 +103,15 @@ final class QuickLookCoordinator: NSObject, QLPreviewPanelDataSource, QLPreviewP
     }
 
     func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
+        // Already-resolved URLs win: in plain-file mode (`preview(fileURL:)`)
+        // there is no backing clipboard item to fall through to.
+        if index >= 0, index < previewURLs.count, let url = previewURLs[index] {
+            return url as NSURL
+        }
         // The panel asks even for indices outside the current selection (so it
         // can prefetch neighbors). Materialize lazily on demand.
         guard index >= 0 && index < items.count else {
             return placeholderItem(title: "—")
-        }
-        if let url = previewURLs[index] {
-            return url as NSURL
         }
         if let url = materialize(items[index]) {
             previewURLs[index] = url

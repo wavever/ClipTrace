@@ -128,17 +128,31 @@ Clipth 取自 "clip path"，对应中文名“剪迹”：被你复制过的内�
 
 ## MCP Server
 
-应用 binary 同时可以作为 MCP stdio server。兼容客户端配置示例：
+应用 binary 同时可以作为 MCP stdio server。
+
+**一键接入。** 设置 → AI 只列出本机真正装了的客户端（CLI 和应用都算），并直接把配置写进它们的配置文件。已支持：Claude Code、Codex CLI、Claude Desktop、Cursor、OpenClaw、VS Code、Zed、Windsurf、Gemini CLI、opencode、Qwen Code、Cline、Kiro、LM Studio、Amazon Q CLI。写入前会把原文件备份为同名的 `.clipth.bak`，并保留原有注释与格式；每个客户端各自的语法也会分别处理（Codex 用 TOML，VS Code 的键是 `servers`，Zed 用 `context_servers`，opencode 的 `command` 是数组）。导入后需重启对应客户端才会加载剪迹。
+
+点「导入」不会立刻写入，而是先弹出确认框展示具体改动 —— 按该配置文件自己的语法显示受影响的那几行，新增部分高亮标出 —— 确认之前不会修改任何文件。每一行也可以直接用速览查看，或用默认编辑器打开配置文件。
+
+也可以手动配置：
 
 ```json
 {
   "mcpServers": {
-    "clipboard": {
+    "clipth": {
       "command": "/Applications/Clipth.app/Contents/MacOS/Clipth",
       "args": ["--mcp"]
     }
   }
 }
+```
+
+Codex 用的是 TOML 而不是 JSON，写在 `~/.codex/config.toml`：
+
+```toml
+[mcp_servers.clipth]
+command = "/Applications/Clipth.app/Contents/MacOS/Clipth"
+args = ["--mcp"]
 ```
 
 可用工具：

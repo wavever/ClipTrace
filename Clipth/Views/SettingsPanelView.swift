@@ -2222,22 +2222,14 @@ private struct MergeSection: View {
 
 private struct MCPSettings: View {
     @AppStorage("mcpEnabled") private var mcpEnabled = false
+    @StateObject private var clients = MCPClientStore()
+    @State private var manualFormat: MCPClientFormat = .mcpServers
+    @State private var previewEntry: MCPClientStore.Entry?
 
-    private var executablePath: String {
-        Bundle.main.executablePath ?? ""
-    }
+    private var executablePath: String { MCPClientConfigurator.executablePath }
 
-    private var configJSON: String {
-        """
-        {
-          "mcpServers": {
-            "clipth": {
-              "command": "\(executablePath)",
-              "args": ["--mcp"]
-            }
-          }
-        }
-        """
+    private var configSnippet: String {
+        manualFormat.fileSnippet(executablePath: executablePath)
     }
 
     var body: some View {
@@ -2260,13 +2252,14 @@ private struct MCPSettings: View {
                 title: L("settings.mcp.config.title"),
                 subtitle: L("settings.mcp.config.subtitle")
             ) {
-                Text(configJSON)
+                Text(configSnippet)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(Color.appMetal)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(10)
-                    .padding(.trailing, 32) // reserve space for the floating copy button
+                    // Clear the controls floating over the top of the block.
+                    .padding(.top, 28)
                     .background(
                         RoundedRectangle(cornerRadius: 8)
                             .fill(Color.appChipFill)
@@ -2275,16 +2268,19 @@ private struct MCPSettings: View {
                         RoundedRectangle(cornerRadius: 8)
                             .strokeBorder(Color.appCardBorder, lineWidth: 0.5)
                     )
+                    .overlay(alignment: .topLeading) {
+                        CodeFormatPicker(
+                            selection: $manualFormat,
+                            options: [
+                                .init(value: .mcpServers, title: L("settings.mcp.format.json")),
+                                .init(value: .codexTOML, title: L("settings.mcp.format.toml")),
+                            ]
+                        )
+                        .padding(6)
+                    }
                     .overlay(alignment: .topTrailing) {
                         Button {
-                            let pb = NSPasteboard.general
-                            pb.clearContents()
-                            pb.setString(configJSON, forType: .string)
-                            ToastCenter.shared.show(
-                                L("settings.mcp.copied"),
-                                systemImage: "doc.on.clipboard.fill",
-                                tint: .appAccent
-                            )
+                            copyToPasteboard(configSnippet)
                         } label: {
                             Image(systemName: "doc.on.clipboard")
                         }
@@ -2292,7 +2288,12 @@ private struct MCPSettings: View {
                         .help(L("settings.mcp.copyButton"))
                         .padding(6)
                     }
+                    // Swapping JSON ↔ TOML changes the block's height, so
+                    // animate it instead of letting the card snap.
+                    .animation(.spring(response: 0.3, dampingFraction: 0.85), value: manualFormat)
             }
+
+            clientsSection
 
             SettingsGroup(icon: "wrench.and.screwdriver", title: L("settings.mcp.tools.title"), tint: .appAccent) {
                 ForEach(MCPServer.publicTools, id: \.name) { tool in
@@ -2302,6 +2303,628 @@ private struct MCPSettings: View {
             }
         }
         .opacity(mcpEnabled ? 1 : 0.6)
+        .onAppear { clients.refresh() }
+        .sheet(item: $previewEntry) { entry in
+            MCPConfigPreviewSheet(
+                entry: entry,
+                onClose: { previewEntry = nil },
+                onInstall: {
+                    previewEntry = nil
+                    install(entry)
+                }
+            )
+        }
+    }
+
+    // MARK: One-click client setup
+
+    @ViewBuilder
+    private var clientsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SettingsGroup(
+                icon: "square.and.arrow.down.on.square",
+                title: L("settings.mcp.clients.title"),
+                tint: .appAccent
+            ) {
+                if clients.entries.isEmpty {
+                    SettingsRow(
+                        icon: "questionmark.circle",
+                        iconTint: .secondary,
+                        title: L("settings.mcp.clients.empty"),
+                        subtitle: L("settings.mcp.clients.empty.subtitle")
+                    ) {
+                        EmptyView()
+                    }
+                }
+
+                // Only clients actually installed on this Mac — listing the
+                // other dozen would be noise for everyone.
+                ForEach(clients.entries) { entry in
+                    row(for: entry)
+                }
+            }
+
+            Text(L("settings.mcp.clients.footnote"))
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 4)
+        }
+        .disabled(!mcpEnabled)
+    }
+
+    @ViewBuilder
+    private func row(for entry: MCPClientStore.Entry) -> some View {
+        MCPClientRow(
+            entry: entry,
+            // Import doesn't write straight away: it opens the preview so the
+            // user confirms the exact edit to their own config file first.
+            install: { previewEntry = entry },
+            remove: { remove(entry) },
+            copy: { copyToPasteboard(entry.target.format.fileSnippet(executablePath: executablePath)) },
+            quickLook: {
+                QuickLookCoordinator.shared.preview(
+                    fileURL: URL(fileURLWithPath: entry.target.configPath)
+                )
+            },
+            openFile: { openConfigFile(entry) }
+        )
+    }
+
+    private func openConfigFile(_ entry: MCPClientStore.Entry) {
+        let url = URL(fileURLWithPath: entry.target.configPath)
+        // `.toml` and dotfiles often have no default app; falling back to Finder
+        // beats a button that silently does nothing.
+        if !NSWorkspace.shared.open(url) {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
+    }
+
+    private func install(_ entry: MCPClientStore.Entry) {
+        do {
+            try MCPClientConfigurator.install(into: entry.target)
+            clients.refresh()
+            ToastCenter.shared.show(
+                L("settings.mcp.clients.importedFormat", entry.target.name),
+                systemImage: "checkmark.circle.fill",
+                tint: .appAccent
+            )
+        } catch {
+            showFailure(entry, error)
+        }
+    }
+
+    private func remove(_ entry: MCPClientStore.Entry) {
+        ConfirmationCenter.shared.confirm(
+            title: L("settings.mcp.clients.removeConfirm.title", entry.target.name),
+            message: L("settings.mcp.clients.removeConfirm.message", entry.target.displayPath),
+            confirmLabel: L("settings.mcp.clients.remove"),
+            icon: "trash"
+        ) {
+            do {
+                try MCPClientConfigurator.remove(from: entry.target)
+                clients.refresh()
+                ToastCenter.shared.show(
+                    L("settings.mcp.clients.removedFormat", entry.target.name),
+                    systemImage: "trash.fill",
+                    tint: .appDanger
+                )
+            } catch {
+                showFailure(entry, error)
+            }
+        }
+    }
+
+    private func showFailure(_ entry: MCPClientStore.Entry, _ error: Error) {
+        let detail = (error as? MCPClientInstallError)?.errorDescription ?? error.localizedDescription
+        ToastCenter.shared.show(
+            "\(entry.target.name) — \(detail)",
+            systemImage: "exclamationmark.triangle.fill",
+            tint: .appDanger,
+            duration: 4
+        )
+    }
+
+    private func copyToPasteboard(_ text: String) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        ToastCenter.shared.show(
+            L("settings.mcp.copied"),
+            systemImage: "doc.on.clipboard.fill",
+            tint: .appAccent
+        )
+    }
+}
+
+/// Detected agent apps and whether each already knows about Clipth. Recomputed
+/// on appear and after every write, so the rows always reflect the files on
+/// disk rather than what we believe we wrote.
+@MainActor
+private final class MCPClientStore: ObservableObject {
+    struct Entry: Identifiable {
+        let target: MCPClientTarget
+        let state: MCPClientConfigState
+        let icon: NSImage?
+        var id: String { target.id }
+    }
+
+    @Published private(set) var entries: [Entry] = []
+
+    /// Installed clients only — CLI agents count too, so this covers config
+    /// files, marker directories, binaries on disk and app bundles.
+    func refresh() {
+        entries = MCPClientCatalog.all.compactMap { target in
+            guard MCPClientCatalog.isInstalled(target, appLookup: { self.appURL(for: $0) != nil }) else {
+                return nil
+            }
+            return Entry(
+                target: target,
+                state: MCPClientConfigurator.state(for: target),
+                icon: target.bundleIDs.lazy.compactMap { self.appIcon(for: $0) }.first
+            )
+        }
+    }
+
+    private func appURL(for bundleId: String) -> URL? {
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId)
+    }
+
+    private func appIcon(for bundleId: String) -> NSImage? {
+        guard let url = appURL(for: bundleId) else { return nil }
+        return NSWorkspace.shared.icon(forFile: url.path)
+    }
+}
+
+/// One agent app: its real icon when we can find the bundle, the config file we
+/// would touch, and a single action button whose meaning follows the state.
+private struct MCPClientRow: View {
+    let entry: MCPClientStore.Entry
+    let install: () -> Void
+    let remove: () -> Void
+    let copy: () -> Void
+    let quickLook: () -> Void
+    let openFile: () -> Void
+
+    /// Remove only turns red under the cursor — a permanently red button in an
+    /// otherwise muted row pulls the eye to the least important control.
+    @State private var hoveringRemove = false
+
+    /// Quick Look and "open" need something on disk; a client that has never
+    /// written a config yet has nothing to show.
+    private var configExists: Bool {
+        FileManager.default.fileExists(atPath: entry.target.configPath)
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 14) {
+            icon
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(entry.target.name)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(Color.appMetal)
+                    Text(entry.target.format.badge)
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1.5)
+                        .background(Capsule().fill(Color.appChipFill))
+                        .overlay(Capsule().strokeBorder(Color.appCardBorder, lineWidth: 0.5))
+                }
+                Text(subtitle)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(entry.target.displayPath)
+            }
+            Spacer(minLength: 12)
+            trailing
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    private var subtitle: String {
+        switch entry.state {
+        case .outdated: return L("settings.mcp.clients.outdated")
+        case .unreadable: return L("settings.mcp.error.unreadable")
+        case .current, .notConfigured: return entry.target.displayPath
+        }
+    }
+
+    private var icon: some View {
+        MCPClientIcon(entry: entry, size: 30)
+    }
+
+    @ViewBuilder
+    private var trailing: some View {
+        HStack(spacing: 5) {
+            Button(action: quickLook) {
+                Image(systemName: "eye")
+            }
+            .buttonStyle(PaperIconButtonStyle(size: 26))
+            .disabled(!configExists)
+            .help(L("settings.mcp.clients.quickLook"))
+
+            Button(action: openFile) {
+                Image(systemName: "arrow.up.forward.app")
+            }
+            .buttonStyle(PaperIconButtonStyle(size: 26))
+            .disabled(!configExists)
+            .help(L("settings.mcp.clients.openFile"))
+
+            Button(action: copy) {
+                Image(systemName: "doc.on.clipboard")
+            }
+            .buttonStyle(PaperIconButtonStyle(size: 26))
+            .help(L("settings.mcp.clients.copy"))
+
+            // Fixed-width slot: without it the icon buttons zig-zag down the
+            // list, because "Import" and "✓ Added ⌫" are different widths.
+            stateControl
+                .frame(minWidth: 104, alignment: .trailing)
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.82), value: entry.state)
+    }
+
+    /// Every control here is 26pt tall with the same 8pt radius and hairline
+    /// border as the icon buttons to its left, so the row's right edge reads as
+    /// one group whichever state it is in.
+    @ViewBuilder
+    private var stateControl: some View {
+        HStack(spacing: 5) {
+            switch entry.state {
+            case .current:
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 10.5, weight: .semibold))
+                    Text(L("settings.mcp.clients.imported"))
+                        .font(.system(size: 11.5, weight: .medium))
+                }
+                .foregroundStyle(Color.appAccent)
+                .padding(.horizontal, 9)
+                .frame(height: 26)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.appAccent.opacity(0.11))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Color.appAccent.opacity(0.24), lineWidth: 0.75)
+                )
+
+                Button(action: remove) {
+                    // The tint has to sit on the label: PaperIconButtonStyle
+                    // paints `appMetal` onto it, which would win over a
+                    // foregroundStyle applied to the Button from outside.
+                    Image(systemName: "trash")
+                        .foregroundStyle(hoveringRemove ? Color.appDanger : Color.appMetal.opacity(0.7))
+                }
+                .buttonStyle(PaperIconButtonStyle(size: 26))
+                .help(L("settings.mcp.clients.remove"))
+                .onHover { hovering in
+                    withAnimation(.easeOut(duration: 0.12)) { hoveringRemove = hovering }
+                }
+
+            case .outdated:
+                Button(L("settings.mcp.clients.update"), action: install)
+                    .buttonStyle(MCPRowActionButtonStyle())
+
+            case .notConfigured:
+                Button(L("settings.mcp.clients.import"), action: install)
+                    .buttonStyle(MCPRowActionButtonStyle())
+
+            case .unreadable:
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(Color.appWarning)
+                    .padding(.horizontal, 9)
+                    .frame(height: 26)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color.appWarning.opacity(0.12))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(Color.appWarning.opacity(0.26), lineWidth: 0.75)
+                    )
+                    .help(L("settings.mcp.error.shape"))
+            }
+        }
+    }
+}
+
+/// Format switch that floats over a code block, sized and shaped like the copy
+/// button opposite it so the two read as one pair of controls on the snippet
+/// rather than as a settings widget stacked above it.
+private struct CodeFormatPicker: View {
+    struct Option: Identifiable {
+        let value: MCPClientFormat
+        let title: String
+        var id: MCPClientFormat { value }
+    }
+
+    @Binding var selection: MCPClientFormat
+    let options: [Option]
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(options) { option in
+                let isSelected = option.value == selection
+                Button {
+                    withAnimation(.easeOut(duration: 0.14)) { selection = option.value }
+                } label: {
+                    Text(option.title)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(isSelected ? Color.white : Color.appMetal.opacity(0.65))
+                        .padding(.horizontal, 7)
+                        .frame(height: 20)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .fill(isSelected ? Color.appAccent : Color.clear)
+                        )
+                        .contentShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .frame(height: 26)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.appChipFill)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+        )
+    }
+}
+
+/// The client row's primary action. Deliberately *not* `PaperActionButtonStyle`
+/// `.primary`: a solid accent slab next to three muted icon buttons reads as a
+/// different design language. This keeps the icon buttons' height, radius and
+/// hairline border, and carries the accent as a tint instead of a fill.
+private struct MCPRowActionButtonStyle: ButtonStyle {
+    var tint: Color = .appAccent
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 11.5, weight: .semibold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 10)
+            .frame(height: 26)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(tint.opacity(0.15))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(tint.opacity(0.32), lineWidth: 0.75)
+            )
+            .scaleEffect(configuration.isPressed ? 0.95 : 1)
+            .animation(.easeOut(duration: 0.10), value: configuration.isPressed)
+    }
+}
+
+/// A client's icon. The installed app's own icon wins when there is one — that
+/// is by definition what the user sees in the Dock — and otherwise we fall back
+/// to the vendor's brand mark checked into the asset catalog, which is the only
+/// option for the CLI agents.
+private struct MCPClientIcon: View {
+    let entry: MCPClientStore.Entry
+    let size: CGFloat
+
+    var body: some View {
+        if let image = entry.icon {
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: size, height: size)
+        } else if let asset = NSImage(named: entry.target.iconAsset) {
+            Image(nsImage: asset)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: size, height: size)
+                // Only affects the marks stored as template art (Cursor,
+                // Windsurf, LM Studio); full-color ones ignore it.
+                .foregroundStyle(entry.target.tint)
+        } else {
+            let tint = entry.target.tint
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(tint.opacity(0.15))
+                Image(systemName: entry.target.symbol)
+                    .font(.system(size: size * 0.45, weight: .semibold))
+                    .foregroundStyle(tint)
+            }
+            .frame(width: size + 2, height: size + 2)
+        }
+    }
+}
+
+private extension MCPClientTarget {
+    /// `tintHex` as a Color. The brand colors are chosen against cream paper,
+    /// so several of them (Codex graphite, opencode olive) would sink into the
+    /// dark surface — lift those rather than shipping invisible chips.
+    var tint: Color {
+        guard let base = AccentThemeStore.nsColor(fromHex: tintHex)?.usingColorSpace(.sRGB) else {
+            return .appAccent
+        }
+        let dynamic = NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            guard isDark else { return base }
+            return base.blended(withFraction: 0.42, of: .white) ?? base
+        }
+        return Color(nsColor: dynamic)
+    }
+}
+
+/// The confirmation step for Import: shows the exact slice of the client's
+/// config file that the write would touch, in that file's own syntax with the
+/// added lines marked, and only writes once the user agrees. Built from the
+/// same code path as the write itself, so what you see is what lands on disk.
+private struct MCPConfigPreviewSheet: View {
+    let entry: MCPClientStore.Entry
+    let onClose: () -> Void
+    let onInstall: () -> Void
+
+    private var preview: Result<MCPConfigPreview, Error> {
+        Result { try MCPClientConfigurator.preview(for: entry.target) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            Divider().opacity(0.4)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    switch preview {
+                    case .success(let preview):
+                        Text(caption(for: preview))
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        codeBlock(preview)
+                    case .failure(let error):
+                        failure(error)
+                    }
+                }
+                .padding(16)
+            }
+
+            Divider().opacity(0.4)
+            footer
+        }
+        .frame(width: 540, height: 420)
+        .background(Color.appPaper)
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            MCPClientIcon(entry: entry, size: 26)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.target.name)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Color.appMetal)
+                Text("\(entry.target.displayPath) · \(entry.target.format.badge)")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer()
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24, height: 24)
+                    .background(Circle().fill(.secondary.opacity(0.15)))
+            }
+            // Esc is bound to the footer's Cancel button (`.cancelAction`);
+            // binding it here too would make the shortcut ambiguous.
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 16)
+        .padding(.bottom, 12)
+    }
+
+    private func caption(for preview: MCPConfigPreview) -> String {
+        if preview.createsFile { return L("settings.mcp.preview.createsFile") }
+        if preview.replacesEntry { return L("settings.mcp.preview.replaces") }
+        return L("settings.mcp.preview.inserts")
+    }
+
+    private func codeBlock(_ preview: MCPConfigPreview) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(preview.lines) { line in
+                HStack(alignment: .top, spacing: 0) {
+                    // `String(_:)`, not interpolation: SwiftUI formats a bare
+                    // Int with the locale's grouping separator, which turns
+                    // line 2629 of a big config into "2,629".
+                    Text(String(line.number))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .foregroundStyle(.secondary.opacity(0.6))
+                        .frame(width: 44, alignment: .trailing)
+                        .padding(.trailing, 8)
+                    Text(line.isAdded ? "+" : " ")
+                        .foregroundStyle(Color.appAccent)
+                        .frame(width: 12, alignment: .leading)
+                    Text(line.text.isEmpty ? " " : line.text)
+                        .foregroundStyle(Color.appMetal)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .font(.system(size: 11, design: .monospaced))
+                .padding(.vertical, 2)
+                .padding(.trailing, 8)
+                .background(line.isAdded ? Color.appAccent.opacity(0.14) : Color.clear)
+            }
+        }
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.appChipFill))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.appCardBorder, lineWidth: 0.5))
+        .textSelection(.enabled)
+    }
+
+    @ViewBuilder
+    private func failure(_ error: Error) -> some View {
+        let detail = (error as? MCPClientInstallError)?.errorDescription ?? error.localizedDescription
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(Color.appWarning)
+                Text(detail)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.appMetal)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text(L("settings.mcp.preview.manualHint"))
+                .font(.system(size: 11.5))
+                .foregroundStyle(.secondary)
+            Text(entry.target.format.fileSnippet(executablePath: MCPClientConfigurator.executablePath))
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(Color.appMetal)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.appChipFill))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.appCardBorder, lineWidth: 0.5))
+        }
+    }
+
+    private var footer: some View {
+        HStack(spacing: 8) {
+            // Nothing has touched the file yet — say so, so the buttons read as
+            // a decision rather than as a receipt.
+            Text(L("settings.mcp.preview.pending"))
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 12)
+            Button(L("common.cancel"), action: onClose)
+                .buttonStyle(PaperActionButtonStyle(role: .plain))
+                .keyboardShortcut(.cancelAction)
+            if case .success = preview {
+                Button(confirmLabel, action: onInstall)
+                    .buttonStyle(PaperActionButtonStyle(role: .primary))
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+    }
+
+    private var confirmLabel: String {
+        switch entry.state {
+        case .current, .outdated: return L("settings.mcp.preview.confirmUpdate")
+        case .notConfigured, .unreadable: return L("settings.mcp.preview.confirmImport")
+        }
     }
 }
 
@@ -2794,6 +3417,11 @@ private struct AcknowledgementsSheet: View {
                 name: "Sparkle",
                 detail: L("settings.about.ack.sparkle"),
                 url: URL(string: "https://github.com/sparkle-project/Sparkle")!
+            ),
+            OpenSourceComponent(
+                name: "Lobe Icons",
+                detail: L("settings.about.ack.lobeIcons"),
+                url: URL(string: "https://github.com/lobehub/lobe-icons")!
             ),
         ]
     }

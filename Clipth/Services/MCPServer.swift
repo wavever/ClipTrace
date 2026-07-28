@@ -1251,3 +1251,1012 @@ enum MCPServer {
         }
     }
 }
+
+// MARK: - One-click client setup
+//
+// Hand-pasting JSON into an agent's config file is the biggest friction point
+// in wiring Clipth up, so Settings detects the agents installed on this Mac and
+// writes the entry for them. Two things make that harder than "parse JSON,
+// mutate, save":
+//
+//   * Not every client speaks JSON — Codex configures MCP servers in TOML.
+//   * Of the ones that do, several allow comments (Zed's settings.json ships a
+//     comment header) and some files are large piles of unrelated state
+//     (`~/.claude.json` also holds session history). A JSONSerialization round
+//     trip would silently drop the comments and reorder every key in the file.
+//
+// So we never re-serialize a client's config: we splice our entry into the
+// original *text* and leave every other byte alone, then re-parse our own
+// output to prove it still contains what we intended before overwriting.
+
+/// How an agent app stores MCP servers. The JSON cases differ only in the
+/// container key and entry shape; `codexTOML` is a different language entirely.
+enum MCPClientFormat: String, Sendable {
+    /// `{ "mcpServers": { "clipth": { command, args } } }` — the de-facto standard.
+    case mcpServers
+    /// Same, plus the explicit `"type": "stdio"` Claude Code writes itself.
+    case mcpServersStdio
+    /// VS Code keys the map `servers`, not `mcpServers`.
+    case vscodeServers
+    /// Zed calls them context servers and marks user-defined ones `custom`.
+    case zedContextServers
+    /// opencode nests the binary and its arguments in one `command` array.
+    case opencodeMCP
+    /// Codex: `[mcp_servers.clipth]` in `~/.codex/config.toml`.
+    case codexTOML
+
+    /// Top-level key holding the server map (JSON formats only).
+    var containerKey: String {
+        switch self {
+        case .mcpServers, .mcpServersStdio: return "mcpServers"
+        case .vscodeServers: return "servers"
+        case .zedContextServers: return "context_servers"
+        case .opencodeMCP: return "mcp"
+        case .codexTOML: return ""
+        }
+    }
+
+    var isTOML: Bool { self == .codexTOML }
+
+    /// Badge shown next to a client so the user can tell at a glance which
+    /// syntax the copy button will hand them.
+    var badge: String { isTOML ? "TOML" : "JSON" }
+
+    /// Our server entry on its own — the value spliced in under `clipth`.
+    func entryLiteral(executablePath: String) -> String {
+        let cmd = MCPClientFormat.jsonQuoted(executablePath)
+        switch self {
+        case .mcpServers:
+            return "{\n  \"command\": \(cmd),\n  \"args\": [\"--mcp\"]\n}"
+        case .mcpServersStdio, .vscodeServers:
+            return "{\n  \"type\": \"stdio\",\n  \"command\": \(cmd),\n  \"args\": [\"--mcp\"]\n}"
+        case .zedContextServers:
+            return "{\n  \"source\": \"custom\",\n  \"command\": \(cmd),\n  \"args\": [\"--mcp\"]\n}"
+        case .opencodeMCP:
+            return "{\n  \"type\": \"local\",\n  \"command\": [\(cmd), \"--mcp\"],\n  \"enabled\": true\n}"
+        case .codexTOML:
+            return "command = \(cmd)\nargs = [\"--mcp\"]"
+        }
+    }
+
+    /// A complete example document — what the copy button puts on the pasteboard
+    /// and what we write when the client has no config file yet.
+    func fileSnippet(executablePath: String) -> String {
+        let entry = entryLiteral(executablePath: executablePath)
+        if isTOML {
+            return "[\(MCPClientConfigurator.tomlTableName)]\n\(entry)"
+        }
+        let key = MCPClientConfigurator.serverKey
+        return "{\n  \"\(containerKey)\": {\n    \"\(key)\": \(MCPClientFormat.indent(entry, by: "    "))\n  }\n}"
+    }
+
+    /// Pulls the executable path back out of a parsed entry, so the UI can tell
+    /// "already imported" apart from "imported, but pointing at an old bundle".
+    func command(from entry: Any) -> String? {
+        guard let dict = entry as? [String: Any] else { return nil }
+        if self == .opencodeMCP {
+            return (dict["command"] as? [Any])?.first as? String
+        }
+        return dict["command"] as? String
+    }
+
+    /// Indents every line but the first, so a multi-line literal keeps its shape
+    /// once it is spliced in after `"clipth": `.
+    static func indent(_ text: String, by prefix: String) -> String {
+        let lines = text.components(separatedBy: "\n")
+        guard let first = lines.first else { return text }
+        return ([first] + lines.dropFirst().map { prefix + $0 }).joined(separator: "\n")
+    }
+
+    static func jsonQuoted(_ value: String) -> String {
+        var out = "\""
+        for ch in value.unicodeScalars {
+            switch ch {
+            case "\"": out += "\\\""
+            case "\\": out += "\\\\"
+            case "\n": out += "\\n"
+            case "\r": out += "\\r"
+            case "\t": out += "\\t"
+            default:
+                if ch.value < 0x20 {
+                    out += String(format: "\\u%04x", ch.value)
+                } else {
+                    out.unicodeScalars.append(ch)
+                }
+            }
+        }
+        return out + "\""
+    }
+}
+
+/// One agent app we know how to configure.
+struct MCPClientTarget: Identifiable, Sendable {
+    let id: String
+    let name: String
+    /// Last-resort SF Symbol, used only if the bundled art ever goes missing.
+    let symbol: String
+    /// Bundled brand mark in `Assets.xcassets`. Most of these agents are CLIs
+    /// with no app bundle to borrow an icon from, so each one's mark is checked
+    /// in from its vendor's own artwork.
+    let iconAsset: String
+    /// The brand's color, muted to sit in the paper palette. Paints the symbol
+    /// chip so every row still reads as a distinct product.
+    let tintHex: String
+    /// Bundle ids used to find the real app icon and to detect GUI clients.
+    let bundleIDs: [String]
+    let format: MCPClientFormat
+    /// The config file we read and write (absolute, `~` already expanded).
+    let configPath: String
+    /// Any of these existing means the client is installed even if it has never
+    /// written a config file.
+    let markerPaths: [String]
+    /// Binaries to look for in the usual install dirs (CLI agents).
+    let cliNames: [String]
+
+    /// Home-relative path for display, e.g. `~/.codex/config.toml`.
+    var displayPath: String {
+        let home = NSHomeDirectory()
+        guard configPath.hasPrefix(home) else { return configPath }
+        return "~" + configPath.dropFirst(home.count)
+    }
+}
+
+/// The agents we support, most commonly used first.
+enum MCPClientCatalog {
+    static let all: [MCPClientTarget] = [
+        MCPClientTarget(
+            id: "claude-code",
+            name: "Claude Code",
+            symbol: "terminal",
+            iconAsset: "AgentClaudeCode",
+            tintHex: "C96442",
+            bundleIDs: [],
+            format: .mcpServersStdio,
+            configPath: home(".claude.json"),
+            markerPaths: [home(".claude.json"), home(".claude")],
+            cliNames: ["claude"]
+        ),
+        MCPClientTarget(
+            id: "codex",
+            name: "Codex CLI",
+            symbol: "chevron.left.forwardslash.chevron.right",
+            iconAsset: "AgentCodex",
+            tintHex: "5A5A56",
+            bundleIDs: [],
+            format: .codexTOML,
+            configPath: home(".codex/config.toml"),
+            markerPaths: [home(".codex")],
+            cliNames: ["codex"]
+        ),
+        MCPClientTarget(
+            id: "claude-desktop",
+            name: "Claude Desktop",
+            symbol: "bubble.left.and.bubble.right",
+            iconAsset: "AgentClaudeDesktop",
+            tintHex: "C96442",
+            bundleIDs: ["com.anthropic.claudefordesktop"],
+            format: .mcpServers,
+            configPath: home("Library/Application Support/Claude/claude_desktop_config.json"),
+            markerPaths: [home("Library/Application Support/Claude")],
+            cliNames: []
+        ),
+        MCPClientTarget(
+            id: "cursor",
+            name: "Cursor",
+            symbol: "cursorarrow.rays",
+            iconAsset: "AgentCursor",
+            tintHex: "6E6A63",
+            bundleIDs: ["com.todesktop.230313mzl4w4u92"],
+            format: .mcpServers,
+            configPath: home(".cursor/mcp.json"),
+            markerPaths: [home(".cursor")],
+            cliNames: ["cursor-agent"]
+        ),
+        // OpenClaw itself has no MCP block: it runs MCP servers through the
+        // mcporter runtime, so its servers live in mcporter's config.
+        MCPClientTarget(
+            id: "openclaw",
+            name: "OpenClaw",
+            symbol: "point.3.connected.trianglepath.dotted",
+            iconAsset: "AgentOpenClaw",
+            tintHex: "C4553A",
+            bundleIDs: [],
+            format: .mcpServers,
+            configPath: home(".mcporter/config.json"),
+            markerPaths: [home(".openclaw"), home(".mcporter")],
+            cliNames: ["openclaw", "mcporter"]
+        ),
+        MCPClientTarget(
+            id: "vscode",
+            name: "VS Code",
+            symbol: "chevron.left.slash.chevron.right",
+            iconAsset: "AgentVSCode",
+            tintHex: "4A7FA8",
+            bundleIDs: ["com.microsoft.VSCode", "com.microsoft.VSCodeInsiders"],
+            format: .vscodeServers,
+            configPath: home("Library/Application Support/Code/User/mcp.json"),
+            markerPaths: [home("Library/Application Support/Code/User")],
+            cliNames: []
+        ),
+        MCPClientTarget(
+            id: "zed",
+            name: "Zed",
+            symbol: "bolt",
+            iconAsset: "AgentZed",
+            tintHex: "6B72C4",
+            bundleIDs: ["dev.zed.Zed", "dev.zed.Zed-Preview"],
+            format: .zedContextServers,
+            configPath: home(".config/zed/settings.json"),
+            markerPaths: [home(".config/zed")],
+            cliNames: []
+        ),
+        MCPClientTarget(
+            id: "windsurf",
+            name: "Windsurf",
+            symbol: "wind",
+            iconAsset: "AgentWindsurf",
+            tintHex: "3F9A85",
+            bundleIDs: ["com.exafunction.windsurf"],
+            format: .mcpServers,
+            configPath: home(".codeium/windsurf/mcp_config.json"),
+            markerPaths: [home(".codeium/windsurf")],
+            cliNames: []
+        ),
+        MCPClientTarget(
+            id: "gemini-cli",
+            name: "Gemini CLI",
+            symbol: "sparkle",
+            iconAsset: "AgentGeminiCLI",
+            tintHex: "7A81C9",
+            bundleIDs: [],
+            format: .mcpServers,
+            configPath: home(".gemini/settings.json"),
+            markerPaths: [home(".gemini")],
+            cliNames: ["gemini"]
+        ),
+        MCPClientTarget(
+            id: "opencode",
+            name: "opencode",
+            symbol: "square.stack.3d.up",
+            iconAsset: "AgentOpenCode",
+            tintHex: "5E6B5A",
+            bundleIDs: [],
+            format: .opencodeMCP,
+            configPath: home(".config/opencode/opencode.json"),
+            markerPaths: [home(".config/opencode")],
+            cliNames: ["opencode"]
+        ),
+        MCPClientTarget(
+            id: "qwen-code",
+            name: "Qwen Code",
+            symbol: "text.bubble",
+            iconAsset: "AgentQwenCode",
+            tintHex: "8068B8",
+            bundleIDs: [],
+            format: .mcpServers,
+            configPath: home(".qwen/settings.json"),
+            markerPaths: [home(".qwen")],
+            cliNames: ["qwen"]
+        ),
+        MCPClientTarget(
+            id: "cline",
+            name: "Cline",
+            symbol: "puzzlepiece.extension",
+            iconAsset: "AgentCline",
+            tintHex: "5E8C7D",
+            bundleIDs: [],
+            format: .mcpServers,
+            configPath: home("Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json"),
+            markerPaths: [home("Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev")],
+            cliNames: []
+        ),
+        MCPClientTarget(
+            id: "kiro",
+            name: "Kiro",
+            symbol: "wand.and.stars",
+            iconAsset: "AgentKiro",
+            tintHex: "7B5FBF",
+            bundleIDs: ["dev.kiro.desktop"],
+            format: .mcpServers,
+            configPath: home(".kiro/settings/mcp.json"),
+            markerPaths: [home(".kiro")],
+            cliNames: []
+        ),
+        MCPClientTarget(
+            id: "lmstudio",
+            name: "LM Studio",
+            symbol: "cpu",
+            iconAsset: "AgentLMStudio",
+            tintHex: "6E5BB5",
+            bundleIDs: ["ai.elementlabs.lmstudio"],
+            format: .mcpServers,
+            configPath: home(".lmstudio/mcp.json"),
+            markerPaths: [home(".lmstudio")],
+            cliNames: []
+        ),
+        MCPClientTarget(
+            id: "amazon-q",
+            name: "Amazon Q CLI",
+            symbol: "q.circle",
+            iconAsset: "AgentAmazonQ",
+            tintHex: "C98A3E",
+            bundleIDs: ["com.amazon.codewhisperer"],
+            format: .mcpServers,
+            configPath: home(".aws/amazonq/mcp.json"),
+            markerPaths: [home(".aws/amazonq")],
+            cliNames: ["q"]
+        ),
+    ]
+
+    /// `appLookup` is injected because resolving a bundle id needs AppKit, which
+    /// this file deliberately stays clear of (it also runs in the headless
+    /// `--mcp` process).
+    static func isInstalled(_ target: MCPClientTarget, appLookup: (String) -> Bool) -> Bool {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: target.configPath) { return true }
+        if target.markerPaths.contains(where: { fm.fileExists(atPath: $0) }) { return true }
+        if target.cliNames.contains(where: { binaryExists($0) }) { return true }
+        return target.bundleIDs.contains(where: appLookup)
+    }
+
+    /// A GUI app never inherits the user's shell PATH, so probe the dirs package
+    /// managers actually install agent CLIs into.
+    private static let binDirs: [String] = [
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        home(".local/bin"),
+        home(".bun/bin"),
+        home(".deno/bin"),
+        home(".cargo/bin"),
+        home(".volta/bin"),
+        home(".npm-global/bin"),
+        home(".npm-user-global/bin"),
+    ]
+
+    private static func binaryExists(_ name: String) -> Bool {
+        let fm = FileManager.default
+        return binDirs.contains { fm.isExecutableFile(atPath: $0 + "/" + name) }
+    }
+
+    private static func home(_ suffix: String) -> String {
+        NSHomeDirectory() + "/" + suffix
+    }
+}
+
+/// Where a client stands with respect to our entry.
+enum MCPClientConfigState: Equatable, Sendable {
+    case notConfigured
+    case current
+    /// Registered, but pointing at a different binary (app moved, or a stale
+    /// entry from a previous install location).
+    case outdated(String)
+    /// The file exists but we can't read or make sense of it — offer the manual
+    /// snippet instead of guessing.
+    case unreadable
+}
+
+/// The slice of a client's config file that importing would touch, so the user
+/// can see the exact edit in that file's own syntax before agreeing to it.
+struct MCPConfigPreview: Sendable {
+    struct Line: Identifiable, Sendable {
+        let id: Int
+        /// Line number in the file *after* the edit (1-based).
+        let number: Int
+        let text: String
+        let isAdded: Bool
+    }
+
+    let lines: [Line]
+    /// The client has no config file yet — we'd create one.
+    let createsFile: Bool
+    /// A `clipth` entry is already there and would be rewritten in place.
+    let replacesEntry: Bool
+
+    /// Lines of unchanged file kept around the edit for orientation.
+    private static let context = 3
+
+    init(original: String?, updated: String, createsFile: Bool, entryKey: String) {
+        self.createsFile = createsFile
+
+        let before = (original ?? "").components(separatedBy: "\n")
+        let after = updated.components(separatedBy: "\n")
+
+        // Our edits are always one contiguous span, so trimming the common head
+        // and tail isolates exactly what changed — no real diff needed.
+        var head = 0
+        while head < before.count, head < after.count, before[head] == after[head] { head += 1 }
+        var tail = 0
+        while tail < before.count - head, tail < after.count - head,
+              before[before.count - 1 - tail] == after[after.count - 1 - tail] { tail += 1 }
+
+        var changed = head..<max(head, after.count - tail)
+        self.replacesEntry = (original ?? "").contains("\"\(entryKey)\"")
+            || (original ?? "").contains(".\(entryKey)]")
+
+        // Nothing changed (already imported and pointing at this build): show
+        // the existing entry rather than an empty preview.
+        if changed.isEmpty, let hit = after.firstIndex(where: { $0.contains(entryKey) }) {
+            changed = hit..<(hit + 1)
+        }
+
+        let start = max(0, changed.lowerBound - Self.context)
+        let end = min(after.count, changed.upperBound + Self.context)
+        // A trailing newline leaves an empty last element; don't show it.
+        let trimmedEnd = (end == after.count && after.last?.isEmpty == true) ? end - 1 : end
+
+        var lines: [Line] = []
+        for index in start..<max(start, trimmedEnd) {
+            lines.append(
+                Line(
+                    id: index,
+                    number: index + 1,
+                    text: after[index],
+                    isAdded: changed.contains(index)
+                )
+            )
+        }
+        self.lines = lines
+    }
+}
+
+enum MCPClientInstallError: LocalizedError {
+    case unreadable
+    case unsupportedShape
+    case verificationFailed
+    case writeFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .unreadable: return L("settings.mcp.error.unreadable")
+        case .unsupportedShape: return L("settings.mcp.error.shape")
+        case .verificationFailed: return L("settings.mcp.error.verify")
+        case .writeFailed(let detail): return L("settings.mcp.error.write", detail)
+        }
+    }
+}
+
+/// Reads and rewrites third-party agent config files.
+enum MCPClientConfigurator {
+    /// The server name we register ourselves under.
+    static let serverKey = "clipth"
+    static let tomlTableName = "mcp_servers.\(serverKey)"
+
+    static var executablePath: String {
+        Bundle.main.executablePath ?? "/Applications/Clipth.app/Contents/MacOS/Clipth"
+    }
+
+    static func state(for target: MCPClientTarget) -> MCPClientConfigState {
+        guard FileManager.default.fileExists(atPath: target.configPath) else { return .notConfigured }
+        guard let text = try? String(contentsOfFile: target.configPath, encoding: .utf8) else {
+            return .unreadable
+        }
+        if target.format.isTOML {
+            guard let command = TOMLConfigText.command(in: text, table: tomlTableName) else {
+                return .notConfigured
+            }
+            return command == executablePath ? .current : .outdated(command)
+        }
+        guard let root = JSONConfigText.parse(text) else { return .unreadable }
+        guard let container = root[target.format.containerKey] as? [String: Any],
+              let entry = container[serverKey],
+              let command = target.format.command(from: entry) else {
+            return .notConfigured
+        }
+        return command == executablePath ? .current : .outdated(command)
+    }
+
+    static func install(into target: MCPClientTarget) throws {
+        let original = try readConfig(target)
+        let updated = try updatedText(for: target, original: original)
+        try write(updated, to: target.configPath, hadOriginal: original != nil)
+    }
+
+    /// What `install` would write, without writing it. Shares the exact code
+    /// path, so the preview can't drift from the real edit.
+    static func preview(for target: MCPClientTarget) throws -> MCPConfigPreview {
+        let original = try readConfig(target)
+        let updated = try updatedText(for: target, original: original)
+        return MCPConfigPreview(
+            original: original,
+            updated: updated,
+            createsFile: original == nil,
+            entryKey: serverKey
+        )
+    }
+
+    private static func readConfig(_ target: MCPClientTarget) throws -> String? {
+        guard FileManager.default.fileExists(atPath: target.configPath) else { return nil }
+        guard let text = try? String(contentsOfFile: target.configPath, encoding: .utf8) else {
+            throw MCPClientInstallError.unreadable
+        }
+        return text
+    }
+
+    private static func updatedText(for target: MCPClientTarget, original: String?) throws -> String {
+        let entry = target.format.entryLiteral(executablePath: executablePath)
+        let updated: String
+        if target.format.isTOML {
+            updated = TOMLConfigText.setTable(in: original ?? "", table: tomlTableName, body: entry)
+        } else if let base = original, !base.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            guard let edited = JSONConfigText.setEntry(
+                in: base,
+                container: target.format.containerKey,
+                entry: serverKey,
+                literal: entry
+            ) else {
+                throw MCPClientInstallError.unsupportedShape
+            }
+            updated = edited
+        } else {
+            updated = target.format.fileSnippet(executablePath: executablePath) + "\n"
+        }
+
+        // Never hand a client a file we just broke: re-read our own output and
+        // confirm the entry survived before anyone sees it.
+        guard command(in: updated, target: target) == executablePath else {
+            throw MCPClientInstallError.verificationFailed
+        }
+        return updated
+    }
+
+    static func remove(from target: MCPClientTarget) throws {
+        let path = target.configPath
+        guard FileManager.default.fileExists(atPath: path) else { return }
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+            throw MCPClientInstallError.unreadable
+        }
+
+        let updated: String
+        if target.format.isTOML {
+            updated = TOMLConfigText.removeTable(in: text, table: tomlTableName)
+        } else {
+            guard let edited = JSONConfigText.removeEntry(
+                in: text,
+                container: target.format.containerKey,
+                entry: serverKey
+            ) else {
+                throw MCPClientInstallError.unsupportedShape
+            }
+            updated = edited
+        }
+
+        guard command(in: updated, target: target) == nil else {
+            throw MCPClientInstallError.verificationFailed
+        }
+        try write(updated, to: path, hadOriginal: true)
+    }
+
+    /// Parses `text` the way the client would and returns our registered command.
+    private static func command(in text: String, target: MCPClientTarget) -> String? {
+        if target.format.isTOML {
+            return TOMLConfigText.command(in: text, table: tomlTableName)
+        }
+        guard let root = JSONConfigText.parse(text),
+              let container = root[target.format.containerKey] as? [String: Any],
+              let entry = container[serverKey] else { return nil }
+        return target.format.command(from: entry)
+    }
+
+    private static func write(_ text: String, to path: String, hadOriginal: Bool) throws {
+        let fm = FileManager.default
+        let url = URL(fileURLWithPath: path)
+        do {
+            try fm.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+        } catch {
+            throw MCPClientInstallError.writeFailed(error.localizedDescription)
+        }
+
+        // These files hold API keys and session state and are often mode 0600.
+        // An atomic write replaces the inode with a fresh 0644 file, so capture
+        // the original mode and put it back.
+        var mode: NSNumber?
+        if let attrs = try? fm.attributesOfItem(atPath: path) {
+            mode = attrs[.posixPermissions] as? NSNumber
+        }
+
+        if hadOriginal {
+            let backup = path + ".clipth.bak"
+            try? fm.removeItem(atPath: backup)
+            try? fm.copyItem(atPath: path, toPath: backup)
+        }
+
+        do {
+            try text.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            throw MCPClientInstallError.writeFailed(error.localizedDescription)
+        }
+
+        if let mode {
+            try? fm.setAttributes([.posixPermissions: mode], ofItemAtPath: path)
+        }
+    }
+}
+
+/// Surgical edits on a JSON (or JSON-with-comments) document.
+///
+/// Everything works on UTF-8 bytes and returns the original text with one span
+/// replaced, so comments, key order, indentation style and any unrelated
+/// megabytes of the file survive untouched — which a parse/re-encode round trip
+/// would not manage.
+enum JSONConfigText {
+    /// Sets `root[container][entry] = literal`, creating either level if absent.
+    /// Returns nil when the document isn't shaped like we expect (not an
+    /// object, or the container key holds something other than an object).
+    static func setEntry(in text: String, container: String, entry: String, literal: String) -> String? {
+        let bytes = Array(text.utf8)
+        guard let rootStart = objectStart(bytes, from: 0),
+              let root = members(bytes, objectStart: rootStart) else { return nil }
+        let entryKey = "\"\(entry)\""
+
+        guard let holder = root.list.first(where: { $0.name == container }) else {
+            // No server map at all — add the whole block at the top of the file.
+            let rootIndent = lineIndent(bytes, at: rootStart)
+            let keyIndent = rootIndent + "  "
+            let valueIndent = keyIndent + "  "
+            let block = "{\n\(valueIndent)\(entryKey): "
+                + MCPClientFormat.indent(literal, by: valueIndent)
+                + "\n\(keyIndent)}"
+            if root.list.isEmpty {
+                let document = "{\n\(keyIndent)\"\(container)\": \(block)\n\(rootIndent)}"
+                return replacing(bytes, rootStart..<(root.closeIndex + 1), with: document)
+            }
+            let insertion = "\n\(keyIndent)\"\(container)\": \(block),"
+            return replacing(bytes, (rootStart + 1)..<(rootStart + 1), with: insertion)
+        }
+
+        guard bytes[holder.valueStart] == 0x7B,
+              let inner = members(bytes, objectStart: holder.valueStart) else { return nil }
+        let holderIndent = lineIndent(bytes, at: holder.keyStart)
+        let entryIndent = holderIndent + "  "
+
+        if let existing = inner.list.first(where: { $0.name == entry }) {
+            let value = MCPClientFormat.indent(literal, by: entryIndent)
+            return replacing(bytes, existing.valueStart..<existing.valueEnd, with: value)
+        }
+        if inner.list.isEmpty {
+            let block = "{\n\(entryIndent)\(entryKey): "
+                + MCPClientFormat.indent(literal, by: entryIndent)
+                + "\n\(holderIndent)}"
+            return replacing(bytes, holder.valueStart..<(inner.closeIndex + 1), with: block)
+        }
+        let insertion = "\n\(entryIndent)\(entryKey): "
+            + MCPClientFormat.indent(literal, by: entryIndent)
+            + ","
+        let at = holder.valueStart + 1
+        return replacing(bytes, at..<at, with: insertion)
+    }
+
+    /// Deletes `root[container][entry]` along with the comma and blank line it
+    /// leaves behind. A no-op (returns `text`) when the entry isn't there.
+    static func removeEntry(in text: String, container: String, entry: String) -> String? {
+        let bytes = Array(text.utf8)
+        guard let rootStart = objectStart(bytes, from: 0),
+              let root = members(bytes, objectStart: rootStart) else { return nil }
+        guard let holder = root.list.first(where: { $0.name == container }) else { return text }
+        guard bytes[holder.valueStart] == 0x7B,
+              let inner = members(bytes, objectStart: holder.valueStart) else { return nil }
+        guard let existing = inner.list.first(where: { $0.name == entry }) else { return text }
+
+        var start = existing.keyStart
+        var end = existing.valueEnd
+
+        var probe = end
+        while probe < bytes.count, isBlank(bytes[probe]) { probe += 1 }
+        if probe < bytes.count, bytes[probe] == 0x2C {
+            // Followed by a sibling: take our comma with us.
+            end = probe + 1
+            while end < bytes.count, isBlank(bytes[end]) { end += 1 }
+        } else {
+            // Last member: take the *previous* comma instead, otherwise the
+            // sibling before us is left with a dangling one.
+            var back = start - 1
+            while back >= 0, isWhitespace(bytes[back]) { back -= 1 }
+            if back >= 0, bytes[back] == 0x2C { start = back }
+        }
+        // Swallow the leftover indentation and the now-empty line.
+        while start > 0, isBlank(bytes[start - 1]) { start -= 1 }
+        if start > 0, bytes[start - 1] == 0x0A { start -= 1 }
+
+        return replacing(bytes, start..<end, with: "")
+    }
+
+    /// Parses a config the way its owner would, tolerating comments and trailing
+    /// commas (Zed and VS Code both ship JSONC).
+    static func parse(_ text: String) -> [String: Any]? {
+        guard let data = stripped(text).data(using: .utf8) else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    }
+
+    // MARK: Scanning
+
+    private struct Member {
+        let name: String
+        let keyStart: Int
+        let valueStart: Int
+        let valueEnd: Int
+    }
+
+    private static func objectStart(_ b: [UInt8], from index: Int) -> Int? {
+        var i = index
+        skipTrivia(b, &i)
+        guard i < b.count, b[i] == 0x7B else { return nil }
+        return i
+    }
+
+    private static func members(_ b: [UInt8], objectStart: Int) -> (list: [Member], closeIndex: Int)? {
+        guard objectStart < b.count, b[objectStart] == 0x7B else { return nil }
+        var i = objectStart + 1
+        var list: [Member] = []
+        while true {
+            skipTrivia(b, &i)
+            guard i < b.count else { return nil }
+            if b[i] == 0x7D { return (list, i) }
+            if b[i] == 0x2C { i += 1; continue }
+            guard b[i] == 0x22 else { return nil }
+            let keyStart = i
+            var cursor = i
+            guard let name = scanString(b, &cursor) else { return nil }
+            i = cursor
+            skipTrivia(b, &i)
+            guard i < b.count, b[i] == 0x3A else { return nil }
+            i += 1
+            var valueStart = i
+            skipTrivia(b, &valueStart)
+            guard let valueEnd = valueEnd(b, from: valueStart) else { return nil }
+            list.append(Member(name: name, keyStart: keyStart, valueStart: valueStart, valueEnd: valueEnd))
+            i = valueEnd
+        }
+    }
+
+    /// Advances past whitespace and `//` / `/* */` comments.
+    private static func skipTrivia(_ b: [UInt8], _ i: inout Int) {
+        while i < b.count {
+            if isWhitespace(b[i]) { i += 1; continue }
+            guard b[i] == 0x2F, i + 1 < b.count else { return }
+            if b[i + 1] == 0x2F {
+                i += 2
+                while i < b.count, b[i] != 0x0A { i += 1 }
+                continue
+            }
+            if b[i + 1] == 0x2A {
+                i += 2
+                while i + 1 < b.count, !(b[i] == 0x2A && b[i + 1] == 0x2F) { i += 1 }
+                i = min(i + 2, b.count)
+                continue
+            }
+            return
+        }
+    }
+
+    /// `i` points at the opening quote; leaves it just past the closing one.
+    /// The returned name keeps its escapes — fine, since the keys we match on
+    /// (`mcpServers`, `clipth`, …) contain none.
+    private static func scanString(_ b: [UInt8], _ i: inout Int) -> String? {
+        guard i < b.count, b[i] == 0x22 else { return nil }
+        var j = i + 1
+        var raw: [UInt8] = []
+        while j < b.count {
+            let c = b[j]
+            if c == 0x5C {
+                guard j + 1 < b.count else { return nil }
+                raw.append(c)
+                raw.append(b[j + 1])
+                j += 2
+                continue
+            }
+            if c == 0x22 {
+                i = j + 1
+                return String(decoding: raw, as: UTF8.self)
+            }
+            raw.append(c)
+            j += 1
+        }
+        return nil
+    }
+
+    private static func valueEnd(_ b: [UInt8], from start: Int) -> Int? {
+        var i = start
+        skipTrivia(b, &i)
+        guard i < b.count else { return nil }
+        let c = b[i]
+        if c == 0x22 {
+            var j = i
+            guard scanString(b, &j) != nil else { return nil }
+            return j
+        }
+        if c == 0x7B || c == 0x5B {
+            let open = c
+            let close: UInt8 = (c == 0x7B) ? 0x7D : 0x5D
+            var depth = 0
+            var j = i
+            while j < b.count {
+                skipTrivia(b, &j)
+                guard j < b.count else { return nil }
+                let ch = b[j]
+                if ch == 0x22 {
+                    var k = j
+                    guard scanString(b, &k) != nil else { return nil }
+                    j = k
+                    continue
+                }
+                if ch == open { depth += 1; j += 1; continue }
+                if ch == close {
+                    depth -= 1
+                    j += 1
+                    if depth == 0 { return j }
+                    continue
+                }
+                j += 1
+            }
+            return nil
+        }
+        // Number / true / false / null: runs until a delimiter.
+        var j = i
+        while j < b.count {
+            let ch = b[j]
+            if ch == 0x2C || ch == 0x7D || ch == 0x5D || ch == 0x2F || isWhitespace(ch) { break }
+            j += 1
+        }
+        return j > i ? j : nil
+    }
+
+    /// Leading whitespace of the line containing `index`.
+    private static func lineIndent(_ b: [UInt8], at index: Int) -> String {
+        var start = index
+        while start > 0, b[start - 1] != 0x0A { start -= 1 }
+        var end = start
+        while end < b.count, isBlank(b[end]) { end += 1 }
+        return String(decoding: b[start..<min(end, index)], as: UTF8.self)
+    }
+
+    private static func replacing(_ b: [UInt8], _ range: Range<Int>, with text: String) -> String {
+        var out = Array(b[0..<range.lowerBound])
+        out.append(contentsOf: Array(text.utf8))
+        out.append(contentsOf: Array(b[range.upperBound...]))
+        return String(decoding: out, as: UTF8.self)
+    }
+
+    /// Removes comments and trailing commas so `JSONSerialization` (strict JSON)
+    /// can read a JSONC file.
+    private static func stripped(_ text: String) -> String {
+        let b = Array(text.utf8)
+        var out: [UInt8] = []
+        out.reserveCapacity(b.count)
+        var i = 0
+        while i < b.count {
+            let c = b[i]
+            if c == 0x22 {
+                out.append(c)
+                i += 1
+                while i < b.count {
+                    let ch = b[i]
+                    out.append(ch)
+                    if ch == 0x5C, i + 1 < b.count {
+                        out.append(b[i + 1])
+                        i += 2
+                        continue
+                    }
+                    i += 1
+                    if ch == 0x22 { break }
+                }
+                continue
+            }
+            if c == 0x2F, i + 1 < b.count, b[i + 1] == 0x2F {
+                while i < b.count, b[i] != 0x0A { i += 1 }
+                continue
+            }
+            if c == 0x2F, i + 1 < b.count, b[i + 1] == 0x2A {
+                i += 2
+                while i + 1 < b.count, !(b[i] == 0x2A && b[i + 1] == 0x2F) { i += 1 }
+                i = min(i + 2, b.count)
+                continue
+            }
+            if c == 0x2C {
+                var j = i + 1
+                while j < b.count, isWhitespace(b[j]) { j += 1 }
+                if j < b.count, b[j] == 0x7D || b[j] == 0x5D { i += 1; continue }
+            }
+            out.append(c)
+            i += 1
+        }
+        return String(decoding: out, as: UTF8.self)
+    }
+
+    private static func isWhitespace(_ c: UInt8) -> Bool {
+        c == 0x20 || c == 0x09 || c == 0x0A || c == 0x0D
+    }
+
+    /// Whitespace that isn't a line break.
+    private static func isBlank(_ c: UInt8) -> Bool {
+        c == 0x20 || c == 0x09 || c == 0x0D
+    }
+}
+
+/// Line-level edits on Codex's `config.toml`.
+///
+/// Line-based rather than a real TOML parse for the same reason as the JSON
+/// side: `~/.codex/config.toml` is the user's own hand-written file, and a
+/// round trip through a serializer would reflow all of it.
+enum TOMLConfigText {
+    static func setTable(in text: String, table: String, body: String) -> String {
+        var lines = text.components(separatedBy: "\n")
+        let block = ["[\(table)]"] + body.components(separatedBy: "\n")
+        if let range = tableRange(lines, table: table) {
+            lines.replaceSubrange(range, with: block)
+            return lines.joined(separator: "\n")
+        }
+        var prefix = text
+        if !prefix.isEmpty {
+            while prefix.hasSuffix("\n") { prefix.removeLast() }
+            prefix += "\n\n"
+        }
+        return prefix + block.joined(separator: "\n") + "\n"
+    }
+
+    static func removeTable(in text: String, table: String) -> String {
+        var lines = text.components(separatedBy: "\n")
+        guard let range = tableRange(lines, table: table) else { return text }
+        lines.replaceSubrange(range, with: [])
+        // Collapse the blank line the table used to be separated by.
+        if range.lowerBound > 0, range.lowerBound < lines.count,
+           lines[range.lowerBound - 1].trimmingCharacters(in: .whitespaces).isEmpty,
+           lines[range.lowerBound].trimmingCharacters(in: .whitespaces).isEmpty {
+            lines.remove(at: range.lowerBound)
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// The `command = "…"` value inside the table, if the table exists.
+    static func command(in text: String, table: String) -> String? {
+        let lines = text.components(separatedBy: "\n")
+        guard let range = tableRange(lines, table: table) else { return nil }
+        for line in lines[range] {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("command") else { continue }
+            guard let eq = trimmed.firstIndex(of: "=") else { continue }
+            let value = trimmed[trimmed.index(after: eq)...].trimmingCharacters(in: .whitespaces)
+            guard value.hasPrefix("\""), value.count >= 2, value.hasSuffix("\"") else { continue }
+            let inner = value.dropFirst().dropLast()
+            return inner.replacingOccurrences(of: "\\\"", with: "\"")
+                .replacingOccurrences(of: "\\\\", with: "\\")
+        }
+        return nil
+    }
+
+    /// The table header line through the last line before the next table that
+    /// isn't one of ours (`[mcp_servers.clipth.env]` stays inside).
+    private static func tableRange(_ lines: [String], table: String) -> Range<Int>? {
+        let quoted = quotedHeader(table)
+        let headers = ["[\(table)]", quoted]
+        guard let start = lines.firstIndex(where: {
+            headers.contains($0.trimmingCharacters(in: .whitespaces))
+        }) else { return nil }
+
+        var end = start + 1
+        while end < lines.count {
+            let trimmed = lines[end].trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("[") {
+                let isChild = trimmed.hasPrefix("[\(table).") || trimmed.hasPrefix("[[\(table).")
+                if !isChild { break }
+            }
+            end += 1
+        }
+        // Don't drag the blank line before the next table along.
+        while end > start + 1, lines[end - 1].trimmingCharacters(in: .whitespaces).isEmpty {
+            end -= 1
+        }
+        return start..<end
+    }
+
+    /// Codex also accepts `[mcp_servers."clipth"]`, so match that spelling too.
+    private static func quotedHeader(_ table: String) -> String {
+        guard let dot = table.lastIndex(of: ".") else { return "[\"\(table)\"]" }
+        let parent = table[table.startIndex..<dot]
+        let leaf = table[table.index(after: dot)...]
+        return "[\(parent).\"\(leaf)\"]"
+    }
+}

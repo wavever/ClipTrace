@@ -128,17 +128,31 @@ Everything is encrypted locally with AES-256-GCM before it reaches iCloud Drive,
 
 ## MCP Server
 
-The app binary doubles as an MCP stdio server. Configure a compatible client with:
+The app binary doubles as an MCP stdio server.
+
+**One-click setup.** Settings → AI lists the agents actually installed on your Mac — CLIs and apps alike — and writes the entry into their config file for you. Supported: Claude Code, Codex CLI, Claude Desktop, Cursor, OpenClaw, VS Code, Zed, Windsurf, Gemini CLI, opencode, Qwen Code, Cline, Kiro, LM Studio, and Amazon Q CLI. The original file is backed up alongside it as `.clipth.bak`, comments and formatting are preserved, and each client's own syntax is used (Codex is TOML, VS Code keys the map `servers`, Zed uses `context_servers`, opencode takes `command` as an array). Restart the client afterwards so it picks Clipth up.
+
+Import never writes straight away: it opens a confirmation dialog showing the exact edit — the affected lines of that config file, in that file's own syntax, with the additions highlighted — and nothing is written until you confirm. Each row can also open its config file in Quick Look or hand it to your editor.
+
+To configure a client by hand instead:
 
 ```json
 {
   "mcpServers": {
-    "clipboard": {
+    "clipth": {
       "command": "/Applications/Clipth.app/Contents/MacOS/Clipth",
       "args": ["--mcp"]
     }
   }
 }
+```
+
+Codex uses TOML rather than JSON — in `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.clipth]
+command = "/Applications/Clipth.app/Contents/MacOS/Clipth"
+args = ["--mcp"]
 ```
 
 Available tools:
