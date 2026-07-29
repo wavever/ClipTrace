@@ -4,8 +4,9 @@
 The Sparkle update dialog renders the appcast item's <description> as HTML, so
 we embed the *full* changelog there instead of a "see the release page" stub —
 otherwise users only ever see a bare link in the updater. Notes can be authored
-bilingually: drop a docs/release-notes/<version>.md with `## en` / `## zh`
-sections and each language is emitted as its own <description xml:lang="…">,
+bilingually: drop a <version>.md with `## en` / `## zh` into NOTES_DIR (the notes
+live in the wavever/clipth-website repo, which release.yml checks out) and each
+language is emitted as its own <description xml:lang="…">,
 which Sparkle picks from based on the user's system language. When no notes file
 exists we fall back to an auto-generated English changelog built from
 conventional-commit subjects between the previous tag and this one.
@@ -17,7 +18,8 @@ Env inputs:
   VERSION, BUILD_VERSION, TAG, REPO (owner/repo), DMG_URL, ED_SIG, LENGTH
   PREV_TAG       previous git tag (may be empty → no history/diff)
   PREV_APPCAST   path to the previous appcast.xml (may be missing → no history)
-  NOTES_DIR      dir holding <version>.md (default: docs/release-notes)
+  NOTES_DIR      dir holding <version>.md (default: docs/release-notes, which is
+                 the layout inside the checked-out clipth-website repo)
   OUT_APPCAST    where to write the merged appcast.xml (default: appcast.xml)
   OUT_BODY       where to write the GitHub Release body markdown
   PUBDATE        RFC-822 date for the appcast item

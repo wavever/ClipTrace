@@ -83,4 +83,4 @@ If the answer is unclear, open an issue before implementing.
 
 ## Release Notes
 
-User-facing changes should be reflected in `docs/release-notes/<version>.md` when preparing a release. The release workflow uses those files to generate the GitHub Release body and Sparkle appcast notes.
+User-facing changes should be reflected in `docs/release-notes/<version>.md` in the [wavever/clipth-website](https://github.com/wavever/clipth-website) repo when preparing a release — the notes live there alongside the homepage. The release workflow checks that repo out and uses those files to generate the GitHub Release body and Sparkle appcast notes, so write them *before* pushing the tag.

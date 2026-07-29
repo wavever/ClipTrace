@@ -48,11 +48,14 @@ Carthage/Build/
 *.swo
 *~
 
-# Local marketing-site working copy. The canonical site is served from docs/.
+# Local checkout of wavever/clipth-website (homepage + release notes).
 website/
 
 # Local Claude Code state (machine-local settings + agent worktrees)
 .claude/
+
+# Path release.yml checks wavever/clipth-website out to, for the release notes.
+.website/
 
 # Codegraph local index/cache
 .codegraph/

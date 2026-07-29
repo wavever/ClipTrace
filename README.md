@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://wavever.github.io/Clipth/"><img src="https://img.shields.io/badge/website-clipth-7AA487" alt="Website" /></a>
+  <a href="https://wavever.github.io/clipth-website/"><img src="https://img.shields.io/badge/website-clipth-7AA487" alt="Website" /></a>
   <a href="https://github.com/wavever/Clipth/actions/workflows/ci.yml"><img src="https://github.com/wavever/Clipth/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://github.com/wavever/Clipth/releases/latest"><img src="https://img.shields.io/github/v/release/wavever/Clipth" alt="Latest release" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="MIT License" /></a>
@@ -47,24 +47,24 @@ Choose automatic sync or keep it manual. The main window always exposes a compac
 | Tags or group membership change independently | Convergent set merging combines additions and preserves removals |
 | A device returns with stale data | Acknowledged tombstones prevent deleted clips from silently reappearing |
 
-Everything is encrypted locally with AES-256-GCM before it reaches iCloud Drive, WebDAV, S3-compatible storage, or your chosen sync folder. The losing version is retained as an encrypted conflict copy for 30 days, while old journals and orphan attachments are cleaned conservatively. [Read the sync architecture →](docs/sync-architecture.md)
+Everything is encrypted locally with AES-256-GCM before it reaches iCloud Drive, WebDAV, S3-compatible storage, or your chosen sync folder. The losing version is retained as an encrypted conflict copy for 30 days, while old journals and orphan attachments are cleaned conservatively. [Read the sync architecture →](https://github.com/wavever/clipth-website/blob/main/docs/sync-architecture.md)
 
 ## Preview
 
 <p align="center">
-  <img src="docs/assets/screenshot-main.png" alt="Main window" width="720" />
+  <img src="https://raw.githubusercontent.com/wavever/clipth-website/main/assets/screenshot-main.png" alt="Main window" width="720" />
   <br/>
   <em>Main window - history, full-text and semantic search, tags</em>
 </p>
 
 <p align="center">
-  <img src="docs/assets/screenshot-stats.png" alt="Activity stats" width="720" />
+  <img src="https://raw.githubusercontent.com/wavever/clipth-website/main/assets/screenshot-stats.png" alt="Activity stats" width="720" />
   <br/>
   <em>Activity stats - daily count and yearly heatmap</em>
 </p>
 
 <p align="center">
-  <img src="docs/assets/screenshot-mcp.png" alt="MCP integration" width="720" />
+  <img src="https://raw.githubusercontent.com/wavever/clipth-website/main/assets/screenshot-mcp.png" alt="MCP integration" width="720" />
   <br/>
   <em>MCP server - connect Claude Desktop, Claude Code, or Cursor</em>
 </p>
@@ -124,7 +124,7 @@ Everything is encrypted locally with AES-256-GCM before it reaches iCloud Drive,
 - Syncs history, images, tags, groups, favorites, pins, trash state, and individual file attachments up to 25 MB; device settings, statistics, and semantic vectors remain local
 - Another Mac needs the same recovery key. Losing it makes existing remote data unrecoverable.
 - Existing v1 manifests are upgraded in place on the next successful sync; the recovery key is reused and the remote `.clipth-sync-v1` location stays stable for Clipth releases.
-- See [Sync Architecture](docs/sync-architecture.md) for merge, commit, migration, and retention invariants.
+- See [Sync Architecture](https://github.com/wavever/clipth-website/blob/main/docs/sync-architecture.md) for merge, commit, migration, and retention invariants.
 
 ## MCP Server
 

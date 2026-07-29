@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://wavever.github.io/Clipth/"><img src="https://img.shields.io/badge/%E5%AE%98%E7%BD%91-%E5%9C%A8%E7%BA%BF-7AA487" alt="官网" /></a>
+  <a href="https://wavever.github.io/clipth-website/"><img src="https://img.shields.io/badge/%E5%AE%98%E7%BD%91-%E5%9C%A8%E7%BA%BF-7AA487" alt="官网" /></a>
   <a href="https://github.com/wavever/Clipth/actions/workflows/ci.yml"><img src="https://github.com/wavever/Clipth/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://github.com/wavever/Clipth/releases/latest"><img src="https://img.shields.io/github/v/release/wavever/Clipth" alt="最新版本" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="MIT License" /></a>
@@ -47,24 +47,24 @@ Clipth 取自 "clip path"，对应中文名“剪迹”：被你复制过的内�
 | 标签或分组关系分别变化 | 可收敛集合合并新增项，并保留删除语义 |
 | 离线设备带着旧数据回来 | 经设备确认的删除墓碑防止条目静默复活 |
 
-所有数据在到达 iCloud 云盘、WebDAV、S3 兼容存储或同步文件夹前，都会先在本机使用 AES-256-GCM 加密。落败内容会作为加密冲突副本保留 30 天，旧日志与孤儿附件则采用保守策略回收。[阅读同步架构 →](docs/sync-architecture.md)
+所有数据在到达 iCloud 云盘、WebDAV、S3 兼容存储或同步文件夹前，都会先在本机使用 AES-256-GCM 加密。落败内容会作为加密冲突副本保留 30 天，旧日志与孤儿附件则采用保守策略回收。[阅读同步架构 →](https://github.com/wavever/clipth-website/blob/main/docs/sync-architecture.md)
 
 ## 预览
 
 <p align="center">
-  <img src="docs/assets/screenshot-main.png" alt="主界面" width="720" />
+  <img src="https://raw.githubusercontent.com/wavever/clipth-website/main/assets/screenshot-main.png" alt="主界面" width="720" />
   <br/>
   <em>主界面：历史记录、全文与语义搜索、标签</em>
 </p>
 
 <p align="center">
-  <img src="docs/assets/screenshot-stats.png" alt="活跃统计" width="720" />
+  <img src="https://raw.githubusercontent.com/wavever/clipth-website/main/assets/screenshot-stats.png" alt="活跃统计" width="720" />
   <br/>
   <em>活跃统计：每日复制次数与年度热力图</em>
 </p>
 
 <p align="center">
-  <img src="docs/assets/screenshot-mcp.png" alt="MCP 集成" width="720" />
+  <img src="https://raw.githubusercontent.com/wavever/clipth-website/main/assets/screenshot-mcp.png" alt="MCP 集成" width="720" />
   <br/>
   <em>MCP 服务器：接入 Claude Desktop、Claude Code 或 Cursor</em>
 </p>
@@ -124,7 +124,7 @@ Clipth 取自 "clip path"，对应中文名“剪迹”：被你复制过的内�
 - 同步历史、图片、标签、分组、收藏、置顶、垃圾桶状态及单个不超过 25 MB 的文件附件；设备设置、统计和语义向量仍保留在本机
 - 另一台 Mac 必须使用同一恢复密钥；密钥丢失后，现有远端数据无法恢复
 - 旧版 v1 清单会在下次成功同步时原位升级；恢复密钥会继续复用，远端 `.clipth-sync-v1` 目录在 Clipth 版本中保持稳定
-- 合并、提交、迁移和回收约束详见 [同步架构](docs/sync-architecture.md)
+- 合并、提交、迁移和回收约束详见 [同步架构](https://github.com/wavever/clipth-website/blob/main/docs/sync-architecture.md)
 
 ## MCP Server
 

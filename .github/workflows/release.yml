@@ -19,6 +19,16 @@ jobs:
           # against the previous tag.
           fetch-depth: 0
 
+      # Release notes live next to the homepage in wavever/clipth-website, so
+      # this repo stays just the app. Public repo — the default token is enough,
+      # and a missing/renamed repo must fail loudly rather than silently fall
+      # back to auto-generated notes.
+      - name: Check out release notes
+        uses: actions/checkout@v5
+        with:
+          repository: wavever/clipth-website
+          path: .website
+
       # The macos-14 image still defaults to Xcode 15.4, whose stricter Swift
       # concurrency checking rejects code this project compiles cleanly under
       # Xcode 16 (the declared toolchain — see AGENT.md). Select the newest
@@ -171,9 +181,9 @@ jobs:
       # Build the Sparkle appcast and the GitHub Release body in one shot via
       # scripts/build_release_notes.py. The script embeds the *full* changelog
       # into the appcast <description> (so the updater dialog shows real notes
-      # instead of a bare link) and, when docs/release-notes/<version>.md
-      # provides `## en` / `## zh` sections, emits one <description xml:lang="…">
-      # per language — Sparkle then shows the one matching the user's system
+      # instead of a bare link) and, when the checked-out clipth-website's
+      # docs/release-notes/<version>.md provides `## en` / `## zh` sections,
+      # emits one <description xml:lang="…"> per language — Sparkle then shows the one matching the user's system
       # language. With no notes file it falls back to an auto-generated English
       # changelog from conventional-commit subjects. We fetch the previous
       # release's appcast.xml (best effort) so prior <item> history is kept.
@@ -208,7 +218,7 @@ jobs:
           LENGTH="${{ steps.sign.outputs.length }}" \
           PREV_TAG="$PREV_TAG" \
           PREV_APPCAST="$PREV_APPCAST" \
-          NOTES_DIR="docs/release-notes" \
+          NOTES_DIR=".website/docs/release-notes" \
           OUT_APPCAST="appcast.xml" \
           OUT_BODY="$NOTES_FILE" \
           PUBDATE="$(date -u +"%a, %d %b %Y %H:%M:%S +0000")" \
