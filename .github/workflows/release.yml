@@ -13,7 +13,7 @@ jobs:
     name: Build & Publish
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           # Need full history + tags so the release-notes step can diff
           # against the previous tag.
@@ -24,7 +24,7 @@ jobs:
       # and a missing/renamed repo must fail loudly rather than silently fall
       # back to auto-generated notes.
       - name: Check out release notes
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: wavever/clipth-website
           path: .website

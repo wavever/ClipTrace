@@ -14,7 +14,7 @@ jobs:
     name: Build (Debug)
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # The macos-14 image still defaults to Xcode 15.4, whose stricter Swift
       # concurrency checking rejects code this project compiles cleanly under
