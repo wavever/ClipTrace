@@ -95,6 +95,7 @@ final class RuleEditorCenter: ObservableObject {
 // MARK: - Rules tab content
 
 struct RulesSection: View {
+    let page: SettingsSubsection
     @ObservedObject private var store = FilterSettingsStore.shared
     @ObservedObject private var runLog = ScriptRunLog.shared
     @ObservedObject private var stats = RuleStatsStore.shared
@@ -103,7 +104,8 @@ struct RulesSection: View {
 
     var body: some View {
         VStack(spacing: 18) {
-            SettingsGroup(icon: "bolt.badge.automatic", title: L("settings.rules.intro.title"), tint: .appAccent) {
+            if page == .rulesLibrary {
+                SettingsGroup {
                 SettingsRow(
                     icon: "info.circle",
                     iconTint: .appAccent,
@@ -123,10 +125,27 @@ struct RulesSection: View {
                     }
                     .buttonStyle(PaperActionButtonStyle(role: .plain))
                 }
+                }
+
+                rulesCard
             }
 
-            rulesCard
-            if !runLog.records.isEmpty { runLogCard }
+            if page == .rulesActivity {
+                if runLog.records.isEmpty {
+                    SettingCard(
+                        title: L("settings.rules.log.title"),
+                        subtitle: L("settings.rules.log.subtitle")
+                    ) {
+                        Label(L("settings.rules.log.empty"), systemImage: "clock.badge.questionmark")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.vertical, 24)
+                    }
+                } else {
+                    runLogCard
+                }
+            }
         }
     }
 

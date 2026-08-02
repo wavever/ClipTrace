@@ -8,6 +8,8 @@ import ServiceManagement
 struct SettingsPanelView: View {
     @ObservedObject private var nav = AppNavigation.shared
     @State private var section: Section = .general
+    @State private var subsection: SettingsSubsection = .generalAppearance
+    @Namespace private var navigationSelection
 
     // Zero is the persisted sentinel for unlimited history. Existing users who
     // explicitly chose a numeric cap keep that value; fresh installs stay open-ended.
@@ -50,19 +52,52 @@ struct SettingsPanelView: View {
         VStack(alignment: .leading, spacing: 0) {
             header
                 .padding(.horizontal, 24)
-                .padding(.top, 18)
-                .padding(.bottom, 14)
+                .padding(.top, 16)
+                .padding(.bottom, 12)
 
-            tabs
-                .padding(.horizontal, 24)
-                .padding(.bottom, 16)
+            Divider()
+                .overlay(Color.appPaperDivider.opacity(0.72))
 
-            ScrollView {
-                content
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 24)
+            HStack(spacing: 0) {
+                secondaryNavigation
+                    .frame(width: 188)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 20)
+
+                Divider()
+                    .overlay(Color.appPaperDivider.opacity(0.72))
+
+                ScrollViewReader { scrollProxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 22) {
+                            pageHeader
+                                .id("settings-page-top")
+
+                            content
+                        }
+                        .id(subsection)
+                        .transition(
+                            .asymmetric(
+                                insertion: .opacity.combined(with: .offset(y: 8)),
+                                removal: .opacity
+                            )
+                        )
+                        .frame(maxWidth: 920, alignment: .leading)
+                        .padding(.horizontal, 28)
+                        .padding(.top, 24)
+                        .padding(.bottom, 30)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .onChange(of: subsection) { _, _ in
+                        DispatchQueue.main.async {
+                            scrollProxy.scrollTo("settings-page-top", anchor: .top)
+                        }
+                    }
+                    .animation(.spring(response: 0.3, dampingFraction: 0.84), value: subsection)
+                }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear { consumePendingSection() }
         .onChange(of: nav.pendingSettingsSection) { _, _ in
             consumePendingSection()
@@ -71,13 +106,13 @@ struct SettingsPanelView: View {
             VStack(spacing: 0) {
                 LinearGradient(
                     colors: [
-                        Color.appAccent.opacity(0.10),
+                        Color.appAccent.opacity(0.07),
                         Color.clear
                     ],
                     startPoint: .top,
                     endPoint: .bottom
                 )
-                .frame(height: 220)
+                .frame(height: 170)
                 Spacer(minLength: 0)
             }
             .allowsHitTesting(false)
@@ -90,7 +125,10 @@ struct SettingsPanelView: View {
 
     private func consumePendingSection() {
         guard let pending = nav.pendingSettingsSection else { return }
-        withAnimation(.easeOut(duration: 0.18)) { section = pending }
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.84)) {
+            section = pending
+            subsection = pending.defaultSubsection
+        }
         // Clear outside the view-update cycle; the resulting onChange re-entry
         // exits on the nil guard above.
         Task { @MainActor in
@@ -112,26 +150,40 @@ struct SettingsPanelView: View {
                 .foregroundStyle(Color.appMetal)
 
             Spacer()
+
+            tabs
         }
     }
 
     private var tabs: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 2) {
             ForEach(Section.allCases) { sec in
                 Button {
-                    withAnimation(.easeOut(duration: 0.18)) { section = sec }
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+                        section = sec
+                        subsection = sec.defaultSubsection
+                    }
                 } label: {
-                    Text(sec.localizedTitle)
+                    HStack(spacing: 6) {
+                        Image(systemName: sec.icon)
+                            .font(.system(size: 11.5, weight: .semibold))
+                        Text(sec.localizedTitle)
+                    }
                         .font(.system(size: 12.5, weight: section == sec ? .semibold : .medium))
-                        .foregroundStyle(section == sec ? Color.white : Color.appMetal.opacity(0.78))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
+                        .foregroundStyle(section == sec ? Color.appAccent : Color.appMetal.opacity(0.72))
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 7)
                         .background(
                             ZStack {
                                 if section == sec {
                                     RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                        .fill(Color.appAccent)
-                                        .shadow(color: Color.appCardShadow.opacity(0.55), radius: 5, y: 2)
+                                        .fill(Color.appCard)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                                .strokeBorder(Color.appCardBorderStrong, lineWidth: 0.65)
+                                        )
+                                        .shadow(color: Color.appCardShadow.opacity(0.38), radius: 4, y: 1)
+                                        .matchedGeometryEffect(id: "primary-navigation", in: navigationSelection)
                                 }
                             }
                         )
@@ -143,7 +195,7 @@ struct SettingsPanelView: View {
         .padding(3)
         .background(
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(Color.appChipFill)
+                .fill(Color.appChipFill.opacity(0.82))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 9, style: .continuous)
@@ -151,11 +203,89 @@ struct SettingsPanelView: View {
         )
     }
 
+    private var secondaryNavigation: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(L("settings.navigation.contents"))
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(Color.appMetal.opacity(0.5))
+                .textCase(.uppercase)
+                .padding(.horizontal, 10)
+
+            VStack(spacing: 4) {
+                ForEach(section.subsections) { item in
+                    Button {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+                            subsection = item
+                        }
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: item.icon)
+                                .font(.system(size: 13, weight: .medium))
+                                .frame(width: 18)
+
+                            Text(item.localizedTitle)
+                                .font(.system(size: 12.5, weight: subsection == item ? .semibold : .medium))
+                                .lineLimit(1)
+
+                            Spacer(minLength: 0)
+                        }
+                        .foregroundStyle(subsection == item ? Color.appAccent : Color.appMetal.opacity(0.68))
+                        .padding(.horizontal, 10)
+                        .frame(height: 38)
+                        .background {
+                            if subsection == item {
+                                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                    .fill(Color.appAccent.opacity(0.11))
+                                    .matchedGeometryEffect(id: "secondary-navigation", in: navigationSelection)
+                            }
+                        }
+                        .overlay(alignment: .leading) {
+                            if subsection == item {
+                                Capsule()
+                                    .fill(Color.appAccent)
+                                    .frame(width: 3, height: 18)
+                                    .padding(.leading, 1)
+                            }
+                        }
+                        .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var pageHeader: some View {
+        HStack(spacing: 13) {
+            Image(systemName: subsection.icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Color.appAccent)
+                .frame(width: 36, height: 36)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.appAccent.opacity(0.11))
+                )
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(subsection.localizedTitle)
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(Color.appMetal)
+                Text(subsection.localizedSubtitle)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
     @ViewBuilder
     private var content: some View {
         switch section {
         case .general:
             GeneralSection(
+                page: subsection,
                 maxRecords: $maxRecords,
                 pollInterval: $pollInterval,
                 launchAtLogin: $launchAtLogin,
@@ -169,25 +299,115 @@ struct SettingsPanelView: View {
                 appLanguageRaw: $appLanguageRaw
             )
         case .shortcut:
-            ShortcutSection()
+            ShortcutSection(page: subsection)
         case .rules:
-            RulesSection()
+            RulesSection(page: subsection)
         case .ai:
-            AISection()
+            AISection(page: subsection)
         case .data:
-            DataSection()
+            DataSection(page: subsection)
         case .about:
-            AboutSection()
+            AboutSection(page: subsection)
         }
+    }
+}
+
+enum SettingsSubsection: String, CaseIterable, Identifiable {
+    case generalAppearance
+    case generalWindow
+    case generalPanels
+    case generalStorage
+    case shortcutBindings
+    case shortcutPermissions
+    case rulesLibrary
+    case rulesActivity
+    case aiService
+    case aiClients
+    case aiTools
+    case dataCapture
+    case dataPrivacy
+    case dataMerge
+    case dataSync
+    case dataStorage
+    case dataTransfer
+    case aboutOverview
+    case aboutLinks
+
+    var id: Self { self }
+
+    var section: SettingsPanelView.Section {
+        switch self {
+        case .generalAppearance, .generalWindow, .generalPanels, .generalStorage: return .general
+        case .shortcutBindings, .shortcutPermissions: return .shortcut
+        case .rulesLibrary, .rulesActivity: return .rules
+        case .aiService, .aiClients, .aiTools: return .ai
+        case .dataCapture, .dataPrivacy, .dataMerge, .dataSync, .dataStorage, .dataTransfer: return .data
+        case .aboutOverview, .aboutLinks: return .about
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .generalAppearance: return "paintpalette"
+        case .generalWindow: return "macwindow"
+        case .generalPanels: return "rectangle.grid.2x2"
+        case .generalStorage: return "internaldrive"
+        case .shortcutBindings: return "command"
+        case .shortcutPermissions: return "lock.shield"
+        case .rulesLibrary: return "bolt.badge.automatic"
+        case .rulesActivity: return "clock.arrow.circlepath"
+        case .aiService: return "network"
+        case .aiClients: return "square.and.arrow.down.on.square"
+        case .aiTools: return "wrench.and.screwdriver"
+        case .dataCapture: return "line.3.horizontal.decrease.circle"
+        case .dataPrivacy: return "hand.raised"
+        case .dataMerge: return "square.stack.3d.up"
+        case .dataSync: return "arrow.triangle.2.circlepath"
+        case .dataStorage: return "externaldrive"
+        case .dataTransfer: return "arrow.up.arrow.down"
+        case .aboutOverview: return "info.circle"
+        case .aboutLinks: return "link"
+        }
+    }
+
+    var localizedTitle: String {
+        L("settings.navigation.\(rawValue).title")
+    }
+
+    var localizedSubtitle: String {
+        L("settings.navigation.\(rawValue).subtitle")
+    }
+}
+
+private extension SettingsPanelView.Section {
+    var icon: String {
+        switch self {
+        case .general: return "slider.horizontal.3"
+        case .shortcut: return "keyboard"
+        case .rules: return "bolt.badge.automatic"
+        case .ai: return "sparkles"
+        case .data: return "externaldrive"
+        case .about: return "info.circle"
+        }
+    }
+
+    var subsections: [SettingsSubsection] {
+        SettingsSubsection.allCases.filter { $0.section == self }
+    }
+
+    var defaultSubsection: SettingsSubsection {
+        subsections[0]
     }
 }
 
 // MARK: - AI
 
 private struct AISection: View {
+    let page: SettingsSubsection
+
     var body: some View {
         VStack(spacing: 18) {
-            MCPSettings()
+            MCPSettings(page: page)
         }
     }
 }
@@ -225,13 +445,13 @@ struct SettingsRow<Trailing: View>: View {
         HStack(alignment: .center, spacing: 14) {
             if let icon {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(iconTint.opacity(0.13))
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(iconTint.opacity(0.11))
                     Image(systemName: icon)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(iconTint)
                 }
-                .frame(width: 32, height: 32)
+                .frame(width: 30, height: 30)
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
@@ -247,8 +467,8 @@ struct SettingsRow<Trailing: View>: View {
             Spacer(minLength: 12)
             trailing()
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 15)
+        .padding(.vertical, 11)
     }
 }
 
@@ -274,7 +494,7 @@ struct SettingsGroup<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             if let headerTitle {
                 HStack(spacing: 8) {
                     if let headerIcon {
@@ -283,8 +503,8 @@ struct SettingsGroup<Content: View>: View {
                             .foregroundStyle(headerTint)
                     }
                     Text(headerTitle)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Color.appMetal)
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(Color.appMetal.opacity(0.72))
                 }
                 .padding(.leading, 4)
             }
@@ -293,14 +513,14 @@ struct SettingsGroup<Content: View>: View {
                 content()
             }
             .background(
-                RoundedRectangle(cornerRadius: 12)
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
                     .fill(Color.appCard)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .strokeBorder(Color.appCardBorder, lineWidth: 0.65)
             )
-            .shadow(color: Color.appCardShadow.opacity(0.55), radius: 7, y: 2)
+            .shadow(color: Color.appCardShadow.opacity(0.30), radius: 4, y: 1)
         }
     }
 }
@@ -354,10 +574,17 @@ struct SettingsSegmented<Value: Hashable>: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
                     .frame(maxWidth: .infinity)
-                    .foregroundStyle(selection == opt.value ? Color.white : Color.appMetal.opacity(0.82))
+                    .foregroundStyle(selection == opt.value ? tint : Color.appMetal.opacity(0.72))
                     .background(
                         RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(selection == opt.value ? AnyShapeStyle(tint) : AnyShapeStyle(Color.clear))
+                            .fill(selection == opt.value ? AnyShapeStyle(tint.opacity(0.14)) : AnyShapeStyle(Color.clear))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .strokeBorder(
+                                selection == opt.value ? tint.opacity(0.22) : Color.clear,
+                                lineWidth: 0.65
+                            )
                     )
                     .contentShape(RoundedRectangle(cornerRadius: 7))
                 }
@@ -411,14 +638,14 @@ struct SettingInlineCard<Control: View>: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .fill(Color.appCard)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .strokeBorder(Color.appCardBorder, lineWidth: 0.65)
         )
-        .shadow(color: Color.appCardShadow.opacity(0.55), radius: 7, y: 2)
+        .shadow(color: Color.appCardShadow.opacity(0.30), radius: 4, y: 1)
     }
 }
 
@@ -450,14 +677,14 @@ struct SettingCard<Control: View>: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .fill(Color.appCard)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .strokeBorder(Color.appCardBorder, lineWidth: 0.65)
         )
-        .shadow(color: Color.appCardShadow.opacity(0.55), radius: 7, y: 2)
+        .shadow(color: Color.appCardShadow.opacity(0.30), radius: 4, y: 1)
     }
 }
 
@@ -469,6 +696,7 @@ private enum MaxRecordsMode: String, Hashable {
 }
 
 private struct GeneralSection: View {
+    let page: SettingsSubsection
     @Binding var maxRecords: Int
     @Binding var pollInterval: Double
     @Binding var launchAtLogin: Bool
@@ -547,8 +775,9 @@ private struct GeneralSection: View {
 
     var body: some View {
         VStack(spacing: 18) {
-            // Language picker — keep first so users can recover from accidental switches.
-            SettingsGroup(icon: "globe", title: L("settings.language.title"), tint: .appAccent) {
+            if page == .generalAppearance {
+                // Language picker — keep first so users can recover from accidental switches.
+                SettingsGroup {
                 SettingsRow(
                     icon: "character.bubble",
                     iconTint: .appAccent,
@@ -566,10 +795,11 @@ private struct GeneralSection: View {
                     )
                     .frame(width: 320)
                 }
-            }
+                }
 
-            // Appearance theme.
-            SettingsGroup(icon: "paintpalette", title: L("settings.theme.title"), tint: .appAccent) {
+                // The page header already establishes the section; card-level
+                // headers are reserved for groups with more than one concept.
+                SettingsGroup {
                 SettingsRow(
                     icon: "moon.stars",
                     iconTint: .appAccent,
@@ -595,10 +825,11 @@ private struct GeneralSection: View {
                 ) {
                     AccentSwatches(selection: accentBinding)
                 }
+                }
             }
 
-            // Window behaviour.
-            SettingsGroup(icon: "macwindow", title: L("settings.window.title"), tint: .appAccent) {
+            if page == .generalWindow {
+                SettingsGroup {
                 SettingsRow(
                     icon: "power",
                     iconTint: .appAccent,
@@ -688,25 +919,27 @@ private struct GeneralSection: View {
                         .toggleStyle(.switch)
                         .tint(.appAccent)
                 }
-            }
-
-            SettingInlineCard(
-                title: L("settings.guide.title"),
-                subtitle: L("settings.guide.subtitle")
-            ) {
-                Button {
-                    nav.replayFeatureTour()
-                } label: {
-                    Label(L("settings.guide.viewTour"), systemImage: "sparkles")
                 }
-                .buttonStyle(PaperActionButtonStyle(role: .plain))
+
+                SettingInlineCard(
+                    title: L("settings.guide.title"),
+                    subtitle: L("settings.guide.subtitle")
+                ) {
+                    Button {
+                        nav.replayFeatureTour()
+                    } label: {
+                        Label(L("settings.guide.viewTour"), systemImage: "sparkles")
+                    }
+                    .buttonStyle(PaperActionButtonStyle(role: .plain))
+                }
             }
 
-            SettingsGroup(
-                icon: "rectangle.grid.2x2",
-                title: L("settings.panelLayout.title"),
-                tint: .appAccent
-            ) {
+            if page == .generalPanels {
+                SettingsGroup(
+                    icon: "rectangle.grid.2x2",
+                    title: L("settings.panelLayout.title"),
+                    tint: .appAccent
+                ) {
                 SettingsRow(
                     icon: "menubar.rectangle",
                     iconTint: .appAccent,
@@ -814,10 +1047,11 @@ private struct GeneralSection: View {
                     }
                     .animation(.easeOut(duration: 0.15), value: hoverPreview.quickPasteEnabled)
                 }
+                }
             }
 
-            // Storage.
-            SettingsGroup(icon: "internaldrive", title: L("settings.storage.title"), tint: .appAccent) {
+            if page == .generalStorage {
+                SettingsGroup {
                 SettingsRow(
                     icon: "tray.full",
                     iconTint: .appAccent,
@@ -894,26 +1128,27 @@ private struct GeneralSection: View {
                         vm.updatePollInterval()
                     }
                 }
-            }
+                }
 
-            SettingInlineCard(
-                title: L("settings.fda.title"),
-                subtitle: L("settings.fda.subtitle")
-            ) {
-                HStack(spacing: 8) {
-                    Button {
-                        FullDiskAccessOnboardingView.openFullDiskAccessPane()
-                    } label: {
-                        Label(L("settings.fda.openPrefs"), systemImage: "arrow.up.right.square")
+                SettingInlineCard(
+                    title: L("settings.fda.title"),
+                    subtitle: L("settings.fda.subtitle")
+                ) {
+                    HStack(spacing: 8) {
+                        Button {
+                            FullDiskAccessOnboardingView.openFullDiskAccessPane()
+                        } label: {
+                            Label(L("settings.fda.openPrefs"), systemImage: "arrow.up.right.square")
+                        }
+                        .buttonStyle(PaperActionButtonStyle(role: .plain))
+                        Button {
+                            fdaOnboardingDismissed = false
+                            nav.showList()
+                        } label: {
+                            Label(L("settings.fda.viewOnboarding"), systemImage: "questionmark.circle")
+                        }
+                        .buttonStyle(PaperActionButtonStyle(role: .plain))
                     }
-                    .buttonStyle(PaperActionButtonStyle(role: .plain))
-                    Button {
-                        fdaOnboardingDismissed = false
-                        nav.showList()
-                    } label: {
-                        Label(L("settings.fda.viewOnboarding"), systemImage: "questionmark.circle")
-                    }
-                    .buttonStyle(PaperActionButtonStyle(role: .plain))
                 }
             }
         }
@@ -944,6 +1179,7 @@ private struct GeneralSection: View {
 // MARK: - Shortcut
 
 private struct ShortcutSection: View {
+    let page: SettingsSubsection
     @State private var accessibilityTrusted: Bool = AutoPasteService.isTrusted
     @State private var showDiagnostics = false
     @ObservedObject private var quickPasteKeys = QuickPasteKeyStore.shared
@@ -953,7 +1189,8 @@ private struct ShortcutSection: View {
 
     var body: some View {
         VStack(spacing: 18) {
-            SettingsGroup(icon: "command", title: L("settings.shortcut.group.title"), tint: .appAccent) {
+            if page == .shortcutBindings {
+                SettingsGroup {
                 ForEach(AppShortcut.allCases) { shortcut in
                     SettingsRow(
                         icon: shortcut.icon,
@@ -1024,9 +1261,11 @@ private struct ShortcutSection: View {
                         .help(L("settings.shortcut.resetTooltip"))
                     }
                 }
+                }
             }
 
-            SettingsGroup(icon: "lock.shield", title: L("settings.shortcut.permission.title"), tint: .orange) {
+            if page == .shortcutPermissions {
+                SettingsGroup {
                 SettingsRow(
                     icon: accessibilityTrusted ? "checkmark.seal.fill" : "exclamationmark.triangle.fill",
                     iconTint: accessibilityTrusted ? .green : .orange,
@@ -1083,6 +1322,7 @@ private struct ShortcutSection: View {
                         bundleIdentifier: bundleIdentifier,
                         showDiagnostics: $showDiagnostics
                     )
+                }
                 }
             }
         }
@@ -2206,20 +2446,21 @@ private struct MergeSection: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .fill(Color.appCard)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .strokeBorder(Color.appCardBorder, lineWidth: 0.65)
         )
-        .shadow(color: Color.appCardShadow.opacity(0.55), radius: 7, y: 2)
+        .shadow(color: Color.appCardShadow.opacity(0.30), radius: 4, y: 1)
     }
 }
 
 // MARK: - MCP (composes into AISection)
 
 private struct MCPSettings: View {
+    let page: SettingsSubsection
     @AppStorage("mcpEnabled") private var mcpEnabled = false
     @StateObject private var clients = MCPClientStore()
     @State private var manualFormat: MCPClientFormat = .mcpServers
@@ -2233,7 +2474,8 @@ private struct MCPSettings: View {
 
     var body: some View {
         VStack(spacing: 18) {
-            SettingsGroup(icon: "network", title: L("settings.mcp.title"), tint: .appAccent) {
+            if page == .aiService {
+                SettingsGroup {
                 SettingsRow(
                     icon: "switch.2",
                     iconTint: .appAccent,
@@ -2245,13 +2487,13 @@ private struct MCPSettings: View {
                         .toggleStyle(.switch)
                         .tint(.appAccent)
                 }
-            }
+                }
 
-            SettingCard(
-                title: L("settings.mcp.config.title"),
-                subtitle: L("settings.mcp.config.subtitle")
-            ) {
-                Text(configSnippet)
+                SettingCard(
+                    title: L("settings.mcp.config.title"),
+                    subtitle: L("settings.mcp.config.subtitle")
+                ) {
+                    Text(configSnippet)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(Color.appMetal)
                     .textSelection(.enabled)
@@ -2289,15 +2531,20 @@ private struct MCPSettings: View {
                     }
                     // Swapping JSON ↔ TOML changes the block's height, so
                     // animate it instead of letting the card snap.
-                    .animation(.spring(response: 0.3, dampingFraction: 0.85), value: manualFormat)
+                        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: manualFormat)
+                }
             }
 
-            clientsSection
+            if page == .aiClients {
+                clientsSection
+            }
 
-            SettingsGroup(icon: "wrench.and.screwdriver", title: L("settings.mcp.tools.title"), tint: .appAccent) {
+            if page == .aiTools {
+                SettingsGroup {
                 ForEach(MCPServer.publicTools, id: \.name) { tool in
                     MCPToolToggleRow(tool: tool)
                         .disabled(!mcpEnabled)
+                }
                 }
             }
         }
@@ -2320,11 +2567,7 @@ private struct MCPSettings: View {
     @ViewBuilder
     private var clientsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SettingsGroup(
-                icon: "square.and.arrow.down.on.square",
-                title: L("settings.mcp.clients.title"),
-                tint: .appAccent
-            ) {
+            SettingsGroup {
                 if clients.entries.isEmpty {
                     SettingsRow(
                         icon: "questionmark.circle",
@@ -2966,6 +3209,7 @@ private struct MCPToolToggleRow: View {
 // MARK: - Data (export / clear)
 
 private struct DataSection: View {
+    let page: SettingsSubsection
     @EnvironmentObject var vm: ClipboardViewModel
     @Environment(\.modelContext) private var modelContext
     @ObservedObject private var stats = CopyStatsStore.shared
@@ -2992,13 +3236,24 @@ private struct DataSection: View {
         // exported. Each of these composes its own titled groups, so the page
         // stays readable despite its length.
         VStack(spacing: 18) {
-            FilterSection()
-            PrivacySection()
-            MergeSection()
+            if page == .dataCapture {
+                FilterSection()
+            }
 
-            SyncSettingsView()
+            if page == .dataPrivacy {
+                PrivacySection()
+            }
 
-            SettingsGroup(icon: "trash", title: L("settings.data.trash.title"), tint: .appAccent) {
+            if page == .dataMerge {
+                MergeSection()
+            }
+
+            if page == .dataSync {
+                SyncSettingsView()
+            }
+
+            if page == .dataStorage {
+                SettingsGroup(icon: "trash", title: L("settings.data.trash.title"), tint: .appAccent) {
                 SettingsRow(
                     icon: "trash.circle",
                     iconTint: .appAccent,
@@ -3024,9 +3279,9 @@ private struct DataSection: View {
                         )
                     }
                 }
-            }
+                }
 
-            SettingsGroup(icon: "chart.bar.xaxis", title: L("settings.data.stats.title"), tint: .appAccent) {
+                SettingsGroup(icon: "chart.bar.xaxis", title: L("settings.data.stats.title"), tint: .appAccent) {
                 SettingsRow(
                     icon: "chart.line.uptrend.xyaxis",
                     iconTint: .appAccent,
@@ -3063,82 +3318,84 @@ private struct DataSection: View {
                     }
                     .buttonStyle(PaperActionButtonStyle(role: .destructive))
                 }
+                }
+
+                // Per-type retention. The old "立即清理" button was removed — the
+                // app already runs retention cleanup automatically on a timer, so
+                // the manual trigger had no real effect users could observe.
+                SettingCard(
+                    title: L("settings.data.retention.title"),
+                    subtitle: L("settings.data.retention.subtitle")
+                ) {
+                    VStack(spacing: 6) {
+                        ForEach(ClipboardItemType.allCases, id: \.self) { type in
+                            HStack {
+                                Label(type.displayName, systemImage: type.icon)
+                                    .font(.system(size: 13))
+                                Spacer()
+                                PaperMenuPicker(
+                                    options: retentionOptions.map { PaperMenuOption($0.value, $0.label) },
+                                    selection: retentionBinding(for: type),
+                                    width: 110
+                                )
+                            }
+                            .padding(.vertical, 3)
+                        }
+                    }
+                }
             }
 
-            // Per-type retention. The old "立即清理" button was removed — the
-            // app already runs retention cleanup automatically on a timer, so
-            // the manual trigger had no real effect users could observe.
-            SettingCard(
-                title: L("settings.data.retention.title"),
-                subtitle: L("settings.data.retention.subtitle")
-            ) {
-                VStack(spacing: 6) {
-                    ForEach(ClipboardItemType.allCases, id: \.self) { type in
-                        HStack {
-                            Label(type.displayName, systemImage: type.icon)
-                                .font(.system(size: 13))
-                            Spacer()
-                            PaperMenuPicker(
-                                options: retentionOptions.map { PaperMenuOption($0.value, $0.label) },
-                                selection: retentionBinding(for: type),
-                                width: 110
+            if page == .dataTransfer {
+                SettingInlineCard(
+                    title: L("settings.data.export.title"),
+                    subtitle: L("settings.data.export.subtitle")
+                ) {
+                    Button {
+                        vm.showExportPanel = true
+                    } label: {
+                        Label(L("settings.data.export.exportButton"), systemImage: "square.and.arrow.up")
+                    }
+                    .buttonStyle(PaperActionButtonStyle(role: .primary))
+                }
+
+                SettingInlineCard(
+                    title: L("settings.data.import.title"),
+                    subtitle: L("settings.data.import.subtitle")
+                ) {
+                    Button {
+                        importNow()
+                    } label: {
+                        Label(L("settings.data.import.importButton"), systemImage: "square.and.arrow.down")
+                    }
+                    .buttonStyle(PaperActionButtonStyle(role: .plain))
+                    .disabled(isImporting)
+                }
+
+                // Clear history — two-step confirm since it permanently wipes every clip.
+                SettingInlineCard(
+                    title: L("settings.data.clear.title"),
+                    subtitle: L("settings.data.clear.subtitle")
+                ) {
+                    Button {
+                        ConfirmationCenter.shared.confirm(
+                            title: L("confirm.deleteAll.title"),
+                            message: L("confirm.deleteAll.message"),
+                            confirmLabel: L("settings.data.export.clearHistory"),
+                            icon: "trash"
+                        ) {
+                            vm.deleteAll(context: modelContext)
+                            ToastCenter.shared.show(
+                                L("settings.data.export.clearedHistory"),
+                                systemImage: "trash.fill",
+                                tint: .red
                             )
                         }
-                        .padding(.vertical, 3)
+                    } label: {
+                        Label(L("settings.data.export.clearHistory"), systemImage: "trash")
                     }
+                    .buttonStyle(PaperActionButtonStyle(role: .destructive))
                 }
             }
-
-            SettingInlineCard(
-                title: L("settings.data.export.title"),
-                subtitle: L("settings.data.export.subtitle")
-            ) {
-                Button {
-                    vm.showExportPanel = true
-                } label: {
-                    Label(L("settings.data.export.exportButton"), systemImage: "square.and.arrow.up")
-                }
-                .buttonStyle(PaperActionButtonStyle(role: .primary))
-            }
-
-            SettingInlineCard(
-                title: L("settings.data.import.title"),
-                subtitle: L("settings.data.import.subtitle")
-            ) {
-                Button {
-                    importNow()
-                } label: {
-                    Label(L("settings.data.import.importButton"), systemImage: "square.and.arrow.down")
-                }
-                .buttonStyle(PaperActionButtonStyle(role: .plain))
-                .disabled(isImporting)
-            }
-
-            // Clear history — two-step confirm since it permanently wipes every clip.
-            SettingInlineCard(
-                title: L("settings.data.clear.title"),
-                subtitle: L("settings.data.clear.subtitle")
-            ) {
-                Button {
-                    ConfirmationCenter.shared.confirm(
-                        title: L("confirm.deleteAll.title"),
-                        message: L("confirm.deleteAll.message"),
-                        confirmLabel: L("settings.data.export.clearHistory"),
-                        icon: "trash"
-                    ) {
-                        vm.deleteAll(context: modelContext)
-                        ToastCenter.shared.show(
-                            L("settings.data.export.clearedHistory"),
-                            systemImage: "trash.fill",
-                            tint: .red
-                        )
-                    }
-                } label: {
-                    Label(L("settings.data.export.clearHistory"), systemImage: "trash")
-                }
-                .buttonStyle(PaperActionButtonStyle(role: .destructive))
-            }
-
         }
     }
 
@@ -3188,6 +3445,7 @@ private struct DataSection: View {
 
 @MainActor
 private struct AboutSection: View {
+    let page: SettingsSubsection
     @State private var showAcknowledgements = false
 
     private var appName: String {
@@ -3206,9 +3464,10 @@ private struct AboutSection: View {
 
     var body: some View {
         VStack(spacing: 18) {
-            AboutHeaderCard(appName: appName, version: version, copyright: copyright)
+            if page == .aboutOverview {
+                AboutHeaderCard(appName: appName, version: version, copyright: copyright)
 
-            SettingsGroup(icon: "info.circle", title: L("settings.about.info.title"), tint: .blue) {
+                SettingsGroup {
                 SettingsRow(
                     icon: "number",
                     iconTint: .blue,
@@ -3242,9 +3501,11 @@ private struct AboutSection: View {
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                 }
+                }
             }
 
-            SettingsGroup(icon: "link", title: L("settings.about.links.title"), tint: .green) {
+            if page == .aboutLinks {
+                SettingsGroup {
                 SettingsRow(
                     icon: "chevron.left.forwardslash.chevron.right",
                     iconTint: .green,
@@ -3284,18 +3545,19 @@ private struct AboutSection: View {
                     }
                     .buttonStyle(PaperActionButtonStyle(role: .plain))
                 }
-            }
-
-            SettingInlineCard(
-                title: L("settings.about.acknowledgements.title"),
-                subtitle: L("settings.about.acknowledgements.subtitle")
-            ) {
-                Button {
-                    showAcknowledgements = true
-                } label: {
-                    Label(L("settings.about.acknowledgements.view"), systemImage: "chevron.right")
                 }
-                .buttonStyle(PaperActionButtonStyle(role: .plain))
+
+                SettingInlineCard(
+                    title: L("settings.about.acknowledgements.title"),
+                    subtitle: L("settings.about.acknowledgements.subtitle")
+                ) {
+                    Button {
+                        showAcknowledgements = true
+                    } label: {
+                        Label(L("settings.about.acknowledgements.view"), systemImage: "chevron.right")
+                    }
+                    .buttonStyle(PaperActionButtonStyle(role: .plain))
+                }
             }
         }
         .sheet(isPresented: $showAcknowledgements) {
@@ -3359,14 +3621,14 @@ private struct AboutHeaderCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .fill(Color.appCard)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .strokeBorder(Color.appCardBorder, lineWidth: 0.65)
         )
-        .shadow(color: Color.appCardShadow.opacity(0.55), radius: 7, y: 2)
+        .shadow(color: Color.appCardShadow.opacity(0.30), radius: 4, y: 1)
     }
 
     private var updateStatusText: String {

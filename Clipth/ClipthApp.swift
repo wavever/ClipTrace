@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import KeyboardShortcuts
+import AppKit
 
 @main
 struct AppLauncher {
@@ -117,6 +118,21 @@ struct ClipthApp: App {
         return accentPalette.color
     }
 
+    // Only matters the very first time the window opens — after that macOS
+    // remembers the user's own resized/moved frame under this window's `id`
+    // and this is never consulted again. Sized as a fraction of the current
+    // screen (not a fixed constant) so a small laptop and a large external
+    // display both get a window that feels proportionate rather than either
+    // cramped or lost in empty space; clamped so it never goes below the old
+    // fixed default or balloons past a comfortable reading width on huge
+    // displays.
+    private static var comfortableDefaultSize: CGSize {
+        let visible = NSScreen.main?.visibleFrame.size ?? CGSize(width: 1440, height: 900)
+        let width = min(max(visible.width * 0.68, 1000), 1400)
+        let height = min(max(visible.height * 0.75, 640), 900)
+        return CGSize(width: width, height: height)
+    }
+
     var body: some Scene {
         // `Window` (not `WindowGroup`) so opening from the menu bar reuses the
         // existing window instead of stacking a new one each click.
@@ -144,7 +160,7 @@ struct ClipthApp: App {
                     applyAppearance()
                 }
         }
-        .defaultSize(width: 1000, height: 640)
+        .defaultSize(width: Self.comfortableDefaultSize.width, height: Self.comfortableDefaultSize.height)
         .windowStyle(.hiddenTitleBar)
 
         MenuBarExtra("ClipBoard", image: "MenuBarIcon", isInserted: $menuBarIcon) {
