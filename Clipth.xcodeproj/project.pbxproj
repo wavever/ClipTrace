@@ -14,6 +14,7 @@
 		A10005 /* ClipboardViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10005; };
 		A10006 /* MainWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10006; };
 		A10007 /* ClipboardItemRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10007; };
+		A10700 /* RecyclingCollectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10700; };
 		A10009 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10009; };
 		A10011 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10011; };
 		A10012 /* QuickLookCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10012; };
@@ -86,6 +87,7 @@
 		B10005 /* ClipboardViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardViewModel.swift; sourceTree = "<group>"; };
 		B10006 /* MainWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindowView.swift; sourceTree = "<group>"; };
 		B10007 /* ClipboardItemRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardItemRow.swift; sourceTree = "<group>"; };
+		B10700 /* RecyclingCollectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecyclingCollectionView.swift; sourceTree = "<group>"; };
 		B10009 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
 		B10011 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B10012 /* QuickLookCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickLookCoordinator.swift; sourceTree = "<group>"; };
@@ -235,6 +237,7 @@
 			children = (
 				B10006 /* MainWindowView.swift */,
 				B10007 /* ClipboardItemRow.swift */,
+				B10700 /* RecyclingCollectionView.swift */,
 				B10510 /* ClipboardItemContextMenu.swift */,
 				B10009 /* MenuBarView.swift */,
 				B10015 /* ThumbnailView.swift */,
@@ -462,6 +465,7 @@
 				A10005 /* ClipboardViewModel.swift in Sources */,
 				A10006 /* MainWindowView.swift in Sources */,
 				A10007 /* ClipboardItemRow.swift in Sources */,
+				A10700 /* RecyclingCollectionView.swift in Sources */,
 				A10009 /* MenuBarView.swift in Sources */,
 				A10012 /* QuickLookCoordinator.swift in Sources */,
 				A10013 /* FileOpener.swift in Sources */,

@@ -10,25 +10,14 @@ private enum MainContentLayout: String {
     case grid
 }
 
-/// Kept in one place because the adaptive grid and keyboard navigator must
-/// agree on how many cards fit in a row at the current window width.
+/// Geometry shared by the recycling collection view and the grid cards.
+/// Card height remains fixed in the open-source build; the commercial branch's
+/// user-configurable height setting is deliberately not part of this port.
 private enum MainGridMetrics {
     static let minimumCardWidth: CGFloat = 210
     static let maximumCardWidth: CGFloat = 320
     static let spacing: CGFloat = 10
-
-    static func columnCount(for width: CGFloat) -> Int {
-        guard width > 0 else { return 1 }
-        return max(1, Int((width + spacing) / (minimumCardWidth + spacing)))
-    }
-}
-
-private struct MainGridWidthPreferenceKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
+    static let horizontalPadding: CGFloat = 16
 }
 
 /// A separate request value makes the app-rendered preview sheet's lifetime
@@ -39,50 +28,295 @@ private struct InAppPreviewRequest: Identifiable {
     var id: UUID { item.id }
 }
 
+/// A bounded SwiftData query for the main history surface. Cheap filters run
+/// in SQLite before models reach SwiftUI; filters whose exact semantics live
+/// in model helpers (tag sets, multi-group membership, semantic ranking) are
+/// applied to the bounded candidate page by `ClipboardViewModel` afterward.
+private struct MainHistoryQuery: Equatable {
+    let favoritesOnly: Bool
+    let selectedTypeRaw: String
+    let usesType: Bool
+    let selectedSource: String
+    let usesSource: Bool
+    let requiresUngrouped: Bool
+    let requiresGrouped: Bool
+    let groupFilter: ClipboardGroupFilter
+    let requiresTags: Bool
+    let fullTextQuery: String
+    let usesFullTextQuery: Bool
+    let appQuery: String
+    let usesAppQuery: Bool
+    let since: Date
+    let before: Date
+    let usesDateRange: Bool
+
+    @MainActor
+    init(viewModel vm: ClipboardViewModel) {
+        let tokens = ClipboardSearchTokens.parse(vm.searchText)
+        let semanticSearchIsActive = vm.searchMode == .semantic
+            && vm.semanticFeatureEnabled
+            && !vm.isBackfillingEmbeddings
+
+        favoritesOnly = vm.selectedScope == .favorites
+        selectedTypeRaw = vm.selectedType?.rawValue ?? ""
+        usesType = vm.selectedType != nil
+        selectedSource = vm.selectedSourceApp ?? ""
+        usesSource = vm.selectedSourceApp != nil
+        requiresUngrouped = vm.selectedGroupFilter == .ungrouped
+        if case .group = vm.selectedGroupFilter {
+            requiresGrouped = true
+        } else {
+            requiresGrouped = false
+        }
+        groupFilter = vm.selectedGroupFilter
+        requiresTags = !vm.activeTags.isEmpty
+        fullTextQuery = tokens.keywords
+        usesFullTextQuery = vm.searchMode != .tag
+            && !semanticSearchIsActive
+            && !tokens.keywords.isEmpty
+        appQuery = tokens.appQuery ?? ""
+        usesAppQuery = tokens.appQuery?.isEmpty == false
+        since = tokens.since ?? Date(timeIntervalSince1970: 0)
+        before = tokens.before ?? .distantFuture
+        usesDateRange = tokens.since != nil || tokens.before != nil
+    }
+
+    func descriptor(fetchLimit: Int) -> FetchDescriptor<ClipboardItem> {
+        let descriptor: FetchDescriptor<ClipboardItem>
+        if usesFullTextQuery, usesDateRange {
+            let query = fullTextQuery
+            let since = since
+            let before = before
+            descriptor = FetchDescriptor(
+                predicate: #Predicate { item in
+                    item.deletedAt == nil
+                        && item.createdAt >= since
+                        && item.createdAt < before
+                        && (
+                            item.content.localizedStandardContains(query)
+                                || item.sourceApp.localizedStandardContains(query)
+                                || item.customTitle?.localizedStandardContains(query) == true
+                                || item.ocrText?.localizedStandardContains(query) == true
+                        )
+                },
+                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+            )
+        } else if usesFullTextQuery {
+            descriptor = ClipboardHistorySearch.descriptor(
+                groupFilter: groupFilter,
+                query: fullTextQuery
+            )
+        } else if usesDateRange {
+            let since = since
+            let before = before
+            descriptor = FetchDescriptor(
+                predicate: #Predicate { item in
+                    item.deletedAt == nil
+                        && item.createdAt >= since
+                        && item.createdAt < before
+                },
+                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+            )
+        } else if usesSource {
+            let source = selectedSource
+            descriptor = FetchDescriptor(
+                predicate: #Predicate { $0.deletedAt == nil && $0.sourceApp == source },
+                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+            )
+        } else if usesType {
+            let type = selectedTypeRaw
+            descriptor = FetchDescriptor(
+                predicate: #Predicate { $0.deletedAt == nil && $0.type == type },
+                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+            )
+        } else if favoritesOnly {
+            descriptor = FetchDescriptor(
+                predicate: #Predicate { $0.deletedAt == nil && $0.isFavorite },
+                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+            )
+        } else if usesAppQuery {
+            let query = appQuery
+            descriptor = FetchDescriptor(
+                predicate: #Predicate {
+                    $0.deletedAt == nil && $0.sourceApp.localizedStandardContains(query)
+                },
+                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+            )
+        } else if requiresUngrouped {
+            descriptor = FetchDescriptor(
+                predicate: #Predicate {
+                    $0.deletedAt == nil && $0.isPinned == false && $0.groupIDsRaw == nil
+                },
+                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+            )
+        } else if requiresGrouped {
+            descriptor = FetchDescriptor(
+                predicate: #Predicate {
+                    $0.deletedAt == nil && $0.isPinned == false && $0.groupIDsRaw != nil
+                },
+                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+            )
+        } else if requiresTags {
+            descriptor = FetchDescriptor(
+                predicate: #Predicate { $0.deletedAt == nil && $0.tagsRaw != nil },
+                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+            )
+        } else {
+            descriptor = FetchDescriptor(
+                predicate: #Predicate { $0.deletedAt == nil },
+                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+            )
+        }
+        var limitedDescriptor = descriptor
+        limitedDescriptor.fetchLimit = fetchLimit
+        return limitedDescriptor
+    }
+}
+
+private struct MainHistoryCatalogSnapshot: Sendable {
+    let tags: [String]
+    let sourceApps: [String]
+}
+
+/// Catalog aggregation is intentionally isolated from the UI model context.
+/// Even with `propertiesToFetch`, SwiftData materialises model values while it
+/// walks the result set; doing that for 100,000 rows on the main actor delayed
+/// the first click after launch by several seconds.
+private actor MainHistoryCatalogLoader {
+    private let container: ModelContainer
+
+    init(container: ModelContainer) {
+        self.container = container
+    }
+
+    func load() throws -> MainHistoryCatalogSnapshot {
+        let context = ModelContext(container)
+
+        var tagDescriptor = FetchDescriptor<ClipboardItem>(
+            predicate: #Predicate { $0.deletedAt == nil && $0.tagsRaw != nil }
+        )
+        tagDescriptor.propertiesToFetch = [\.tagsRaw]
+        let tagged = try context.fetch(tagDescriptor)
+        var tagsByKey: [String: String] = [:]
+        for item in tagged {
+            guard let raw = item.tagsRaw else { continue }
+            for value in raw.split(separator: "\n").map(String.init) {
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { continue }
+                let key = trimmed.lowercased()
+                if tagsByKey[key] == nil { tagsByKey[key] = trimmed }
+            }
+        }
+
+        var sourceDescriptor = FetchDescriptor<ClipboardItem>(
+            predicate: #Predicate { $0.deletedAt == nil && $0.sourceApp != "" }
+        )
+        sourceDescriptor.propertiesToFetch = [\.sourceApp]
+        let sourced = try context.fetch(sourceDescriptor)
+        var sourcesByKey: [String: String] = [:]
+        for item in sourced {
+            let source = item.sourceApp.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !source.isEmpty else { continue }
+            let key = source.lowercased()
+            if sourcesByKey[key] == nil { sourcesByKey[key] = source }
+        }
+
+        return MainHistoryCatalogSnapshot(
+            tags: tagsByKey.values.sorted {
+                $0.localizedCompare($1) == .orderedAscending
+            },
+            sourceApps: sourcesByKey.values.sorted {
+                $0.localizedCompare($1) == .orderedAscending
+            }
+        )
+    }
+}
+
 /// Thin wrapper that owns the pagination state and hands the current page
 /// size to `MainWindowContent`. Splitting the view here lets the inner view
 /// rebuild its `@Query` with a fresh `fetchLimit` whenever `pageSize` bumps,
 /// without resetting any of the row-level `@State` (hover, focused item).
 struct MainWindowView: View {
     @EnvironmentObject var vm: ClipboardViewModel
+    @ObservedObject private var nav = AppNavigation.shared
 
     /// First-page fetch cap. Cold start renders at most this many rows from
     /// SwiftData — the rest are pulled in by the load-more sentinel as the
     /// user scrolls. Chosen so the initial viewport (~10–15 rows) is well-
     /// covered without ever materialising the whole history up front.
     @State private var pageSize: Int = 40
-    /// Debounce so a chain of sentinel `.onAppear` calls (which can fire
-    /// rapidly while the bottom rebalances) only triggers one bump.
+    /// Guards the prefetch row and the footer sentinel, which can both become
+    /// visible during the same fast scroll, from requesting duplicate pages.
     @State private var isBumpingPage: Bool = false
 
-    private static let pageStep: Int = 40
-    private static let pageCap: Int = 600
+    private static let pageStep = 40
+    private static let pageCap = 600
+    private static let prefetchThreshold = 16
 
-    var body: some View {
-        // When the user is searching or filtering, results may live beyond the
-        // current page; bypass pagination so they're never hidden.
-        let filtering = !vm.searchText.isEmpty
-            || !vm.activeTags.isEmpty
-            || vm.selectedType != nil
-            || vm.selectedSourceApp != nil
-            || !vm.selectedGroupFilter.isAll
-        let effective = filtering ? Self.pageCap : pageSize
-
-        MainWindowContent(
-            pageSize: effective,
-            canLoadMore: !filtering && pageSize < Self.pageCap,
-            onRequestMore: requestMore
-        )
+    private var querySignature: String {
+        let group: String
+        switch vm.selectedGroupFilter {
+        case .all: group = "all"
+        case .ungrouped: group = "ungrouped"
+        case .group(let id): group = id.uuidString
+        }
+        return [
+            vm.searchText,
+            vm.searchMode.rawValue,
+            vm.activeTags.sorted().joined(separator: "\u{1F}"),
+            vm.tagFilterMode.rawValue,
+            vm.selectedType?.rawValue ?? "",
+            vm.selectedSourceApp ?? "",
+            group,
+            vm.selectedScope.rawValue,
+            vm.favoritesSortOrder.rawValue,
+            vm.semanticFeatureEnabled ? "semantic-on" : "semantic-off",
+            vm.isBackfillingEmbeddings ? "indexing" : "ready",
+        ].joined(separator: "\u{1E}")
     }
 
-    private func requestMore() {
-        guard !isBumpingPage, pageSize < Self.pageCap else { return }
-        isBumpingPage = true
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 80_000_000)
-            pageSize = min(pageSize + Self.pageStep, Self.pageCap)
+    var body: some View {
+        let isListActive = nav.screen == .list
+        let effectivePageSize = isListActive ? pageSize : 1
+
+        MainWindowContent(
+            pageSize: effectivePageSize,
+            canLoadMore: isListActive && pageSize < Self.pageCap,
+            prefetchThreshold: Self.prefetchThreshold,
+            query: MainHistoryQuery(viewModel: vm),
+            isListActive: isListActive,
+            onRequestMore: requestMore
+        )
+        .onChange(of: querySignature) { _, _ in
+            // A fresh filter starts from a small page. The old implementation
+            // jumped straight to the cap (10,000 in stress mode) on the first
+            // character, synchronously rebuilding the whole observation graph.
+            pageSize = 40
             isBumpingPage = false
         }
+        .onChange(of: nav.screen) { _, screen in
+            // Secondary screens should never retain the cost accumulated by a
+            // long browse session. Returning rebuilds a bounded first page.
+            if screen != .list {
+                pageSize = 40
+                isBumpingPage = false
+            }
+        }
+    }
+
+    @discardableResult
+    private func requestMore() -> Bool {
+        guard !isBumpingPage, pageSize < Self.pageCap else { return false }
+        isBumpingPage = true
+        pageSize = min(pageSize + Self.pageStep, Self.pageCap)
+        Task { @MainActor in
+            // Keep the guard through the next display tick so a prefetch row
+            // and the old footer cannot both advance the page. The previous
+            // fixed 80 ms delay made loading visibly trail a fast scroll.
+            try? await Task.sleep(nanoseconds: 16_000_000)
+            isBumpingPage = false
+        }
+        return true
     }
 }
 
@@ -96,17 +330,26 @@ struct MainWindowContent: View {
 
     let pageSize: Int
     let canLoadMore: Bool
-    let onRequestMore: () -> Void
+    let prefetchThreshold: Int
+    fileprivate let query: MainHistoryQuery
+    let isListActive: Bool
+    let onRequestMore: () -> Bool
 
-    init(pageSize: Int, canLoadMore: Bool, onRequestMore: @escaping () -> Void) {
+    fileprivate init(
+        pageSize: Int,
+        canLoadMore: Bool,
+        prefetchThreshold: Int,
+        query: MainHistoryQuery,
+        isListActive: Bool,
+        onRequestMore: @escaping () -> Bool
+    ) {
         self.pageSize = pageSize
         self.canLoadMore = canLoadMore
+        self.prefetchThreshold = prefetchThreshold
+        self.query = query
+        self.isListActive = isListActive
         self.onRequestMore = onRequestMore
-        var descriptor = FetchDescriptor<ClipboardItem>(
-            predicate: #Predicate { $0.deletedAt == nil },
-            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
-        )
-        descriptor.fetchLimit = pageSize
+        var descriptor = query.descriptor(fetchLimit: pageSize)
         // Keep large image bytes and embedding vectors faulted until a visible
         // row or an active semantic search actually needs them.
         descriptor.propertiesToFetch = [
@@ -221,22 +464,19 @@ struct MainWindowContent: View {
             backgroundDecoration
                 .allowsHitTesting(false)
 
-            // The card list stays mounted as the base layer; Settings / Stats /
-            // Trash cross-fade in over it. Returning is then a pure reveal — we
-            // no longer tear down and rebuild the (heavy) list view tree on
-            // every back-navigation, which is what made the settings→list
-            // transition hitch (and occasionally spin the beachball).
-            listScreen
-
-            if nav.screen != .list {
+            // Keep secondary screens structurally separate from the history
+            // tree. Leaving thousands of observable cards mounted underneath
+            // Settings made every navigation transaction walk the hidden list.
+            if isListActive {
+                listScreen
+            } else {
                 secondaryScreen
-                    .transition(.opacity)
             }
 
             // First-run overlays surface one at a time, in priority order:
             // Accessibility (auto-paste is the core flow) → Full Disk Access
             // → the feature tour (hosted further down as an overlay).
-            if showAXOnboarding {
+            if isListActive && showAXOnboarding {
                 Color.black.opacity(0.45)
                     .ignoresSafeArea()
                     .onTapGesture {
@@ -257,7 +497,10 @@ struct MainWindowContent: View {
                 .zIndex(3)
             }
 
-            if nav.featureTourReplayRequest == nil && !fdaOnboardingDismissed && !showAXOnboarding {
+            if isListActive
+                && nav.featureTourReplayRequest == nil
+                && !fdaOnboardingDismissed
+                && !showAXOnboarding {
                 Color.black.opacity(0.45)
                     .ignoresSafeArea()
                     .onTapGesture {
@@ -359,7 +602,6 @@ struct MainWindowContent: View {
                 .zIndex(9)
             }
         }
-        .animation(.easeOut(duration: 0.22), value: nav.screen)
         .animation(.spring(response: 0.34, dampingFraction: 0.84), value: confirm.request?.id)
         .animation(.spring(response: 0.34, dampingFraction: 0.84), value: ruleEditor.editing?.id)
         .animation(.spring(response: 0.34, dampingFraction: 0.84), value: ruleEditor.isBrowsingTemplates)
@@ -389,9 +631,25 @@ struct MainWindowContent: View {
         }
         .animation(.easeOut(duration: 0.22), value: isTourActive)
         .onAppear {
-            refreshDerivedCaches()
+            refreshHeaderCounts()
+        }
+        .task(id: vm.tagCatalogVersion) {
+            // Source/tag option lists can require walking the whole store.
+            // Aggregate them on a private model context so opening the app or
+            // changing a tag never competes with clicks on the main actor.
+            let loader = MainHistoryCatalogLoader(container: modelContext.container)
+            guard let snapshot = try? await loader.load(), !Task.isCancelled else { return }
+            allKnownTagsCache = snapshot.tags
+            allKnownSourceAppsCache = snapshot.sourceApps
+            if let selected = vm.selectedSourceApp,
+               !snapshot.sourceApps.contains(where: {
+                   $0.localizedCaseInsensitiveCompare(selected) == .orderedSame
+               }) {
+                vm.selectedSourceApp = nil
+            }
         }
         .task {
+            guard isListActive else { return }
             // Historical OCR + embedding repair is maintenance work, not part
             // of first paint. Run it sequentially after launch settles; the
             // task is cancelled automatically if this window disappears.
@@ -401,11 +659,15 @@ struct MainWindowContent: View {
             guard !Task.isCancelled else { return }
             await vm.backfillEmbeddings(context: modelContext)
         }
-        .onChange(of: allItems.count) { _, _ in
-            refreshDerivedCaches()
-        }
-        .onChange(of: vm.tagCatalogVersion) { _, _ in
-            refreshTagCatalog()
+        .onChange(of: allItems.first?.id) { _, _ in
+            // Growing a page changes `allItems.count` without changing the
+            // store. Treating that as a data mutation used to rescan all
+            // 100,000 rows for tag/source catalogs on every load-more request,
+            // blocking the main thread for seconds. A real incoming clip does
+            // change the newest id, so keep its header count and source app in
+            // sync through this small incremental path instead.
+            refreshTotalRecords()
+            mergeNewestSourceApp()
         }
         .onChange(of: vm.favoritesVersion) { _, _ in
             refreshFavoritesCount()
@@ -470,11 +732,9 @@ struct MainWindowContent: View {
         BackgroundHaloView()
     }
 
-    /// Settings / Stats / Trash, each layered over a private copy of the shared
-    /// backdrop (blur + accent halo). The `.behindWindow` material samples the
-    /// desktop, not the in-window content beneath it, so this fully occludes the
-    /// list that stays mounted behind — letting us keep the list warm without it
-    /// bleeding through the panel.
+    /// Settings / Stats / Trash each render over a private copy of the shared
+    /// backdrop (blur + accent halo), independently of the recycled history
+    /// collection's lifetime.
     @ViewBuilder
     private var secondaryScreen: some View {
         ZStack(alignment: .top) {
@@ -493,17 +753,12 @@ struct MainWindowContent: View {
         }
     }
 
-    /// Refresh the cached aggregates by querying the model context directly.
-    /// Required since `allItems` is now a *paged* slice — counting/iterating
-    /// it would underreport once the user scrolls past the first batch. We
-    /// hand off to lighter SwiftData APIs (`fetchCount` for headcounts, a
-    /// predicate-filtered fetch for the tag catalog) so this stays fast even
-    /// when the live history is at its 500-item cap.
-    private func refreshDerivedCaches() {
+    /// Header counts use SQLite's count path instead of materialising the
+    /// paged models. The larger option catalogs are loaded by the actor-backed
+    /// task above so they never hold the UI actor while walking the store.
+    private func refreshHeaderCounts() {
         refreshTotalRecords()
         refreshFavoritesCount()
-        refreshTagCatalog()
-        refreshSourceAppCatalog()
     }
 
     private func refreshTotalRecords() {
@@ -520,34 +775,17 @@ struct MainWindowContent: View {
         favoritesCountCache = (try? modelContext.fetchCount(descriptor)) ?? 0
     }
 
-    private func refreshTagCatalog() {
-        // Only items that actually carry tags participate, keeping this much
-        // cheaper than a full history walk.
-        var descriptor = FetchDescriptor<ClipboardItem>(
-            predicate: #Predicate { $0.deletedAt == nil && $0.tagsRaw != nil }
-        )
-        descriptor.propertiesToFetch = [\.deletedAt, \.tagsRaw]
-        if let tagged = try? modelContext.fetch(descriptor) {
-            allKnownTagsCache = vm.allKnownTags(in: tagged)
-        } else {
-            allKnownTagsCache = []
-        }
-    }
-
-    private func refreshSourceAppCatalog() {
-        var descriptor = FetchDescriptor<ClipboardItem>(
-            predicate: #Predicate { $0.deletedAt == nil && $0.sourceApp != "" }
-        )
-        descriptor.propertiesToFetch = [\.deletedAt, \.sourceApp]
-        if let sourced = try? modelContext.fetch(descriptor) {
-            let apps = vm.allKnownSourceApps(in: sourced)
-            allKnownSourceAppsCache = apps
-            if let selected = vm.selectedSourceApp, !apps.contains(selected) {
-                vm.selectedSourceApp = nil
-            }
-        } else {
-            allKnownSourceAppsCache = []
-        }
+    /// Add the newest clip's source without walking the entire store. Full
+    /// catalog reconciliation still happens on first appearance; subsequent
+    /// clipboard inserts only need to contribute their one source value.
+    private func mergeNewestSourceApp() {
+        guard let source = allItems.first?.sourceApp.trimmingCharacters(in: .whitespacesAndNewlines),
+              !source.isEmpty,
+              !allKnownSourceAppsCache.contains(where: {
+                  $0.localizedCaseInsensitiveCompare(source) == .orderedSame
+              }) else { return }
+        allKnownSourceAppsCache.append(source)
+        allKnownSourceAppsCache.sort { $0.localizedCompare($1) == .orderedAscending }
     }
 
     private var listScreen: some View {
@@ -576,6 +814,15 @@ struct MainWindowContent: View {
 
             if items.isEmpty {
                 emptyState
+                    .task(id: pageSize) {
+                        // Exact tag/group/semantic matching happens after the
+                        // bounded SQL candidate fetch. If the current candidate
+                        // page contains no exact match, advance incrementally
+                        // instead of declaring an empty result immediately.
+                        guard canLoadMore, allItems.count >= pageSize else { return }
+                        await Task.yield()
+                        _ = onRequestMore()
+                    }
             } else {
                 ZStack(alignment: .bottom) {
                     cardList(split: split)
@@ -597,12 +844,8 @@ struct MainWindowContent: View {
         // is the navigation order so "next row" always means the next *visible*
         // row — pinned-first, skipping a collapsed pinned section.
         .background {
-            // The list now stays mounted behind Settings/Stats/Trash, so only
-            // arm the key catcher on the list screen — a persistent catcher
-            // would hold first-responder there and let Space/⌫/arrows act on the
-            // hidden list (a stray ⌫ could even delete a clip). Same reasoning
-            // during the feature tour: keys would act on the dimmed list and
-            // pop dialogs on top of the tour.
+            // Only arm the key catcher on the list screen. The feature tour
+            // similarly suspends it so keys cannot act on dimmed content.
             if nav.screen == .list && !isTourActive {
                 PreviewKeyCatcher(
                     items: { navigableItems },
@@ -1111,8 +1354,8 @@ struct MainWindowContent: View {
     }
 
     /// Section lengths let grid navigation cross the pinned header without
-    /// pretending the first normal card continues the pinned row. Each section
-    /// starts at column zero in `LazyVGrid`, so the key catcher mirrors that.
+    /// pretending the first normal card continues the pinned row. Each native
+    /// collection section starts at column zero, so the key catcher mirrors it.
     private var navigableSectionCounts: [Int] {
         let split = splitItems(for: filteredItems)
         guard !split.pinned.isEmpty, !pinnedCollapsed else {
@@ -1170,136 +1413,69 @@ struct MainWindowContent: View {
     }
 
     private func cardList(split: (pinned: [ClipboardItem], others: [ClipboardItem])) -> some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 8) {
-                    Group {
-                        if contentLayout == .grid {
-                            LazyVGrid(
-                                columns: [
-                                    GridItem(
-                                        .adaptive(
-                                            minimum: MainGridMetrics.minimumCardWidth,
-                                            maximum: MainGridMetrics.maximumCardWidth
-                                        ),
-                                        spacing: MainGridMetrics.spacing,
-                                        alignment: .top
-                                    )
-                                ],
-                                alignment: .leading,
-                                spacing: MainGridMetrics.spacing
-                            ) {
-                                if !split.pinned.isEmpty {
-                                    Section {
-                                        if !pinnedCollapsed {
-                                            rows(for: split.pinned)
-                                        }
-                                    } header: {
-                                        pinnedHeader(count: split.pinned.count)
-                                    }
-                                }
-                                rows(for: split.others)
-                            }
-                            .background {
-                                GeometryReader { proxy in
-                                    Color.clear.preference(
-                                        key: MainGridWidthPreferenceKey.self,
-                                        value: proxy.size.width
-                                    )
-                                }
-                            }
-                        } else {
-                            LazyVStack(spacing: 8) {
-                                if !split.pinned.isEmpty {
-                                    pinnedHeader(count: split.pinned.count)
-                                    if !pinnedCollapsed {
-                                        rows(for: split.pinned)
-                                    }
-                                }
-                                rows(for: split.others)
-                            }
-                        }
-                    }
-                    .id(contentLayout)
-                    .transition(.opacity.combined(with: .scale(scale: 0.985)))
+        var sections: [RecyclingCollectionSection<ClipboardItem>] = []
+        if !split.pinned.isEmpty {
+            sections.append(
+                RecyclingCollectionSection(
+                    id: "pinned",
+                    items: pinnedCollapsed ? [] : split.pinned,
+                    headerHeight: 40,
+                    header: AnyView(pinnedHeader(count: split.pinned.count))
+                )
+            )
+        }
+        sections.append(RecyclingCollectionSection(id: "history", items: split.others))
 
-                    // Load-more sentinel: a near-invisible footer that, when it
-                    // scrolls into view below either layout, asks the parent to
-                    // grow the page size. `.id(pageSize)` makes each new page
-                    // produce a fresh sentinel so its one-shot `.onAppear` re-arms
-                    // after every successful expansion.
-                    if canLoadMore && allItems.count >= pageSize {
-                        LoadMoreSentinel(onAppear: onRequestMore)
-                            .id(pageSize)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 14)
-                .padding(.bottom, vm.isSelectionMode ? 80 : 14)
-            }
-            .scrollContentBackground(.hidden)
-            .onPreferenceChange(MainGridWidthPreferenceKey.self) { width in
-                let count = MainGridMetrics.columnCount(for: width)
+        let isGrid = contentLayout == .grid
+        // Keep the public build's established fixed grid-card height. The
+        // performance port is limited to recycling and bounded fetching.
+        let cardHeight: CGFloat = isGrid ? 264 : 66
+
+        return RecyclingCollectionView(
+            sections: sections,
+            fixedColumnCount: isGrid ? nil : 1,
+            minimumItemWidth: isGrid ? MainGridMetrics.minimumCardWidth : 1,
+            maximumItemWidth: isGrid ? MainGridMetrics.maximumCardWidth : .greatestFiniteMagnitude,
+            itemHeight: cardHeight,
+            interitemSpacing: isGrid ? MainGridMetrics.spacing : 0,
+            lineSpacing: isGrid ? MainGridMetrics.spacing : 8,
+            contentInsets: NSEdgeInsets(
+                top: 14,
+                left: MainGridMetrics.horizontalPadding,
+                bottom: vm.isSelectionMode ? 80 : 14,
+                right: MainGridMetrics.horizontalPadding
+            ),
+            focusedID: vm.focusedItemID,
+            visibleStateID: recyclingVisibleStateID,
+            canPrefetch: canLoadMore && allItems.count >= pageSize,
+            prefetchThreshold: prefetchThreshold,
+            onPrefetch: onRequestMore,
+            onColumnCountChange: { count in
                 if gridColumnCount != count { gridColumnCount = count }
+            },
+            content: { item in
+                cardRow(for: item)
             }
-            // Single sliding focus highlight, positioned from the focused row's
-            // live frame. Because it tracks the real frame every layout pass, it
-            // stays glued to the row through a scroll (matching the content's
-            // speed exactly) and only the focus *change* is animated — see
-            // `focusHighlight`.
-            .overlayPreferenceValue(RowBoundsKey.self) { anchors in
-                focusHighlight(anchors: anchors)
-            }
-            // Follow keyboard focus. Done here (after the state settles and the
-            // row is laid out) rather than inside the key handler, so it keeps up
-            // reliably during fast key-repeat — synchronous scrolling there got
-            // dropped and left the list stranded. `anchor: nil` scrolls only the
-            // minimum: nothing moves until the focused row would slide off the
-            // top or bottom edge. The anchor-driven highlight tracks the row's
-            // real frame, so it stays glued through the scroll at matching speed.
-            .onChange(of: vm.focusedItemID) { _, id in
-                guard let id else { return }
-                withAnimation(Self.focusSpring) {
-                    proxy.scrollTo(id, anchor: nil)
-                }
-            }
-        }
+        )
     }
 
-    @ViewBuilder
-    private func rows(for items: [ClipboardItem]) -> some View {
-        ForEach(items) { item in
-            cardRow(for: item)
+    /// Only state that changes the visual configuration of an already-visible
+    /// cell belongs here. Item insert/delete/reorder is tracked separately by
+    /// the collection structure, while SwiftData model edits are observed by
+    /// the hosted card itself.
+    private var recyclingVisibleStateID: AnyHashable {
+        var hasher = Hasher()
+        hasher.combine(contentLayout.rawValue)
+        hasher.combine(vm.isSelectionMode)
+        hasher.combine(contentProtection.version)
+        for id in vm.selectedItemIDs.sorted(by: { $0.uuidString < $1.uuidString }) {
+            hasher.combine(id)
         }
-    }
-
-    /// The one keyboard-focus highlight, parked over the focused row via its
-    /// published frame. Drawn only in browse mode — selection/merge mode keeps
-    /// its static per-row checkmarks/tint since several rows can be active.
-    @ViewBuilder
-    private func focusHighlight(anchors: [UUID: Anchor<CGRect>]) -> some View {
-        GeometryReader { geo in
-            if !vm.isSelectionMode,
-               let id = vm.focusedItemID,
-               let anchor = anchors[id] {
-                let rect = geo[anchor]
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.appAccent.opacity(0.10))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .strokeBorder(Color.appAccent, lineWidth: 1)
-                    )
-                    .frame(width: rect.width, height: rect.height)
-                    .position(x: rect.midX, y: rect.midY)
-            }
+        for group in groups.sortedForDisplay() {
+            hasher.combine(group.id)
+            hasher.combine(group.displayName)
         }
-        // Clip to the scroll viewport so the highlight gets cut at the top/bottom
-        // edge exactly like the row content does. Without this it's an unclipped
-        // overlay, so a focused row sitting at (or mid-scroll past) an edge drew
-        // its highlight outside the list, over the toolbar.
-        .clipped()
-        // Purely decorative — never let it intercept scroll or row clicks.
-        .allowsHitTesting(false)
+        return AnyHashable(hasher.finalize())
     }
 
     /// Resolves the display names of the groups an item belongs to, in
@@ -1325,6 +1501,7 @@ struct MainWindowContent: View {
                     groupNames: groupNames(for: item),
                     isSelectionMode: vm.isSelectionMode,
                     isSelected: vm.isSelectionMode ? vm.isSelected(item) : (vm.focusedItemID == item.id),
+                    isFocused: !vm.isSelectionMode && vm.focusedItemID == item.id,
                     protectionVersion: contentProtection.version,
                     onCopy: {
                         vm.copyToClipboard(item)
@@ -1360,6 +1537,7 @@ struct MainWindowContent: View {
                     // In normal browsing mode the same "selected" affordance doubles
                     // as the keyboard-focus marker for arrow-nav + Space preview.
                     isSelected: vm.isSelectionMode ? vm.isSelected(item) : (vm.focusedItemID == item.id),
+                    isFocused: !vm.isSelectionMode && vm.focusedItemID == item.id,
                     protectionVersion: contentProtection.version,
                     onCopy: {
                         vm.copyToClipboard(item)
@@ -1443,12 +1621,6 @@ struct MainWindowContent: View {
                     ToastCenter.shared.show(L("common.copied"))
                 }
         )
-        // Publish this row's live frame so the list can park a single sliding
-        // highlight on whichever row is focused (see `focusHighlight`). Driving
-        // the highlight from the real frame is what keeps it glued to the row
-        // during a scroll — it moves at exactly the content's speed because it
-        // *is* the content's position, not a second animation racing it.
-        .anchorPreference(key: RowBoundsKey.self, value: .bounds) { [item.id: $0] }
     }
 
     private func toggleFavorite(_ item: ClipboardItem) {
@@ -3487,48 +3659,6 @@ private struct SearchModeSegment: View {
         if disabled { return .secondary }
         if isOn { return .white }
         return hovering ? .primary : .secondary
-    }
-}
-
-// MARK: - Row bounds preference
-
-/// Each visible row publishes its frame here, keyed by item id, so the list can
-/// park a single sliding focus highlight on whichever row is focused. Only the
-/// rows the `LazyVStack` actually renders contribute, so this stays to ~a dozen
-/// entries regardless of history size.
-private struct RowBoundsKey: PreferenceKey {
-    static let defaultValue: [UUID: Anchor<CGRect>] = [:]
-    static func reduce(value: inout [UUID: Anchor<CGRect>], nextValue: () -> [UUID: Anchor<CGRect>]) {
-        value.merge(nextValue(), uniquingKeysWith: { $1 })
-    }
-}
-
-// MARK: - Load-more sentinel
-
-/// Invisible footer that fires its callback the first time it scrolls into
-/// view. Used by the paginated list to ask the outer wrapper for another
-/// page. A tiny spinner is drawn to hint at "loading more" — it's all the
-/// user sees before the new rows pop in.
-private struct LoadMoreSentinel: View {
-    let onAppear: () -> Void
-
-    @State private var fired = false
-
-    var body: some View {
-        HStack {
-            Spacer()
-            ProgressView()
-                .progressViewStyle(.circular)
-                .controlSize(.small)
-                .opacity(0.5)
-            Spacer()
-        }
-        .frame(height: 28)
-        .onAppear {
-            guard !fired else { return }
-            fired = true
-            onAppear()
-        }
     }
 }
 

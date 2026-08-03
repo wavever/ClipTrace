@@ -6,6 +6,7 @@ struct ClipboardItemRow: View, Equatable {
     var groupNames: [String] = []
     var isSelectionMode: Bool = false
     var isSelected: Bool = false
+    var isFocused: Bool = false
     /// Bumped by `ContentProtectionStore` when the master toggle or a category
     /// changes. Carried purely so the `Equatable` gate below invalidates the row
     /// after a protection setting flips and the masked title/badge recompute.
@@ -38,17 +39,14 @@ struct ClipboardItemRow: View, Equatable {
     @State private var detectedColorCache: Color? = nil
     @State private var detectedColorComputed = false
 
-    // Lets the parent `LazyVStack` skip re-evaluating this row's (heavy)
-    // body when only some *other* row's selection changed — the common case
-    // while arrow-keying through the list. We compare just the value inputs
-    // the parent feeds in; everything drawn from `item` (pin/favorite/tags/…)
-    // is observed through SwiftData's `@Model`, so those edits still re-render
-    // the row live, independent of this gate. Without it, every keystroke
-    // rebuilt all ~12 visible rows and stole frames from the scroll animation.
+    // Lets each recycled hosting cell skip its heavy body when an unrelated
+    // visible cell changes selection. Model edits remain observed directly
+    // through SwiftData's `@Model`.
     static func == (lhs: ClipboardItemRow, rhs: ClipboardItemRow) -> Bool {
         lhs.item.id == rhs.item.id
             && lhs.groupNames == rhs.groupNames
             && lhs.isSelected == rhs.isSelected
+            && lhs.isFocused == rhs.isFocused
             && lhs.isSelectionMode == rhs.isSelectionMode
             && lhs.protectionVersion == rhs.protectionVersion
     }
@@ -196,18 +194,16 @@ struct ClipboardItemRow: View, Equatable {
         .background {
             ZStack {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(isHovered || staticSelected ? Color.appCardHover : Color.appCard)
-                // Hover wash, skipped under the static selected tint to avoid
-                // doubling. The browse-mode keyboard-focus highlight is *not*
-                // drawn here — the list parks a single sliding overlay on the
-                // focused row (see `focusHighlight`) so it can glide with scroll.
-                if isHovered && !staticSelected {
+                    .fill(isHovered || visualSelected ? Color.appCardHover : Color.appCard)
+                // Hover wash, skipped under selection/focus tint to avoid
+                // doubling the accent treatment.
+                if isHovered && !visualSelected {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(Color.appAccent.opacity(0.04))
                 }
                 // Selection/merge mode keeps a static per-row tint, since
                 // several rows can be checked at once.
-                if staticSelected {
+                if visualSelected {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(Color.appAccent.opacity(0.10))
                 }
@@ -215,7 +211,7 @@ struct ClipboardItemRow: View, Equatable {
         }
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(borderColor, lineWidth: (isHovered || staticSelected) ? 1 : 0.5)
+                .strokeBorder(borderColor, lineWidth: (isHovered || visualSelected) ? 1 : 0.5)
         )
         // Only paint a shadow on the row the user is actively interacting
         // with — idle rows used to each get their own blur pass, which adds
@@ -268,17 +264,21 @@ struct ClipboardItemRow: View, Equatable {
         }
     }
 
-    /// Selected *and* painted in place. Only selection/merge mode does this —
-    /// in browse mode the keyboard-focus highlight is the list's sliding overlay
-    /// (`focusHighlight`), so the row itself draws no selected styling.
+    /// Selection mode can paint several rows at once; keyboard focus is kept
+    /// separate so it remains a single browse-mode affordance.
     private var staticSelected: Bool {
         isSelected && isSelectionMode
     }
 
+    /// Native collection cells cannot publish SwiftUI anchors across their
+    /// hosting-view boundary, so keyboard focus is painted by the visible cell
+    /// itself. Only that one recycled cell is reconfigured on focus changes.
+    private var visualSelected: Bool {
+        staticSelected || (!isSelectionMode && isFocused)
+    }
+
     private var borderColor: Color {
-        // The browse-mode focus border rides along with the sliding overlay, so
-        // the row's own border only reflects selection mode / hover / idle.
-        if staticSelected { return Color.appAccent }
+        if visualSelected { return Color.appAccent }
         if isHovered  { return Color.appAccent.opacity(0.55) }
         return Color.secondary.opacity(0.15)
     }
@@ -365,6 +365,7 @@ struct ClipboardItemGridCard: View, Equatable {
     var groupNames: [String] = []
     var isSelectionMode: Bool = false
     var isSelected: Bool = false
+    var isFocused: Bool = false
     var protectionVersion: Int = 0
     var onCopy: () -> Void = {}
     var onDelete: () -> Void = {}
@@ -387,6 +388,7 @@ struct ClipboardItemGridCard: View, Equatable {
         lhs.item.id == rhs.item.id
             && lhs.groupNames == rhs.groupNames
             && lhs.isSelected == rhs.isSelected
+            && lhs.isFocused == rhs.isFocused
             && lhs.isSelectionMode == rhs.isSelectionMode
             && lhs.protectionVersion == rhs.protectionVersion
     }
@@ -425,12 +427,12 @@ struct ClipboardItemGridCard: View, Equatable {
         .padding(10)
         .frame(maxWidth: .infinity, minHeight: 264, maxHeight: 264, alignment: .topLeading)
         .background {
-            if staticSelected {
+            if visualSelected {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(Color.appAccent.opacity(0.10))
             }
         }
-        .paperCard(cornerRadius: 14, isHovered: isHovered, isSelected: staticSelected)
+        .paperCard(cornerRadius: 14, isHovered: isHovered, isSelected: visualSelected)
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.12)) { isHovered = hovering }
@@ -615,6 +617,10 @@ struct ClipboardItemGridCard: View, Equatable {
 
     private var staticSelected: Bool {
         isSelected && isSelectionMode
+    }
+
+    private var visualSelected: Bool {
+        staticSelected || (!isSelectionMode && isFocused)
     }
 
     private var showsLargeThumbnail: Bool {
