@@ -17,6 +17,7 @@ final class ClipboardItemContextMenuCoordinator: ObservableObject {
     @Published fileprivate var renameTarget: ClipboardItem?
     @Published fileprivate var tagTarget: ClipboardItem?
     @Published fileprivate var barcodeScanTarget: ClipboardItem?
+    @Published fileprivate var ocrTarget: ClipboardItem?
     @Published fileprivate var qrPreviewTarget: ClipboardItem?
     @Published fileprivate var newGroupTarget: ClipboardItem?
     @Published fileprivate var deleteTarget: ClipboardItem?
@@ -37,7 +38,8 @@ final class ClipboardItemContextMenuCoordinator: ObservableObject {
 
     var isPresentingSheet: Bool {
         renameTarget != nil || tagTarget != nil || barcodeScanTarget != nil ||
-        qrPreviewTarget != nil || newGroupTarget != nil || deleteTarget != nil
+        qrPreviewTarget != nil || newGroupTarget != nil || deleteTarget != nil ||
+        ocrTarget != nil
     }
 
     var isMenuOpen: Bool { menu.isOpen }
@@ -192,6 +194,7 @@ final class ClipboardItemContextMenuCoordinator: ObservableObject {
         tagTarget = nil
         barcodeScanTarget = nil
         qrPreviewTarget = nil
+        ocrTarget = nil
         newGroupTarget = nil
         deleteTarget = nil
         groupsAtOpen = []
@@ -216,20 +219,25 @@ final class ClipboardItemContextMenuCoordinator: ObservableObject {
         onPresentationChange(true)
     }
 
-    private func presentTags(for item: ClipboardItem) {
+    func presentTags(for item: ClipboardItem) {
         hasDeferredTagMutation = false
         deferredTagContext = nil
         tagTarget = item
         onPresentationChange(true)
     }
 
-    private func presentBarcodeScan(for item: ClipboardItem) {
+    func presentBarcodeScan(for item: ClipboardItem) {
         barcodeScanTarget = item
         onPresentationChange(true)
     }
 
-    private func presentQRCode(for item: ClipboardItem) {
+    func presentQRCode(for item: ClipboardItem) {
         qrPreviewTarget = item
+        onPresentationChange(true)
+    }
+
+    func presentOCR(for item: ClipboardItem) {
+        ocrTarget = item
         onPresentationChange(true)
     }
 
@@ -438,6 +446,13 @@ private struct ClipboardItemContextMenuPresenter: ViewModifier {
             }
             .sheet(item: $coordinator.barcodeScanTarget, onDismiss: coordinator.presentationDidEnd) { item in
                 BarcodeResultView(item: item, onClose: { coordinator.barcodeScanTarget = nil })
+            }
+            // No `.interactiveDismissDisabled` needed — macOS sheets don't
+            // dismiss on outside taps, and we deliberately omit any cancel-role
+            // button so Esc has nothing to bind to. Only the close button in
+            // the footer can close this.
+            .sheet(item: $coordinator.ocrTarget, onDismiss: coordinator.presentationDidEnd) { item in
+                OCRResultView(item: item, onClose: { coordinator.ocrTarget = nil })
             }
             .sheet(item: $coordinator.qrPreviewTarget, onDismiss: coordinator.presentationDidEnd) { item in
                 TextQRCodePreviewView(item: item, onClose: { coordinator.qrPreviewTarget = nil })

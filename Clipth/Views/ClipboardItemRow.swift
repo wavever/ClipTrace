@@ -20,24 +20,23 @@ struct ClipboardItemRow: View, Equatable {
     var onOpenURL: () -> Void = {}
     var onSaveImage: () -> Void = {}
     var onPreview: () -> Void = {}
-    var onAddTag: (String) -> Void = { _ in }
-    var onRemoveTag: (String) -> Void = { _ in }
+    var onEditTags: () -> Void = {}
+    var onShowOCR: () -> Void = {}
+    var onShowBarcodeScan: () -> Void = {}
+    var onShowQRCode: () -> Void = {}
     var onBase64Encode: () -> Void = {}
     var onBase64Decode: () -> Void = {}
 
     @State private var isHovered = false
-    @State private var showTagEditor = false
-    @State private var showOCR = false
-    @State private var showBarcodeScan = false
-    @State private var showQRCodePreview = false
     /// Result of the `FileManager.fileExists` probe for this item's URL,
     /// populated once asynchronously after the row appears. Keeping this out
     /// of the synchronous body avoids a disk hit on every scroll/hover frame.
     @State private var fileExistsCache: Bool = false
-    /// Cached color-literal detection. SwiftUI calls `body` on every hover /
-    /// scroll tick; parsing the color string every time is wasted work.
-    @State private var detectedColorCache: Color? = nil
-    @State private var detectedColorComputed = false
+    /// Recycled cells keep their SwiftUI identity so AppKit can reuse the views
+    /// behind every shape and label. That makes the hover action bar the one
+    /// remaining source of view churn during a scroll, so it stays unmounted
+    /// until the list settles.
+    @ObservedObject private var scrollActivity = ListScrollActivity.shared
 
     // Lets each recycled hosting cell skip its heavy body when an unrelated
     // visible cell changes selection. Model edits remain observed directly
@@ -61,7 +60,7 @@ struct ClipboardItemRow: View, Equatable {
                     .transition(.scale(scale: 0.6).combined(with: .opacity))
             }
 
-            if let detectedColor = detectedColorCache {
+            if let detectedColor {
                 ColorSwatchThumbnail(color: detectedColor, size: 44)
             } else {
                 ThumbnailView(item: item, size: 44, cornerRadius: 9)
@@ -122,7 +121,7 @@ struct ClipboardItemRow: View, Equatable {
                         Capsule(style: .continuous)
                             .strokeBorder(.secondary.opacity(0.18), lineWidth: 0.5)
                     )
-                    if detectedColorCache != nil {
+                    if detectedColor != nil {
                         ColorValueBadge(
                             fontSize: 10,
                             background: .secondary.opacity(0.14),
@@ -175,7 +174,7 @@ struct ClipboardItemRow: View, Equatable {
 
             Spacer(minLength: 12)
 
-            if isHovered && !isSelectionMode {
+            if showsHoverChrome && !isSelectionMode {
                 actionBar
             }
         }
@@ -194,10 +193,10 @@ struct ClipboardItemRow: View, Equatable {
         .background {
             ZStack {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(isHovered || visualSelected ? Color.appCardHover : Color.appCard)
+                    .fill(showsHoverChrome || visualSelected ? Color.appCardHover : Color.appCard)
                 // Hover wash, skipped under selection/focus tint to avoid
                 // doubling the accent treatment.
-                if isHovered && !visualSelected {
+                if showsHoverChrome && !visualSelected {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(Color.appAccent.opacity(0.04))
                 }
@@ -211,56 +210,34 @@ struct ClipboardItemRow: View, Equatable {
         }
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(borderColor, lineWidth: (isHovered || visualSelected) ? 1 : 0.5)
+                .strokeBorder(borderColor, lineWidth: (showsHoverChrome || visualSelected) ? 1 : 0.5)
         )
         // Only paint a shadow on the row the user is actively interacting
         // with — idle rows used to each get their own blur pass, which adds
         // up fast in a long list.
         .shadow(
-            color: isHovered ? Color.appAccent.opacity(0.12) : .clear,
-            radius: isHovered ? 6 : 0,
-            y: isHovered ? 2 : 0
+            color: showsHoverChrome ? Color.appAccent.opacity(0.12) : .clear,
+            radius: showsHoverChrome ? 6 : 0,
+            y: showsHoverChrome ? 2 : 0
         )
         .contentShape(RoundedRectangle(cornerRadius: 12))
         .onHover { hovering in
             isHovered = hovering
         }
         .task(id: item.id) {
-            // Color-literal detection: cheap but does string trim + parse on
-            // every body otherwise. Compute once per row identity.
-            if !detectedColorComputed {
-                detectedColorComputed = true
-                if item.itemType == .text {
-                    detectedColorCache = ColorValueParser.color(from: item.content)
-                }
-            }
             // File existence probe: do the disk hit off the render path. Only
             // run for items that actually have a path to check; the cache
             // stays `false` for text/URL/RTF clips.
             await refreshFileExistsCache()
         }
+        .onChange(of: item.id) { _, _ in
+            // A recycled cell keeps its state, so drop the previous row's
+            // answer immediately rather than letting the async probe below
+            // leave a stale capability visible on the new item.
+            if fileExistsCache { fileExistsCache = false }
+        }
         .onChange(of: item.fileURL) { _, _ in
             Task { await refreshFileExistsCache() }
-        }
-        .sheet(isPresented: $showTagEditor) {
-            TagEditorPopover(
-                item: item,
-                onAdd: onAddTag,
-                onRemove: onRemoveTag
-            )
-        }
-        .sheet(isPresented: $showOCR) {
-            // No `.interactiveDismissDisabled` needed — macOS sheets don't
-            // dismiss on outside taps, and we deliberately omit any cancel-
-            // role button so Esc has nothing to bind to. Only the close
-            // button in the footer can close this.
-            OCRResultView(item: item, onClose: { showOCR = false })
-        }
-        .sheet(isPresented: $showBarcodeScan) {
-            BarcodeResultView(item: item, onClose: { showBarcodeScan = false })
-        }
-        .sheet(isPresented: $showQRCodePreview) {
-            TextQRCodePreviewView(item: item, onClose: { showQRCodePreview = false })
         }
     }
 
@@ -277,9 +254,25 @@ struct ClipboardItemRow: View, Equatable {
         staticSelected || (!isSelectionMode && isFocused)
     }
 
+    /// Hover state stays honest (AppKit's tracking area is authoritative), but
+    /// nothing hover-driven is *drawn* while the list is moving — so a scroll
+    /// past a stationary pointer no longer builds and tears down an action bar
+    /// for every row it passes.
+    private var showsHoverChrome: Bool {
+        isHovered && !scrollActivity.isScrolling
+    }
+
+    /// Cheap enough to derive per body now that the parser rejects long clips
+    /// before allocating, which keeps it out of `@State` — recycled cells reuse
+    /// their SwiftUI identity, so per-item caches held in state would go stale.
+    private var detectedColor: Color? {
+        guard item.itemType == .text else { return nil }
+        return ColorValueParser.color(from: item.content)
+    }
+
     private var borderColor: Color {
         if visualSelected { return Color.appAccent }
-        if isHovered  { return Color.appAccent.opacity(0.55) }
+        if showsHoverChrome { return Color.appAccent.opacity(0.55) }
         return Color.secondary.opacity(0.15)
     }
 
@@ -324,15 +317,15 @@ struct ClipboardItemRow: View, Equatable {
             fileExists: fileExistsCache,
             onCopy: onCopy,
             onPreview: onPreview,
-            onShowQRCode: { showQRCodePreview = true },
+            onShowQRCode: onShowQRCode,
             onBase64Encode: onBase64Encode,
             onBase64Decode: onBase64Decode,
             onTogglePin: onTogglePin,
             onToggleFavorite: onToggleFavorite,
-            onEditTags: { showTagEditor = true },
+            onEditTags: onEditTags,
             onOpenURL: onOpenURL,
-            onShowOCR: { showOCR = true },
-            onShowBarcodeScan: { showBarcodeScan = true },
+            onShowOCR: onShowOCR,
+            onShowBarcodeScan: onShowBarcodeScan,
             onSaveImage: onSaveImage,
             onRevealInFinder: onRevealInFinder,
             onOpenFile: onOpenFile,
@@ -374,15 +367,12 @@ struct ClipboardItemGridCard: View, Equatable {
     var onRevealInFinder: () -> Void = {}
     var onOpenURL: () -> Void = {}
     var onPreview: () -> Void = {}
-    var onAddTag: (String) -> Void = { _ in }
-    var onRemoveTag: (String) -> Void = { _ in }
+    var onEditTags: () -> Void = {}
+    var onShowOCR: () -> Void = {}
 
     @State private var isHovered = false
-    @State private var showTagEditor = false
-    @State private var showOCR = false
-    @State private var detectedColorCache: Color?
-    @State private var detectedColorComputed = false
     @State private var fileExistsCache = false
+    @ObservedObject private var scrollActivity = ListScrollActivity.shared
 
     static func == (lhs: ClipboardItemGridCard, rhs: ClipboardItemGridCard) -> Bool {
         lhs.item.id == rhs.item.id
@@ -411,18 +401,14 @@ struct ClipboardItemGridCard: View, Equatable {
                 }
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
-                .opacity(isHovered && !isSelectionMode ? 0 : 1)
+                .opacity(showsHoverChrome && !isSelectionMode ? 0 : 1)
 
-                if !isSelectionMode {
+                if !isSelectionMode && showsHoverChrome {
                     actionBar
-                        .opacity(isHovered ? 1 : 0)
-                        .disabled(!isHovered)
-                        .allowsHitTesting(isHovered)
-                        .accessibilityHidden(!isHovered)
                 }
             }
             .frame(height: 28)
-            .animation(.easeOut(duration: 0.12), value: isHovered)
+            .animation(.easeOut(duration: 0.12), value: showsHoverChrome)
         }
         .padding(10)
         .frame(maxWidth: .infinity, minHeight: 264, maxHeight: 264, alignment: .topLeading)
@@ -432,32 +418,19 @@ struct ClipboardItemGridCard: View, Equatable {
                     .fill(Color.appAccent.opacity(0.10))
             }
         }
-        .paperCard(cornerRadius: 14, isHovered: isHovered, isSelected: visualSelected)
+        .paperCard(cornerRadius: 14, isHovered: showsHoverChrome, isSelected: visualSelected)
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.12)) { isHovered = hovering }
         }
         .task(id: item.id) {
-            if !detectedColorComputed {
-                detectedColorComputed = true
-                if item.itemType == .text {
-                    detectedColorCache = ColorValueParser.color(from: item.content)
-                }
-            }
             await refreshFileExistsCache()
+        }
+        .onChange(of: item.id) { _, _ in
+            if fileExistsCache { fileExistsCache = false }
         }
         .onChange(of: item.fileURL) { _, _ in
             Task { await refreshFileExistsCache() }
-        }
-        .sheet(isPresented: $showTagEditor) {
-            TagEditorPopover(
-                item: item,
-                onAdd: onAddTag,
-                onRemove: onRemoveTag
-            )
-        }
-        .sheet(isPresented: $showOCR) {
-            OCRResultView(item: item, onClose: { showOCR = false })
         }
     }
 
@@ -469,9 +442,9 @@ struct ClipboardItemGridCard: View, Equatable {
             onPreview: onPreview,
             onTogglePin: onTogglePin,
             onToggleFavorite: onToggleFavorite,
-            onEditTags: { showTagEditor = true },
+            onEditTags: onEditTags,
             onOpenURL: onOpenURL,
-            onShowOCR: { showOCR = true },
+            onShowOCR: onShowOCR,
             onRevealInFinder: onRevealInFinder,
             onDelete: onDelete
         )
@@ -482,7 +455,7 @@ struct ClipboardItemGridCard: View, Equatable {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(Color.appChipFill)
 
-            if let detectedColor = detectedColorCache {
+            if let detectedColor {
                 ColorValueGridPreview(
                     color: detectedColor,
                     text: previewText,
@@ -501,7 +474,7 @@ struct ClipboardItemGridCard: View, Equatable {
                     )
                 }
             } else {
-                ZStack(alignment: .bottomTrailing) {
+                ZStack(alignment: .topLeading) {
                     Image(systemName: item.itemType.icon)
                         .font(.system(size: 56, weight: .ultraLight))
                         .foregroundStyle(Color.appAccent.opacity(0.08))
@@ -554,6 +527,7 @@ struct ClipboardItemGridCard: View, Equatable {
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 4)
                 .background(
@@ -561,7 +535,7 @@ struct ClipboardItemGridCard: View, Equatable {
                         .fill(Color.appPaper.opacity(0.92))
                 )
 
-            if detectedColorCache != nil {
+            if detectedColor != nil {
                 ColorValueBadge()
             }
 
@@ -587,11 +561,15 @@ struct ClipboardItemGridCard: View, Equatable {
                         Capsule(style: .continuous)
                             .fill(Color.appPaper.opacity(0.92))
                     )
-                    .opacity(isHovered && !isSelectionMode ? 0 : 1)
-                    .accessibilityHidden(isHovered && !isSelectionMode)
+                    .opacity(showsHoverChrome && !isSelectionMode ? 0 : 1)
+                    .accessibilityHidden(showsHoverChrome && !isSelectionMode)
             }
 
-            if !isSelectionMode {
+            // Mounted only while shown. Keeping it in the tree at zero opacity
+            // meant every card permanently carried the button's tooltip anchor,
+            // an AppKit-backed view that has to be built and constrained for
+            // each card the scroll materialises.
+            if !isSelectionMode && showsHoverChrome {
                 HoverIconButton(
                     systemName: "doc.on.doc",
                     help: L("action.copy"),
@@ -606,13 +584,9 @@ struct ClipboardItemGridCard: View, Equatable {
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
                         .strokeBorder(Color.appCardBorder.opacity(0.8), lineWidth: 0.5)
                 )
-                .opacity(isHovered ? 1 : 0)
-                .disabled(!isHovered)
-                .allowsHitTesting(isHovered)
-                .accessibilityHidden(!isHovered)
             }
         }
-        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(.easeOut(duration: 0.12), value: showsHoverChrome)
     }
 
     private var staticSelected: Bool {
@@ -621,6 +595,18 @@ struct ClipboardItemGridCard: View, Equatable {
 
     private var visualSelected: Bool {
         staticSelected || (!isSelectionMode && isFocused)
+    }
+
+    /// See `ClipboardItemRow.showsHoverChrome` — cards pay the same per-hover
+    /// AppKit view cost, and the grid passes more cards under the pointer per
+    /// scrolled pixel than the list does.
+    private var showsHoverChrome: Bool {
+        isHovered && !scrollActivity.isScrolling
+    }
+
+    private var detectedColor: Color? {
+        guard item.itemType == .text else { return nil }
+        return ColorValueParser.color(from: item.content)
     }
 
     private var showsLargeThumbnail: Bool {
@@ -1039,6 +1025,12 @@ struct HoverIconButton: View {
 /// comma-separated RGB values such as `222, 222, 222`.
 enum ColorValueParser {
     static func color(from raw: String) -> Color? {
+        // Reject on raw byte count first. Clips can be megabytes, and both
+        // `trimmingCharacters` and `count` (grapheme breaking) walk the whole
+        // string, while `utf8.count` is O(1) on native strings. Doing this
+        // before any allocation is what makes the parser cheap enough to call
+        // straight from a row body instead of caching it in view state.
+        guard raw.utf8.count <= 128 else { return nil }
         let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         // Color literals are short — bail fast on anything that obviously isn't.
         guard !s.isEmpty, s.count <= 48 else { return nil }

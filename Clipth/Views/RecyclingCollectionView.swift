@@ -1,6 +1,55 @@
 import SwiftUI
 import AppKit
 
+/// Live-scroll gate for every recycling list in the app.
+///
+/// With a stationary pointer, scrolling drags each passing row through
+/// `mouseEntered` / `mouseExited`. Rows answer that by mounting their hover
+/// action bar — a dozen buttons that each carry an `NSViewRepresentable`
+/// tooltip anchor, so AppKit allocates a hosting view and runs the Auto Layout
+/// engine per button, per row, per scroll. Profiling a 750-row history showed
+/// that churn dominating the display cycle. Rows read this flag and keep their
+/// hover chrome unmounted until the list settles; `isHovered` itself keeps
+/// tracking honestly, so the bar reappears the instant scrolling stops without
+/// waiting for another mouse move.
+@MainActor
+final class ListScrollActivity: ObservableObject {
+    static let shared = ListScrollActivity()
+
+    @Published private(set) var isScrolling = false
+
+    /// Bounds notifications are the only signal that covers user drags,
+    /// momentum *and* programmatic scrolls alike, so activity is inferred from
+    /// them and expires on a short quiet period rather than on a phase event.
+    private static let settleDelay: Duration = .milliseconds(120)
+    private var lastActivity: ContinuousClock.Instant = .now
+    private var settleTask: Task<Void, Never>?
+
+    private init() {}
+
+    /// Called for every scroll tick, so the hot path is just a timestamp store.
+    /// One task per gesture then watches for the list going quiet.
+    ///
+    /// The flag is deliberately raised inside that task rather than here:
+    /// scroll-to-focus runs from `updateNSView`, so a bounds change can arrive
+    /// in the middle of a SwiftUI update, where publishing is not allowed.
+    func noteScrollActivity() {
+        lastActivity = .now
+        guard settleTask == nil else { return }
+        settleTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.isScrolling = true
+            while !Task.isCancelled {
+                let idle = ContinuousClock.now - self.lastActivity
+                guard idle < Self.settleDelay else { break }
+                try? await Task.sleep(for: Self.settleDelay - idle)
+            }
+            self.isScrolling = false
+            self.settleTask = nil
+        }
+    }
+}
+
 /// One logical collection section. Headers remain SwiftUI so the production
 /// pinned control keeps its paper styling, while AppKit owns item lifetime and
 /// scroll geometry.
@@ -61,6 +110,9 @@ where Item.ID: Hashable {
         layout.minimumLineSpacing = lineSpacing
         layout.sectionInset = NSEdgeInsets()
         layout.estimatedItemSize = .zero
+        // Seed a valid uniform size before the first layout pass; the real
+        // width lands in `updateLayoutMetrics()` once the view has bounds.
+        layout.itemSize = NSSize(width: max(1, minimumItemWidth), height: itemHeight)
 
         collectionView.collectionViewLayout = layout
         collectionView.dataSource = context.coordinator
@@ -149,30 +201,36 @@ where Item.ID: Hashable {
         }
     }
 
-    private var structureSnapshot: [[AnyHashable]] {
-        sections.map { section in
-            [section.id] + section.items.map { AnyHashable($0.id) }
-        }
+    /// Section keys and row ids kept apart so the row half stays a plain array
+    /// of the concrete `ID` type. The previous `[[AnyHashable]]` shape boxed
+    /// every row id on the heap — recomputed and compared on *every* SwiftUI
+    /// update, that was hundreds of allocations per update on a long history.
+    struct Structure: Equatable {
+        var sectionIDs: [AnyHashable] = []
+        var itemIDs: [[Item.ID]] = []
+    }
+
+    private var structureSnapshot: Structure {
+        Structure(
+            sectionIDs: sections.map(\.id),
+            itemIDs: sections.map { $0.items.map(\.id) }
+        )
     }
 
     /// Returns the precise inserted paths when every existing section keeps
     /// the same ordered prefix. Any delete, reorder, filter, or section change
     /// intentionally falls back to a viewport-preserving reload.
-    private func appendedIndexPaths(
-        from old: [[AnyHashable]],
-        to new: [[AnyHashable]]
-    ) -> Set<IndexPath>? {
-        guard old.count == new.count else { return nil }
+    private func appendedIndexPaths(from old: Structure, to new: Structure) -> Set<IndexPath>? {
+        guard old.sectionIDs == new.sectionIDs else { return nil }
         var inserted = Set<IndexPath>()
-        for section in old.indices {
-            guard old[section].first == new[section].first,
-                  old[section].count <= new[section].count,
-                  Array(new[section].prefix(old[section].count)) == old[section] else {
+        for section in old.itemIDs.indices {
+            let oldItems = old.itemIDs[section]
+            let newItems = new.itemIDs[section]
+            guard oldItems.count <= newItems.count,
+                  newItems.prefix(oldItems.count).elementsEqual(oldItems) else {
                 return nil
             }
-            let oldItemCount = max(0, old[section].count - 1)
-            let newItemCount = max(0, new[section].count - 1)
-            for item in oldItemCount..<newItemCount {
+            for item in oldItems.count..<newItems.count {
                 inserted.insert(IndexPath(item: item, section: section))
             }
         }
@@ -183,7 +241,7 @@ where Item.ID: Hashable {
     final class Coordinator: NSObject, NSCollectionViewDataSource, NSCollectionViewDelegateFlowLayout {
         var parent: RecyclingCollectionView
         weak var collectionView: WidthAwareCollectionView?
-        var structure: [[AnyHashable]] = []
+        var structure = Structure()
         var visibleStateID: AnyHashable
         var lastPrefetchedItemCount = 0
         private var lastReportedColumnCount = 0
@@ -207,12 +265,18 @@ where Item.ID: Hashable {
             if let viewportObserver {
                 NotificationCenter.default.removeObserver(viewportObserver)
             }
+            // Delivered synchronously (`queue: nil`) on the posting thread,
+            // which is always the main thread for scroll geometry. Routing
+            // through `OperationQueue.main` instead enqueued an operation for
+            // every scroll tick, adding allocation and a runloop hop to the
+            // highest-frequency callback in the list.
             viewportObserver = NotificationCenter.default.addObserver(
                 forName: NSView.boundsDidChangeNotification,
                 object: clipView,
-                queue: .main
+                queue: nil
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
+                    ListScrollActivity.shared.noteScrollActivity()
                     self?.prefetchIfNeededForViewport()
                 }
             }
@@ -243,7 +307,7 @@ where Item.ID: Hashable {
                 return NSCollectionViewItem()
             }
             let model = parent.sections[indexPath.section].items[indexPath.item]
-            item.configure(AnyView(parent.content(model).id(model.id)))
+            item.configure(AnyView(parent.content(model)))
             return item
         }
 
@@ -265,13 +329,12 @@ where Item.ID: Hashable {
             return view
         }
 
-        func collectionView(
-            _ collectionView: NSCollectionView,
-            layout collectionViewLayout: NSCollectionViewLayout,
-            sizeForItemAt indexPath: IndexPath
-        ) -> NSSize {
-            NSSize(width: itemWidthAndColumns().width, height: parent.itemHeight)
-        }
+        // `sizeForItemAt` is intentionally not implemented. Every cell is the
+        // same size, so the uniform `layout.itemSize` set in
+        // `updateLayoutMetrics()` describes the grid exactly — while a
+        // per-item delegate callback would make the flow layout ask about all
+        // several hundred rows each time the layout is invalidated (which a
+        // page append does).
 
         func collectionView(
             _ collectionView: NSCollectionView,
@@ -398,7 +461,7 @@ where Item.ID: Hashable {
                     continue
                 }
                 let model = parent.sections[indexPath.section].items[indexPath.item]
-                item.configure(AnyView(parent.content(model).id(model.id)))
+                item.configure(AnyView(parent.content(model)))
             }
         }
 
@@ -415,7 +478,7 @@ where Item.ID: Hashable {
                       let item = collectionView.item(at: indexPath) as? RecyclingHostingCollectionItem else {
                     continue
                 }
-                item.configure(AnyView(parent.content(model).id(model.id)))
+                item.configure(AnyView(parent.content(model)))
             }
         }
 
@@ -473,6 +536,17 @@ private final class RecyclingHostingCollectionItem: NSCollectionViewItem {
         view = NSView()
     }
 
+    /// Swaps the hosted card in place, and deliberately never blanks it between
+    /// items (there is no `prepareForReuse` reset, and callers must not re-key
+    /// the card with `.id`).
+    ///
+    /// Reuse only ever exchanges one card for another of the same concrete
+    /// type, so leaving the previous root in place lets SwiftUI diff against it
+    /// and keep the AppKit views backing every shape, capsule and label. The
+    /// alternative — blank, then rebuild — tore down and recreated ~20 platform
+    /// views per cell, which profiling showed to be the dominant cost of
+    /// scrolling a large history. Cards must therefore derive their appearance
+    /// from the item rather than from `@State` a previous item populated.
     func configure(_ content: AnyView) {
         if let hostingView {
             hostingView.rootView = content
@@ -490,10 +564,6 @@ private final class RecyclingHostingCollectionItem: NSCollectionViewItem {
         self.hostingView = hostingView
     }
 
-    override func prepareForReuse() {
-        super.prepareForReuse()
-        hostingView?.rootView = AnyView(EmptyView())
-    }
 }
 
 private final class RecyclingHostingSupplementaryView: NSView, NSCollectionViewElement {

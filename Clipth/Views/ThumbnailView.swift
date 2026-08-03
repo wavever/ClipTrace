@@ -13,7 +13,17 @@ struct ThumbnailView: View {
     /// muted per-type colors wash out.
     let placeholderTint: Color?
 
-    @State private var image: NSImage?
+    /// Tagged with the item it was produced for. Recycled list cells keep their
+    /// SwiftUI identity (that's what lets AppKit reuse the views behind a row),
+    /// so a bare `NSImage?` would survive into the next item and briefly show
+    /// the previous clip's picture.
+    private struct Loaded {
+        let id: UUID
+        let image: NSImage
+    }
+
+    @State private var loaded: Loaded?
+
     init(
         item: ClipboardItem,
         size: CGFloat = 36,
@@ -89,6 +99,19 @@ struct ThumbnailView: View {
         }
     }
 
+    private var targetSize: CGSize {
+        CGSize(width: width * 2, height: height * 2)
+    }
+
+    /// Falls back to a synchronous cache probe for the frames between a cell
+    /// being handed a new item and its `.task` resolving — an already-decoded
+    /// thumbnail then appears immediately instead of flashing the placeholder.
+    private var image: NSImage? {
+        if let loaded, loaded.id == item.id { return loaded.image }
+        guard canHaveThumbnail else { return nil }
+        return ThumbnailLoader.shared.cached(ThumbnailRequest(item: item), size: targetSize)
+    }
+
     var body: some View {
         ZStack {
             if let image {
@@ -113,17 +136,27 @@ struct ThumbnailView: View {
             }
         }
         .task(id: taskID) {
-            guard canHaveThumbnail else { return }
-            let target = CGSize(width: width * 2, height: height * 2)
+            guard canHaveThumbnail else {
+                if loaded != nil { loaded = nil }
+                return
+            }
+            let target = targetSize
             // Build the Sendable snapshot on the main actor where the SwiftData
             // model is safe to touch, then hand off to the loader's actor for
             // decode/resize.
             let request = ThumbnailRequest(item: item)
+            let itemID = item.id
             if let cached = ThumbnailLoader.shared.cached(request, size: target) {
-                image = cached
+                loaded = Loaded(id: itemID, image: cached)
                 return
             }
-            image = await ThumbnailLoader.shared.thumbnail(request, size: target)
+            guard let resolved = await ThumbnailLoader.shared.thumbnail(request, size: target) else {
+                return
+            }
+            // The cell may have been handed a different clip while the decode
+            // was in flight; dropping the result keeps rows from crossing over.
+            guard itemID == item.id else { return }
+            loaded = Loaded(id: itemID, image: resolved)
         }
     }
 

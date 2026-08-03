@@ -10,16 +10,6 @@ private enum MainContentLayout: String {
     case grid
 }
 
-/// Geometry shared by the recycling collection view and the grid cards.
-/// Card height remains fixed in the open-source build; the commercial branch's
-/// user-configurable height setting is deliberately not part of this port.
-private enum MainGridMetrics {
-    static let minimumCardWidth: CGFloat = 210
-    static let maximumCardWidth: CGFloat = 320
-    static let spacing: CGFloat = 10
-    static let horizontalPadding: CGFloat = 16
-}
-
 /// A separate request value makes the app-rendered preview sheet's lifetime
 /// explicit. Dismissing the sheet drops transient sensitive-text disclosure
 /// and AVPlayer state without mutating the stored clip.
@@ -249,7 +239,13 @@ struct MainWindowView: View {
     /// visible during the same fast scroll, from requesting duplicate pages.
     @State private var isBumpingPage: Bool = false
 
-    private static let pageStep = 40
+    /// Each bump re-runs the `@Query` with a larger `fetchLimit`, so it refetches
+    /// the whole prefix rather than just the new tail — and rebuilds the content
+    /// view around it. Small steps therefore cost far more in total than large
+    /// ones (40-row steps refetch ~4,500 rows on the way to the cap; 160-row
+    /// steps refetch ~1,700), and each of those rebuilds lands as a hitch in the
+    /// middle of a scroll. The first page stays small so cold start is cheap.
+    private static let pageStep = 160
     private static let pageCap = 600
     private static let prefetchThreshold = 16
 
@@ -1453,8 +1449,8 @@ struct MainWindowContent: View {
             onColumnCountChange: { count in
                 if gridColumnCount != count { gridColumnCount = count }
             },
-            content: { item in
-                cardRow(for: item)
+            content: { [groupContext = groupDisplayContext] item in
+                cardRow(for: item, groupContext: groupContext)
             }
         )
     }
@@ -1478,27 +1474,38 @@ struct MainWindowContent: View {
         return AnyHashable(hasher.finalize())
     }
 
-    /// Resolves the display names of the groups an item belongs to, in
-    /// assignment order. Items reference groups by UUID, so we look them up
-    /// against the live `groups` query; ids whose group has since been
-    /// deleted are dropped so the row shows only live chips.
-    private func groupNames(for item: ClipboardItem) -> [String] {
-        let ids = item.groupIDs
-        guard !ids.isEmpty else { return [] }
+    /// Group-name lookup and the display-ordered group list, built once per
+    /// render instead of once per cell. Both used to be rebuilt inside the
+    /// cell closure — a dictionary construction and a sort for every row the
+    /// scroll materialised.
+    private var groupDisplayContext: (namesByID: [UUID: String], ordered: [ClipboardGroup]) {
+        let ordered = groups.sortedForDisplay()
         let namesByID = Dictionary(
-            groups.map { ($0.id, $0.displayName) },
+            ordered.map { ($0.id, $0.displayName) },
             uniquingKeysWith: { first, _ in first }
         )
+        return (namesByID, ordered)
+    }
+
+    /// Resolves the display names of the groups an item belongs to, in
+    /// assignment order. Items reference groups by UUID; ids whose group has
+    /// since been deleted are dropped so the row shows only live chips.
+    private func groupNames(for item: ClipboardItem, in namesByID: [UUID: String]) -> [String] {
+        let ids = item.groupIDs
+        guard !ids.isEmpty else { return [] }
         return ids.compactMap { namesByID[$0] }
     }
 
     @ViewBuilder
-    private func cardRow(for item: ClipboardItem) -> some View {
+    private func cardRow(
+        for item: ClipboardItem,
+        groupContext: (namesByID: [UUID: String], ordered: [ClipboardGroup])
+    ) -> some View {
         Group {
             if contentLayout == .grid {
                 ClipboardItemGridCard(
                     item: item,
-                    groupNames: groupNames(for: item),
+                    groupNames: groupNames(for: item, in: groupContext.namesByID),
                     isSelectionMode: vm.isSelectionMode,
                     isSelected: vm.isSelectionMode ? vm.isSelected(item) : (vm.focusedItemID == item.id),
                     isFocused: !vm.isSelectionMode && vm.focusedItemID == item.id,
@@ -1519,20 +1526,14 @@ struct MainWindowContent: View {
                         openInBrowser(item.content)
                     },
                     onPreview: { showPreview(for: item) },
-                    onAddTag: { tag in
-                        vm.addTag(tag, to: item)
-                        try? modelContext.save()
-                    },
-                    onRemoveTag: { tag in
-                        vm.removeTag(tag, from: item)
-                        try? modelContext.save()
-                    }
+                    onEditTags: { itemContextMenu.presentTags(for: item) },
+                    onShowOCR: { itemContextMenu.presentOCR(for: item) }
                 )
                 .equatable()
             } else {
                 ClipboardItemRow(
                     item: item,
-                    groupNames: groupNames(for: item),
+                    groupNames: groupNames(for: item, in: groupContext.namesByID),
                     isSelectionMode: vm.isSelectionMode,
                     // In normal browsing mode the same "selected" affordance doubles
                     // as the keyboard-focus marker for arrow-nav + Space preview.
@@ -1565,14 +1566,10 @@ struct MainWindowContent: View {
                     onPreview: {
                         showPreview(for: item)
                     },
-                    onAddTag: { tag in
-                        vm.addTag(tag, to: item)
-                        try? modelContext.save()
-                    },
-                    onRemoveTag: { tag in
-                        vm.removeTag(tag, from: item)
-                        try? modelContext.save()
-                    },
+                    onEditTags: { itemContextMenu.presentTags(for: item) },
+                    onShowOCR: { itemContextMenu.presentOCR(for: item) },
+                    onShowBarcodeScan: { itemContextMenu.presentBarcodeScan(for: item) },
+                    onShowQRCode: { itemContextMenu.presentQRCode(for: item) },
                     onBase64Encode: {
                         if vm.copyBase64Encoded(item) {
                             ToastCenter.shared.show(L("action.base64Encoded"), systemImage: "doc.on.doc")
@@ -1595,7 +1592,7 @@ struct MainWindowContent: View {
         }
         .clipboardItemContextMenu(
             item: item,
-            groups: groups.sortedForDisplay(),
+            groups: groupContext.ordered,
             coordinator: itemContextMenu
         )
         // Mount only one tap gesture at a time. Having both a single- and a
