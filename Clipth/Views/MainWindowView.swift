@@ -10,6 +10,16 @@ private enum MainContentLayout: String {
     case grid
 }
 
+/// Geometry shared by the recycling collection view and the grid cards.
+/// Keeping the card height fixed lets both surfaces share one stable layout
+/// contract while the recycling view updates visible items in place.
+private enum MainGridMetrics {
+    static let minimumCardWidth: CGFloat = 210
+    static let maximumCardWidth: CGFloat = 320
+    static let spacing: CGFloat = 10
+    static let horizontalPadding: CGFloat = 16
+}
+
 /// A separate request value makes the app-rendered preview sheet's lifetime
 /// explicit. Dismissing the sheet drops transient sensitive-text disclosure
 /// and AVPlayer state without mutating the stored clip.

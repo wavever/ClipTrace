@@ -42,6 +42,11 @@ Carthage/Build/
 # SPM
 .swiftpm/
 
+# Generated local artifacts
+.hallmark/
+__pycache__/
+*.py[cod]
+
 # IDE
 .idea/
 *.swp
