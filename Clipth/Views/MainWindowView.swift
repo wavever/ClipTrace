@@ -1840,11 +1840,23 @@ private struct GroupManagementSheet: View {
 
     @State private var newGroupName = ""
     @State private var deleteRequest: ConfirmRequest?
+    @State private var orderedGroupIDs: [UUID] = []
+    @State private var draggingGroupID: UUID?
+    @State private var dragDestinationIndex: Int?
     @FocusState private var newGroupFocused: Bool
 
     private var sortedGroups: [ClipboardGroup] {
         groups.sortedForDisplay()
     }
+
+    private var displayedGroups: [ClipboardGroup] {
+        let byID = Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0) })
+        let ids = orderedGroupIDs.isEmpty ? sortedGroups.map(\.id) : orderedGroupIDs
+        return ids.compactMap { byID[$0] }
+            + sortedGroups.filter { !ids.contains($0.id) }
+    }
+
+    private static let groupRowStride: CGFloat = 56
 
     var body: some View {
         ZStack {
@@ -1882,6 +1894,17 @@ private struct GroupManagementSheet: View {
         .frame(width: 520, height: 500)
         .background(Color.appPaper)
         .animation(.spring(response: 0.34, dampingFraction: 0.84), value: deleteRequest?.id)
+        .onAppear {
+            orderedGroupIDs = sortedGroups.map(\.id)
+        }
+        .onChange(of: groups.map(\.id)) { _, _ in
+            guard draggingGroupID == nil else { return }
+            orderedGroupIDs = sortedGroups.map(\.id)
+        }
+        .onDisappear {
+            draggingGroupID = nil
+            dragDestinationIndex = nil
+        }
     }
 
     private var header: some View {
@@ -1938,11 +1961,10 @@ private struct GroupManagementSheet: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 8) {
-                        ForEach(sortedGroups) { group in
+                        ForEach(Array(displayedGroups.enumerated()), id: \.element.id) { index, group in
+                            let isDragging = draggingGroupID == group.id
                             GroupManagementRow(
                                 group: group,
-                                canMoveUp: sortedGroups.first?.id != group.id,
-                                canMoveDown: sortedGroups.last?.id != group.id,
                                 onRename: { name in
                                     vm.renameGroup(group, to: name, context: modelContext)
                                     ToastCenter.shared.show(
@@ -1951,20 +1973,19 @@ private struct GroupManagementSheet: View {
                                         tint: .appAccent
                                     )
                                 },
-                                onMoveUp: {
-                                    withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
-                                        vm.moveGroup(group, direction: -1, groups: groups, context: modelContext)
-                                    }
-                                },
-                                onMoveDown: {
-                                    withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
-                                        vm.moveGroup(group, direction: 1, groups: groups, context: modelContext)
-                                    }
-                                },
                                 onDelete: {
                                     requestDelete(group)
+                                },
+                                isDragging: isDragging,
+                                onDragChanged: { translation in
+                                    updateGroupDrag(id: group.id, index: index, translation: translation)
+                                },
+                                onDragEnded: { translation in
+                                    finishGroupDrag(id: group.id, index: index, translation: translation)
                                 }
                             )
+                            .offset(y: siblingOffset(for: index))
+                            .zIndex(isDragging ? 1 : 0)
                         }
                     }
                     .padding(.vertical, 2)
@@ -1986,6 +2007,43 @@ private struct GroupManagementSheet: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+    }
+
+    private func updateGroupDrag(id: UUID, index: Int, translation: CGFloat) {
+        let target = destinationIndex(from: index, translation: translation)
+        draggingGroupID = id
+        if dragDestinationIndex != target {
+            dragDestinationIndex = target
+        }
+    }
+
+    private func finishGroupDrag(id: UUID, index: Int, translation: CGFloat) {
+        defer {
+            draggingGroupID = nil
+            dragDestinationIndex = nil
+        }
+        guard draggingGroupID == id else { return }
+        var result = displayedGroups.map(\.id)
+        guard let current = result.firstIndex(of: id) else { return }
+        result.remove(at: current)
+        let destination = min(max(destinationIndex(from: index, translation: translation), 0), result.count)
+        result.insert(id, at: destination)
+        orderedGroupIDs = result
+        _ = vm.persistGroupOrder(result, groups: groups, context: modelContext)
+    }
+
+    private func destinationIndex(from index: Int, translation: CGFloat) -> Int {
+        let moved = Int((translation / Self.groupRowStride).rounded(.toNearestOrAwayFromZero))
+        return min(max(index + moved, 0), max(displayedGroups.count - 1, 0))
+    }
+
+    private func siblingOffset(for index: Int) -> CGFloat {
+        guard let draggingID = draggingGroupID,
+              let draggingIndex = displayedGroups.firstIndex(where: { $0.id == draggingID }),
+              let destination = dragDestinationIndex else { return 0 }
+        if destination > draggingIndex, index > draggingIndex, index <= destination { return -Self.groupRowStride }
+        if destination < draggingIndex, index >= destination, index < draggingIndex { return Self.groupRowStride }
+        return 0
     }
 
     private func addGroup() {
@@ -2028,18 +2086,34 @@ private struct GroupManagementSheet: View {
 
 private struct GroupManagementRow: View {
     let group: ClipboardGroup
-    let canMoveUp: Bool
-    let canMoveDown: Bool
     let onRename: (String) -> Void
-    let onMoveUp: () -> Void
-    let onMoveDown: () -> Void
     let onDelete: () -> Void
+    let isDragging: Bool
+    let onDragChanged: (CGFloat) -> Void
+    let onDragEnded: (CGFloat) -> Void
 
     @State private var draft = ""
     @FocusState private var focused: Bool
+    @GestureState private var dragTranslation: CGFloat = 0
 
     var body: some View {
         HStack(spacing: 8) {
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.tertiary)
+                .frame(width: 20, height: 24)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 3)
+                        .updating($dragTranslation) { value, state, transaction in
+                            transaction.animation = nil
+                            state = value.translation.height
+                        }
+                        .onChanged { value in onDragChanged(value.translation.height) }
+                        .onEnded { value in onDragEnded(value.translation.height) }
+                )
+                .help(L("group.dragHandle"))
+
             Image(systemName: "folder.fill")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Color.appAccent)
@@ -2073,20 +2147,6 @@ private struct GroupManagementRow: View {
             .buttonStyle(PaperIconButtonStyle(size: 28))
             .help(L("common.save"))
 
-            Button(action: onMoveUp) {
-                Image(systemName: "chevron.up")
-            }
-            .buttonStyle(PaperIconButtonStyle(size: 28))
-            .disabled(!canMoveUp)
-            .help(L("group.moveUp"))
-
-            Button(action: onMoveDown) {
-                Image(systemName: "chevron.down")
-            }
-            .buttonStyle(PaperIconButtonStyle(size: 28))
-            .disabled(!canMoveDown)
-            .help(L("group.moveDown"))
-
             Button(action: onDelete) {
                 Image(systemName: "trash")
             }
@@ -2102,6 +2162,9 @@ private struct GroupManagementRow: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(Color.appCardBorder, lineWidth: 0.75)
         )
+        .offset(y: dragTranslation)
+        .animation(nil, value: dragTranslation)
+        .opacity(isDragging ? 0.98 : 1)
         .onAppear { draft = group.displayName }
         .onChange(of: group.name) { _, newValue in
             let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)

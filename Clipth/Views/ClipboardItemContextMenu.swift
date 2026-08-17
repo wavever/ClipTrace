@@ -7,6 +7,12 @@ import AppKit
 struct ClipboardItemContextMenuKeyboardRequest: Equatable {
     let itemID: UUID
     let sequence: Int
+    var target: ClipboardItemContextMenuKeyboardTarget = .firstAction
+}
+
+enum ClipboardItemContextMenuKeyboardTarget: Equatable {
+    case firstAction
+    case groups
 }
 
 /// Owns the complete clipboard-item context-menu flow for any history surface.
@@ -54,13 +60,14 @@ final class ClipboardItemContextMenuCoordinator: ObservableObject {
         in window: NSWindow,
         surfaceStyle: PaperContextMenuSurfaceStyle = .paper,
         keyboardInitiated: Bool = false,
+        keyboardTarget: ClipboardItemContextMenuKeyboardTarget = .firstAction,
         onMutation: @escaping () -> Void = {}
     ) {
         HoverPreviewController.shared.hide()
         groupsAtOpen = groups
         self.onMutation = onMutation
         let keyboard = ClipboardItemContextMenuKeyboardState(
-            focusesFirstItem: keyboardInitiated
+            initialTarget: keyboardInitiated ? keyboardTarget : nil
         )
 
         let dismissThen: (@escaping () -> Void) -> () -> Void = { [weak self] action in
@@ -224,6 +231,35 @@ final class ClipboardItemContextMenuCoordinator: ObservableObject {
         deferredTagContext = nil
         tagTarget = item
         onPresentationChange(true)
+    }
+
+    func presentTagsFromKeyboard(for item: ClipboardItem, onMutation: @escaping () -> Void) {
+        self.onMutation = onMutation
+        presentTags(for: item)
+    }
+
+    func toggleFavoriteFromKeyboard(
+        for item: ClipboardItem,
+        onMutation: @escaping () -> Void
+    ) {
+        self.onMutation = onMutation
+        toggleFavorite(item)
+    }
+
+    func togglePinFromKeyboard(
+        for item: ClipboardItem,
+        onMutation: @escaping () -> Void
+    ) {
+        self.onMutation = onMutation
+        togglePin(item)
+    }
+
+    func presentDeleteFromKeyboard(
+        for item: ClipboardItem,
+        onMutation: @escaping () -> Void
+    ) {
+        self.onMutation = onMutation
+        presentDelete(for: item)
     }
 
     func presentBarcodeScan(for item: ClipboardItem) {
@@ -396,6 +432,7 @@ extension View {
                         in: window,
                         surfaceStyle: surfaceStyle,
                         keyboardInitiated: true,
+                        keyboardTarget: keyboardRequest?.target ?? .firstAction,
                         onMutation: onMutation
                     )
                     onKeyboardRequestHandled()
@@ -658,7 +695,8 @@ private final class ClipboardItemContextMenuKeyboardState: ObservableObject {
     @Published private(set) var focusedRoot: ClipboardItemContextMenuRootEntry?
     @Published private(set) var focusedGroup: ClipboardGroupContextMenuEntry?
 
-    private let focusesFirstItem: Bool
+    private let initialTarget: ClipboardItemContextMenuKeyboardTarget?
+    private var hasAppliedInitialTarget = false
     private var level = Level.root
     private var rootEntries: [ClipboardItemContextMenuRootEntry] = []
     private var groupEntries: [ClipboardGroupContextMenuEntry] = []
@@ -670,8 +708,8 @@ private final class ClipboardItemContextMenuKeyboardState: ObservableObject {
     private var cleanup: (() -> Void)?
     private var pendingActivationKeyCode: UInt16?
 
-    init(focusesFirstItem: Bool) {
-        self.focusesFirstItem = focusesFirstItem
+    init(initialTarget: ClipboardItemContextMenuKeyboardTarget?) {
+        self.initialTarget = initialTarget
     }
 
     func configure(
@@ -692,8 +730,25 @@ private final class ClipboardItemContextMenuKeyboardState: ObservableObject {
         self.closeSubmenu = closeSubmenu
         self.dismiss = dismiss
         self.cleanup = cleanup
-        if focusesFirstItem, focusedRoot == nil {
+        applyInitialTargetIfNeeded()
+    }
+
+    private func applyInitialTargetIfNeeded() {
+        guard !hasAppliedInitialTarget, let initialTarget else { return }
+        hasAppliedInitialTarget = true
+        switch initialTarget {
+        case .firstAction:
             focusedRoot = rootEntries.first
+        case .groups:
+            if rootEntries.contains(.groups) {
+                focusedRoot = .groups
+                DispatchQueue.main.async { [weak self] in self?.enterGroups() }
+            } else if rootEntries.contains(.newGroup) {
+                focusedRoot = .newGroup
+                DispatchQueue.main.async { [weak self] in self?.activateFocusedEntry() }
+            } else {
+                focusedRoot = rootEntries.first
+            }
         }
     }
 

@@ -820,6 +820,38 @@ class ClipboardViewModel: ObservableObject {
         groupsVersion &+= 1
     }
 
+    /// Persist a complete display order in one transaction. The group sheet
+    /// keeps drag motion local and calls this only after the pointer is released,
+    /// so scrolling the sheet never turns into a stream of SwiftData saves.
+    @discardableResult
+    func persistGroupOrder(
+        _ orderedIDs: [UUID],
+        groups: [ClipboardGroup],
+        context: ModelContext
+    ) -> Bool {
+        let byID = Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0) })
+        let currentIDs = groups.sortedForDisplay().map(\.id)
+        var seen = Set<UUID>()
+        let reconciled = orderedIDs.filter { byID[$0] != nil && seen.insert($0).inserted }
+            + currentIDs.filter { seen.insert($0).inserted }
+        guard reconciled.count == currentIDs.count else { return false }
+
+        let previous = Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0.sortOrder) })
+        for (index, id) in reconciled.enumerated() {
+            byID[id]?.sortOrder = index
+        }
+        do {
+            try context.save()
+            groupsVersion &+= 1
+            return true
+        } catch {
+            for (id, order) in previous {
+                byID[id]?.sortOrder = order
+            }
+            return false
+        }
+    }
+
     func deleteGroup(_ group: ClipboardGroup, context: ModelContext) {
         let groupID = group.id
         // Only rows carrying group membership can reference this one —

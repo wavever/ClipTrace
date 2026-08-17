@@ -35,6 +35,7 @@ struct QuickPasteView: View {
     @State private var copiedIDs: Set<UUID> = []
     @State private var copyFeedbackTask: Task<Void, Never>?
     @AppStorage("quickPasteContentLayout") private var contentLayoutRaw = PanelContentLayout.list.rawValue
+    @AppStorage("quickPasteKeyboardGuideExpanded") private var keyboardGuideExpanded = true
 
     @ObservedObject private var keyStore = QuickPasteKeyStore.shared
     @ObservedObject private var previewSettings = HoverPreviewSettings.shared
@@ -72,6 +73,7 @@ struct QuickPasteView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            keyboardGuide
             if !sortedGroups.isEmpty {
                 groupStrip
             }
@@ -96,7 +98,9 @@ struct QuickPasteView: View {
                 onToggleSelect: { toggleFocusedSelection() },
                 onCopy: { copyFromKeyboard() },
                 onCommit: { plainText in commitFromKeyboard(plainText: plainText) },
-                onOpenContextMenu: { openFocusedContextMenu() }
+                onOpenContextMenu: { openFocusedContextMenu() },
+                onItemAction: { performFocusedItemAction($0) },
+                onQuickPasteIndex: { quickPasteByIndex($0) }
             )
         )
         .background(
@@ -178,13 +182,23 @@ struct QuickPasteView: View {
             Text(L("quickpaste.title"))
                 .font(.system(size: 13, weight: .semibold))
             Spacer()
-            Text(selectedIDs.isEmpty
-                 ? keyboardHint
-                 : L("quickpaste.selectedCountFormat", selectedIDs.count))
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
+            if !selectedIDs.isEmpty {
+                Text(L("quickpaste.selectedCountFormat", selectedIDs.count))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            Button {
+                withAnimation(.spring(response: 0.30, dampingFraction: 0.82)) {
+                    keyboardGuideExpanded.toggle()
+                }
+            } label: {
+                Image(systemName: "keyboard")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.appAccent)
+                    .rotationEffect(.degrees(keyboardGuideExpanded ? 0 : -8))
+            }
+            .buttonStyle(.plain)
+            .help(L(keyboardGuideExpanded ? "quickpaste.hint.collapse" : "quickpaste.hint.expand"))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -206,7 +220,31 @@ struct QuickPasteView: View {
         let toggle = "\(keyStore.toggleSelectShortcut.description) \(L("quickpaste.hint.kbdToggle"))"
         let copy = "⌘C \(L("common.copy"))"
         let paste = "\(keyStore.commitShortcut.description) \(L("quickpaste.hint.kbdPaste"))"
-        return [group, move, toggle, copy, paste].compactMap(\.self).joined(separator: "  ·  ")
+        let numberedPaste = L("quickpaste.hint.kbdQuickPaste")
+        return [group, move, toggle, copy, paste, numberedPaste]
+            .compactMap(\.self)
+            .joined(separator: "  ·  ")
+    }
+
+    private var keyboardGuide: some View {
+        Group {
+            if keyboardGuideExpanded {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(L("quickpaste.hint.keyboardShortcuts"))
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(Color.appAccent)
+                    Text(keyboardHint)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.8)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
     }
 
     private var groupStrip: some View {
@@ -309,14 +347,20 @@ struct QuickPasteView: View {
                             ],
                             spacing: 6
                         ) {
-                            ForEach(items, id: \.id) { item in
-                                gridCard(for: item)
+                            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                                gridCard(
+                                    for: item,
+                                    ordinal: QuickPasteOrdinal.badge(forIndex: index)
+                                )
                             }
                         }
                     } else {
                         LazyVStack(spacing: 4) {
-                            ForEach(items, id: \.id) { item in
-                                row(for: item)
+                            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                                row(
+                                    for: item,
+                                    ordinal: QuickPasteOrdinal.badge(forIndex: index)
+                                )
                             }
                         }
                     }
@@ -376,7 +420,7 @@ struct QuickPasteView: View {
         return state.selectedGroupFilter.isAll ? L("quickpaste.emptyClipboard") : L("quickpaste.emptyGroup")
     }
 
-    private func row(for item: ClipboardItem) -> some View {
+    private func row(for item: ClipboardItem, ordinal: Int? = nil) -> some View {
         let order = selectedIDs.firstIndex(of: item.id).map { $0 + 1 }
         let isSelected = order != nil
         let isHover = hoverID == item.id
@@ -497,9 +541,21 @@ struct QuickPasteView: View {
             onKeyboardRequestHandled: { contextMenuKeyboardRequest = nil },
             onMutation: state.reloadSnapshot
         )
+        .overlay(alignment: .topTrailing) {
+            if let ordinal {
+                Text("\(ordinal)")
+                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color.appAccent)
+                    .frame(width: 16, height: 16)
+                    .background(Circle().fill(Color.appPaper.opacity(0.94)))
+                    .overlay(Circle().strokeBorder(Color.appAccent.opacity(0.35), lineWidth: 0.6))
+                    .padding(4)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 
-    private func gridCard(for item: ClipboardItem) -> some View {
+    private func gridCard(for item: ClipboardItem, ordinal: Int? = nil) -> some View {
         let order = selectedIDs.firstIndex(of: item.id).map { $0 + 1 }
         let isSelected = order != nil
         let isHover = hoverID == item.id
@@ -675,6 +731,18 @@ struct QuickPasteView: View {
             onKeyboardRequestHandled: { contextMenuKeyboardRequest = nil },
             onMutation: state.reloadSnapshot
         )
+        .overlay(alignment: .topTrailing) {
+            if let ordinal {
+                Text("\(ordinal)")
+                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color.appAccent)
+                    .frame(width: 16, height: 16)
+                    .background(Circle().fill(Color.appPaper.opacity(0.94)))
+                    .overlay(Circle().strokeBorder(Color.appAccent.opacity(0.35), lineWidth: 0.6))
+                    .padding(9)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 
     private func showsGridThumbnail(_ item: ClipboardItem) -> Bool {
@@ -942,6 +1010,35 @@ struct QuickPasteView: View {
         )
     }
 
+    private func performFocusedItemAction(_ action: QuickPasteItemShortcutAction) {
+        guard let id = focusedID ?? visualItems.first?.id,
+              let item = visualItems.first(where: { $0.id == id }) else { return }
+        focusedID = id
+        if searchFocused { exitSearch() }
+        switch action {
+        case .toggleFavorite:
+            itemContextMenu.toggleFavoriteFromKeyboard(for: item, onMutation: state.reloadSnapshot)
+        case .togglePin:
+            itemContextMenu.togglePinFromKeyboard(for: item, onMutation: state.reloadSnapshot)
+        case .editTags:
+            itemContextMenu.presentTagsFromKeyboard(for: item, onMutation: state.reloadSnapshot)
+        case .delete:
+            itemContextMenu.presentDeleteFromKeyboard(for: item, onMutation: state.reloadSnapshot)
+        case .editGroups:
+            contextMenuRequestSequence &+= 1
+            contextMenuKeyboardRequest = ClipboardItemContextMenuKeyboardRequest(
+                itemID: id,
+                sequence: contextMenuRequestSequence,
+                target: .groups
+            )
+        }
+    }
+
+    private func quickPasteByIndex(_ index: Int) {
+        guard index >= 0, index < visualItems.count else { return }
+        state.onCommit([visualItems[index]], false)
+    }
+
     private func toggle(_ id: UUID) {
         if let idx = selectedIDs.firstIndex(of: id) {
             selectedIDs.remove(at: idx)
@@ -1002,6 +1099,8 @@ struct QuickPasteKeyCatcher: NSViewRepresentable {
     /// `plainText` is `true` when the commit was issued with `⌥` held.
     var onCommit: (_ plainText: Bool) -> Void
     var onOpenContextMenu: () -> Void
+    var onItemAction: (QuickPasteItemShortcutAction) -> Void
+    var onQuickPasteIndex: (Int) -> Void
 
     func makeNSView(context: Context) -> KeyView {
         let view = KeyView()
@@ -1015,6 +1114,8 @@ struct QuickPasteKeyCatcher: NSViewRepresentable {
         view.onCopy = onCopy
         view.onCommit = onCommit
         view.onOpenContextMenu = onOpenContextMenu
+        view.onItemAction = onItemAction
+        view.onQuickPasteIndex = onQuickPasteIndex
         return view
     }
 
@@ -1028,6 +1129,8 @@ struct QuickPasteKeyCatcher: NSViewRepresentable {
         nsView.onCopy = onCopy
         nsView.onCommit = onCommit
         nsView.onOpenContextMenu = onOpenContextMenu
+        nsView.onItemAction = onItemAction
+        nsView.onQuickPasteIndex = onQuickPasteIndex
         if nsView.claimFocusToken != claimFocusToken {
             nsView.claimFocusToken = claimFocusToken
             // Deferred: updateNSView runs mid view-update, and yanking first
@@ -1054,6 +1157,8 @@ struct QuickPasteKeyCatcher: NSViewRepresentable {
         var onCopy: (() -> Void)?
         var onCommit: ((Bool) -> Void)?
         var onOpenContextMenu: (() -> Void)?
+        var onItemAction: ((QuickPasteItemShortcutAction) -> Void)?
+        var onQuickPasteIndex: ((Int) -> Void)?
         private var contextMenuMonitor: Any?
 
         override var acceptsFirstResponder: Bool { true }
@@ -1154,6 +1259,16 @@ struct QuickPasteKeyCatcher: NSViewRepresentable {
             }
             if matches(event, store.toggleSelectShortcut) {
                 if !event.isARepeat { onToggleSelect?() }
+                return true
+            }
+            if let itemAction = store.matchingItemAction(event) {
+                if !event.isARepeat { onItemAction?(itemAction) }
+                return true
+            }
+            if event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+               let scalar = event.charactersIgnoringModifiers?.unicodeScalars.first,
+               scalar.value >= 49, scalar.value <= 57 {
+                if !event.isARepeat { onQuickPasteIndex?(Int(scalar.value - 48) - 1) }
                 return true
             }
             return false

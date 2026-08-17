@@ -346,18 +346,89 @@ struct PreviewPopover: View {
         let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let first = trimmed.first, first == "{" || first == "[" else { return nil }
         guard let data = trimmed.data(using: .utf8) else { return nil }
-        guard let obj = try? JSONSerialization.jsonObject(with: data, options: []) else { return nil }
-        guard let pretty = try? JSONSerialization.data(
-            withJSONObject: obj,
-            options: [.prettyPrinted, .sortedKeys]
-        ) else { return nil }
-        guard var str = String(data: pretty, encoding: .utf8) else { return nil }
+        // Parsed for validity only; formatting below preserves the source tokens.
+        guard (try? JSONSerialization.jsonObject(with: data, options: [])) != nil else { return nil }
+        var str = reindentedJSON(trimmed)
 
         if str.count > 600 {
             let idx = str.index(str.startIndex, offsetBy: 600)
             str = String(str[..<idx]) + "\n…"
         }
         return str
+    }
+
+    /// Reformat only structural whitespace so JSON previews preserve key order,
+    /// slash escaping, and numeric spelling from the user's original text.
+    private static func reindentedJSON(_ source: String) -> String {
+        let chars = Array(source)
+        var output = ""
+        output.reserveCapacity(chars.count + chars.count / 3)
+        var depth = 0
+        var index = 0
+        var inString = false
+        var escaped = false
+
+        func nextSignificant(after position: Int) -> Int? {
+            var next = position + 1
+            while next < chars.count,
+                  chars[next] == " " || chars[next] == "\n"
+                    || chars[next] == "\r" || chars[next] == "\t" {
+                next += 1
+            }
+            return next < chars.count ? next : nil
+        }
+
+        func newline(indent: Int) {
+            output.append("\n")
+            output.append(String(repeating: "  ", count: max(0, indent)))
+        }
+
+        while index < chars.count {
+            let character = chars[index]
+            if inString {
+                output.append(character)
+                if escaped {
+                    escaped = false
+                } else if character == "\\" {
+                    escaped = true
+                } else if character == "\"" {
+                    inString = false
+                }
+                index += 1
+                continue
+            }
+
+            switch character {
+            case "\"":
+                inString = true
+                output.append(character)
+            case "{", "[":
+                output.append(character)
+                let closer: Character = character == "{" ? "}" : "]"
+                if let next = nextSignificant(after: index), chars[next] == closer {
+                    output.append(closer)
+                    index = next
+                } else {
+                    depth += 1
+                    newline(indent: depth)
+                }
+            case "}", "]":
+                depth = max(0, depth - 1)
+                newline(indent: depth)
+                output.append(character)
+            case ",":
+                output.append(character)
+                newline(indent: depth)
+            case ":":
+                output.append(": ")
+            case " ", "\n", "\r", "\t":
+                break
+            default:
+                output.append(character)
+            }
+            index += 1
+        }
+        return output
     }
 }
 

@@ -37,15 +37,59 @@ enum QuickPasteMenuShortcut {
         return acceptedShortcuts(configured: configured).contains(typed)
     }
 }
-
 enum QuickPasteKeyAction: CaseIterable, Hashable {
     case commit
     case toggleSelect
     case openMenu
+    case toggleFavorite
+    case editGroups
+    case togglePin
+    case editTags
+    case delete
+}
+
+/// Domain actions forwarded from the panel key catcher to the focused item.
+/// Their actual keys live in `QuickPasteKeyStore`, so Settings changes take
+/// effect immediately without rebuilding the AppKit responder.
+enum QuickPasteItemShortcutAction: CaseIterable, Hashable {
+    case toggleFavorite
+    case editGroups
+    case togglePin
+    case editTags
+    case delete
+
+    var keyAction: QuickPasteKeyAction {
+        switch self {
+        case .toggleFavorite: .toggleFavorite
+        case .editGroups: .editGroups
+        case .togglePin: .togglePin
+        case .editTags: .editTags
+        case .delete: .delete
+        }
+    }
+}
+
+/// Paste-by-position: a plain number key commits the item at that visible row.
+///
+/// Nine is the ceiling because the badge has to stay one character wide to fit
+/// the row's leading column, and "0" cannot honestly stand for the tenth item.
+/// The positions are counted over the *visible* list, so a group view numbers
+/// its own first nine rather than continuing the global sequence.
+enum QuickPasteOrdinal {
+    static let limit = 9
+
+    /// The 1-based badge for a row, or `nil` past the ninth — where the badge
+    /// would name a key that pastes something else.
+    static func badge(forIndex index: Int) -> Int? {
+        index < limit ? index + 1 : nil
+    }
 }
 
 enum QuickPasteKeyAssignmentIssue {
-    case conflict
+    /// Carries the action already bound to that key so the message can name it —
+    /// "this key is taken" leaves the user hunting through eight rows for the
+    /// one to free up.
+    case conflict(QuickPasteKeyAction)
     case reservedPanelCommand
     case menuFallbackReserved
 }
@@ -62,52 +106,42 @@ enum QuickPasteKeyAssignmentIssue {
 final class QuickPasteKeyStore: ObservableObject {
     static let shared = QuickPasteKeyStore()
 
-    static let defaultCommit = KeyboardShortcuts.Shortcut(.return)
-    static let defaultToggleSelect = KeyboardShortcuts.Shortcut(.space)
-    static let defaultOpenMenu = KeyboardShortcuts.Shortcut(.return, modifiers: [.control])
     static let copyCommand = KeyboardShortcuts.Shortcut(.c, modifiers: [.command])
 
-    private static let commitStorageKey = "quickPasteCommitShortcut"
-    private static let toggleSelectStorageKey = "quickPasteToggleSelectShortcut"
-    private static let openMenuStorageKey = "quickPasteOpenMenuShortcut"
+    @Published private var shortcuts: [QuickPasteKeyAction: KeyboardShortcuts.Shortcut]
 
-    @Published private(set) var commitShortcut: KeyboardShortcuts.Shortcut {
-        didSet { Self.persist(commitShortcut, forKey: Self.commitStorageKey) }
-    }
-    @Published private(set) var toggleSelectShortcut: KeyboardShortcuts.Shortcut {
-        didSet { Self.persist(toggleSelectShortcut, forKey: Self.toggleSelectStorageKey) }
-    }
-    @Published private(set) var openMenuShortcut: KeyboardShortcuts.Shortcut {
-        didSet { Self.persist(openMenuShortcut, forKey: Self.openMenuStorageKey) }
-    }
+    var commitShortcut: KeyboardShortcuts.Shortcut { shortcut(for: .commit) }
+    var toggleSelectShortcut: KeyboardShortcuts.Shortcut { shortcut(for: .toggleSelect) }
+    var openMenuShortcut: KeyboardShortcuts.Shortcut { shortcut(for: .openMenu) }
 
     private init() {
-        let storedCommit = Self.load(Self.commitStorageKey) ?? Self.defaultCommit
-        let storedToggle = Self.load(Self.toggleSelectStorageKey) ?? Self.defaultToggleSelect
-        let storedOpenMenu = Self.load(Self.openMenuStorageKey)
+        var stored: [QuickPasteKeyAction: KeyboardShortcuts.Shortcut] = [:]
+        for action in QuickPasteKeyAction.allCases {
+            stored[action] = Self.load(Self.storageKey(for: action))
+        }
+        let prioritizesStoredMenu = stored[.openMenu] != nil
         let normalized = Self.normalizedConfiguration(
-            commit: storedCommit,
-            toggle: storedToggle,
-            openMenu: storedOpenMenu
+            stored: stored,
+            prioritizesStoredMenu: prioritizesStoredMenu
         )
+        shortcuts = normalized
 
-        commitShortcut = normalized.commit
-        toggleSelectShortcut = normalized.toggle
-        openMenuShortcut = normalized.openMenu
-
-        // Persist the normalized triplet, including the newly introduced menu
-        // key. This makes migration one-shot while preserving every legacy key
-        // that remains reachable under the panel's current event routing.
-        Self.persist(normalized.commit, forKey: Self.commitStorageKey)
-        Self.persist(normalized.toggle, forKey: Self.toggleSelectStorageKey)
-        Self.persist(normalized.openMenu, forKey: Self.openMenuStorageKey)
+        // Persist every normalized binding so introducing a new action is a
+        // one-shot migration while legacy custom keys retain first priority.
+        for action in QuickPasteKeyAction.allCases {
+            Self.persist(normalized[action] ?? Self.defaultShortcut(for: action),
+                         forKey: Self.storageKey(for: action))
+        }
     }
 
     func shortcut(for action: QuickPasteKeyAction) -> KeyboardShortcuts.Shortcut {
-        switch action {
-        case .commit: commitShortcut
-        case .toggleSelect: toggleSelectShortcut
-        case .openMenu: openMenuShortcut
+        shortcuts[action] ?? Self.defaultShortcut(for: action)
+    }
+
+    func matchingItemAction(_ event: NSEvent) -> QuickPasteItemShortcutAction? {
+        guard let typed = KeyboardShortcuts.Shortcut(event: event) else { return nil }
+        return QuickPasteItemShortcutAction.allCases.first {
+            shortcut(for: $0.keyAction) == typed
         }
     }
 
@@ -135,53 +169,42 @@ final class QuickPasteKeyStore: ObservableObject {
             (action != .openMenu && shortcut == QuickPasteMenuShortcut.alternate) {
             return .menuFallbackReserved
         }
-        if Self.hasConflict(
+        if let taken = Self.conflictingAction(
             candidate: shortcut,
             action: action,
-            commit: commitShortcut,
-            toggle: toggleSelectShortcut,
-            openMenu: openMenuShortcut
+            shortcuts: shortcuts
         ) {
-            return .conflict
+            return .conflict(taken)
         }
 
-        switch action {
-        case .commit: commitShortcut = shortcut
-        case .toggleSelect: toggleSelectShortcut = shortcut
-        case .openMenu: openMenuShortcut = shortcut
-        }
+        var updated = shortcuts
+        updated[action] = shortcut
+        shortcuts = updated
+        Self.persist(shortcut, forKey: Self.storageKey(for: action))
         return nil
     }
 
     @discardableResult
     func reset(_ action: QuickPasteKeyAction) -> QuickPasteKeyAssignmentIssue? {
-        let fallback: KeyboardShortcuts.Shortcut
-        switch action {
-        case .commit: fallback = Self.defaultCommit
-        case .toggleSelect: fallback = Self.defaultToggleSelect
-        case .openMenu: fallback = Self.defaultOpenMenu
-        }
-        return assign(fallback, to: action)
+        assign(Self.defaultShortcut(for: action), to: action)
     }
 
     private static func normalizedConfiguration(
-        commit: KeyboardShortcuts.Shortcut,
-        toggle: KeyboardShortcuts.Shortcut,
-        openMenu: KeyboardShortcuts.Shortcut?
-    ) -> (
-        commit: KeyboardShortcuts.Shortcut,
-        toggle: KeyboardShortcuts.Shortcut,
-        openMenu: KeyboardShortcuts.Shortcut
-    ) {
+        stored: [QuickPasteKeyAction: KeyboardShortcuts.Shortcut],
+        prioritizesStoredMenu: Bool
+    ) -> [QuickPasteKeyAction: KeyboardShortcuts.Shortcut] {
         var selected: [(action: QuickPasteKeyAction, shortcut: KeyboardShortcuts.Shortcut)] = []
+        var result: [QuickPasteKeyAction: KeyboardShortcuts.Shortcut] = [:]
 
-        func choose(
-            _ action: QuickPasteKeyAction,
-            candidates: [KeyboardShortcuts.Shortcut]
-        ) -> KeyboardShortcuts.Shortcut {
-            // Each fallback list has more distinct combinations than there are
-            // previously selected actions, so a valid candidate always exists.
-            let choice = candidates.first { candidate in
+        func choose(_ action: QuickPasteKeyAction) -> KeyboardShortcuts.Shortcut {
+            let candidates = [stored[action], defaultShortcut(for: action)].compactMap { $0 }
+                + fallbackShortcuts(for: action)
+                // A user can arrive with several legacy custom keys that
+                // occupy another action's normal fallback. Try the familiar
+                // defaults before entering the migration-only safety pool.
+                + QuickPasteKeyAction.allCases.map(defaultShortcut(for:))
+                + emergencyFallbacks
+            guard let choice = candidates.first(where: { candidate in
                 Self.isUsable(candidate, for: action) && selected.allSatisfy { existing in
                     Self.acceptedShortcuts(for: candidate, action: action).isDisjoint(
                         with: Self.acceptedShortcuts(
@@ -190,50 +213,26 @@ final class QuickPasteKeyStore: ObservableObject {
                         )
                     )
                 }
-            } ?? candidates[0]
+            }) else {
+                // More emergency candidates exist than all other actions and
+                // their aliases combined, so reaching this means the routing
+                // invariants changed without expanding the safety pool.
+                preconditionFailure("No conflict-free Quick Paste shortcut fallback")
+            }
             selected.append((action, choice))
             return choice
         }
 
-        let commitFallbacks = [
-            commit,
-            Self.defaultCommit,
-            KeyboardShortcuts.Shortcut(.return, modifiers: [.command]),
-            KeyboardShortcuts.Shortcut(.return, modifiers: [.command, .shift])
-        ]
-        let toggleFallbacks = [
-            toggle,
-            Self.defaultToggleSelect,
-            KeyboardShortcuts.Shortcut(.space, modifiers: [.control]),
-            KeyboardShortcuts.Shortcut(.space, modifiers: [.shift]),
-            KeyboardShortcuts.Shortcut(.space, modifiers: [.command, .option])
-        ]
-
-        let normalizedCommit: KeyboardShortcuts.Shortcut
-        let normalizedToggle: KeyboardShortcuts.Shortcut
-        let normalizedOpenMenu: KeyboardShortcuts.Shortcut
-        if let openMenu {
-            // A stored menu command is an explicit user choice and keeps the
-            // same priority it has in the runtime event router.
-            normalizedOpenMenu = choose(
-                .openMenu,
-                candidates: [openMenu, Self.defaultOpenMenu, QuickPasteMenuShortcut.alternate]
-            )
-            normalizedCommit = choose(.commit, candidates: commitFallbacks)
-            normalizedToggle = choose(.toggleSelect, candidates: toggleFallbacks)
-        } else {
-            // Upgrade path: preserve the two legacy panel keys first. If one
-            // already uses Ctrl-Return, Shift-F10 becomes the visible primary
-            // menu command instead of wiping the user's existing choices.
-            normalizedCommit = choose(.commit, candidates: commitFallbacks)
-            normalizedToggle = choose(.toggleSelect, candidates: toggleFallbacks)
-            normalizedOpenMenu = choose(
-                .openMenu,
-                candidates: [Self.defaultOpenMenu, QuickPasteMenuShortcut.alternate]
-            )
+        var order: [QuickPasteKeyAction] = prioritizesStoredMenu
+            ? [.openMenu, .commit, .toggleSelect]
+            : [.commit, .toggleSelect, .openMenu]
+        order.append(contentsOf: [
+            .toggleFavorite, .editGroups, .togglePin, .editTags, .delete
+        ])
+        for action in order {
+            result[action] = choose(action)
         }
-
-        return (normalizedCommit, normalizedToggle, normalizedOpenMenu)
+        return result
     }
 
     private static func isUsable(
@@ -244,26 +243,22 @@ final class QuickPasteKeyStore: ObservableObject {
             (action == .openMenu || shortcut != QuickPasteMenuShortcut.alternate)
     }
 
-    private static func hasConflict(
+    /// The action already holding this key (directly or through one of its
+    /// aliases), if any — returned rather than a plain bool so the settings
+    /// message can point at the row to change.
+    private static func conflictingAction(
         candidate: KeyboardShortcuts.Shortcut,
         action: QuickPasteKeyAction,
-        commit: KeyboardShortcuts.Shortcut,
-        toggle: KeyboardShortcuts.Shortcut,
-        openMenu: KeyboardShortcuts.Shortcut
-    ) -> Bool {
+        shortcuts: [QuickPasteKeyAction: KeyboardShortcuts.Shortcut]
+    ) -> QuickPasteKeyAction? {
         let candidateSet = acceptedShortcuts(for: candidate, action: action)
         for other in QuickPasteKeyAction.allCases where other != action {
-            let otherShortcut: KeyboardShortcuts.Shortcut
-            switch other {
-            case .commit: otherShortcut = commit
-            case .toggleSelect: otherShortcut = toggle
-            case .openMenu: otherShortcut = openMenu
-            }
+            let otherShortcut = shortcuts[other] ?? defaultShortcut(for: other)
             if !candidateSet.isDisjoint(with: acceptedShortcuts(for: otherShortcut, action: other)) {
-                return true
+                return other
             }
         }
-        return false
+        return nil
     }
 
     private static func acceptedShortcuts(
@@ -281,6 +276,8 @@ final class QuickPasteKeyStore: ObservableObject {
                 accepted.insert(.init(key, modifiers: shortcut.modifiers.union(.option)))
             }
             return accepted
+        case .toggleFavorite, .editGroups, .togglePin, .editTags, .delete:
+            return [shortcut]
         }
     }
 
@@ -293,7 +290,106 @@ final class QuickPasteKeyStore: ObservableObject {
             return true
         }
         let modifiers = shortcut.modifiers.intersection([.command, .option, .control, .shift])
+        if modifiers.isEmpty, quickPasteNumberKeys.contains(key) { return true }
+        // ⌘+ / ⌘− expand and collapse the panel's shortcut guide. `+` is
+        // physically ⌘⇧= on most layouts, so the equals key is reserved with
+        // and without Shift rather than only in one of the two spellings.
+        if key == .equal || key == .minus,
+           modifiers == [.command] || modifiers == [.command, .shift] {
+            return true
+        }
         return (key == .f || key == .c) && modifiers == [.command]
+    }
+
+    /// Kept in step with `QuickPasteOrdinal.limit` by hand: `Key` is a struct of
+    /// static constants, not an enumerable sequence, so the digits cannot be
+    /// derived from the ceiling.
+    private static let quickPasteNumberKeys: Set<KeyboardShortcuts.Key> = [
+        .one, .two, .three, .four, .five, .six, .seven, .eight, .nine,
+        .keypad1, .keypad2, .keypad3, .keypad4, .keypad5,
+        .keypad6, .keypad7, .keypad8, .keypad9
+    ]
+
+    /// A migration-only pool. Sixteen distinct modified function keys exceed
+    /// the seven other actions plus commit/menu aliases, so normalization can
+    /// always preserve a reachable, unique binding instead of duplicating one.
+    private static let emergencyFallbacks: [KeyboardShortcuts.Shortcut] = [
+        .init(.f1, modifiers: [.control, .option, .shift]),
+        .init(.f2, modifiers: [.control, .option, .shift]),
+        .init(.f3, modifiers: [.control, .option, .shift]),
+        .init(.f4, modifiers: [.control, .option, .shift]),
+        .init(.f5, modifiers: [.control, .option, .shift]),
+        .init(.f6, modifiers: [.control, .option, .shift]),
+        .init(.f7, modifiers: [.control, .option, .shift]),
+        .init(.f8, modifiers: [.control, .option, .shift]),
+        .init(.f9, modifiers: [.control, .option, .shift]),
+        .init(.f10, modifiers: [.control, .option, .shift]),
+        .init(.f11, modifiers: [.control, .option, .shift]),
+        .init(.f12, modifiers: [.control, .option, .shift]),
+        .init(.f13, modifiers: [.control, .option, .shift]),
+        .init(.f14, modifiers: [.control, .option, .shift]),
+        .init(.f15, modifiers: [.control, .option, .shift]),
+        .init(.f16, modifiers: [.control, .option, .shift])
+    ]
+
+    private static func defaultShortcut(
+        for action: QuickPasteKeyAction
+    ) -> KeyboardShortcuts.Shortcut {
+        switch action {
+        case .commit: .init(.return)
+        case .toggleSelect: .init(.space)
+        case .openMenu: .init(.return, modifiers: [.control])
+        case .toggleFavorite: .init(.d, modifiers: [.command])
+        case .editGroups: .init(.g, modifiers: [.command, .option])
+        case .togglePin: .init(.p, modifiers: [.command, .option])
+        case .editTags: .init(.t, modifiers: [.command, .option])
+        case .delete: .init(.delete, modifiers: [.command])
+        }
+    }
+
+    private static func fallbackShortcuts(
+        for action: QuickPasteKeyAction
+    ) -> [KeyboardShortcuts.Shortcut] {
+        switch action {
+        case .commit:
+            [.init(.return, modifiers: [.command]),
+             .init(.return, modifiers: [.command, .shift])]
+        case .toggleSelect:
+            [.init(.space, modifiers: [.control]),
+             .init(.space, modifiers: [.shift]),
+             .init(.space, modifiers: [.command, .option])]
+        case .openMenu:
+            [QuickPasteMenuShortcut.alternate,
+             .init(.return, modifiers: [.control, .shift])]
+        case .toggleFavorite:
+            [.init(.d, modifiers: [.command, .shift]),
+             .init(.d, modifiers: [.control, .option])]
+        case .editGroups:
+            [.init(.g, modifiers: [.command, .shift]),
+             .init(.g, modifiers: [.control, .option])]
+        case .togglePin:
+            [.init(.p, modifiers: [.command, .shift]),
+             .init(.p, modifiers: [.control, .option])]
+        case .editTags:
+            [.init(.t, modifiers: [.command, .shift]),
+             .init(.t, modifiers: [.control, .option])]
+        case .delete:
+            [.init(.delete, modifiers: [.command, .shift]),
+             .init(.delete, modifiers: [.control, .option])]
+        }
+    }
+
+    private static func storageKey(for action: QuickPasteKeyAction) -> String {
+        switch action {
+        case .commit: "quickPasteCommitShortcut"
+        case .toggleSelect: "quickPasteToggleSelectShortcut"
+        case .openMenu: "quickPasteOpenMenuShortcut"
+        case .toggleFavorite: "quickPasteFavoriteShortcut"
+        case .editGroups: "quickPasteGroupsShortcut"
+        case .togglePin: "quickPastePinShortcut"
+        case .editTags: "quickPasteTagsShortcut"
+        case .delete: "quickPasteDeleteShortcut"
+        }
     }
 
     private static func load(_ key: String) -> KeyboardShortcuts.Shortcut? {

@@ -1210,55 +1210,23 @@ private struct ShortcutSection: View {
                         }
                     }
                 }
-                SettingsRow(
-                    icon: "return",
-                    iconTint: .appAccent,
-                    title: L("settings.shortcut.quickPasteCommit"),
-                    subtitle: L("settings.shortcut.quickPasteCommit.subtitle")
-                ) {
-                    HStack(spacing: 8) {
-                        QuickPasteKeyRecorder(action: .commit, store: quickPasteKeys)
-                        Button {
-                            showQuickPasteShortcutIssue(quickPasteKeys.reset(.commit))
-                        } label: {
-                            Image(systemName: "arrow.counterclockwise")
+                ForEach(QuickPasteKeyAction.allCases, id: \.self) { action in
+                    SettingsRow(
+                        icon: action.settingsIcon,
+                        iconTint: .appAccent,
+                        title: L(action.settingsTitleKey),
+                        subtitle: L(action.settingsSubtitleKey)
+                    ) {
+                        HStack(spacing: 8) {
+                            QuickPasteKeyRecorder(action: action, store: quickPasteKeys)
+                            Button {
+                                showQuickPasteShortcutIssue(quickPasteKeys.reset(action))
+                            } label: {
+                                Image(systemName: "arrow.counterclockwise")
+                            }
+                            .buttonStyle(PaperIconButtonStyle(size: 28))
+                            .help(L("settings.shortcut.resetTooltip"))
                         }
-                        .buttonStyle(PaperIconButtonStyle(size: 28))
-                        .help(L("settings.shortcut.resetTooltip"))
-                    }
-                }
-                SettingsRow(
-                    icon: "checklist",
-                    iconTint: .appAccent,
-                    title: L("settings.shortcut.quickPasteToggleSelect"),
-                    subtitle: L("settings.shortcut.quickPasteToggleSelect.subtitle")
-                ) {
-                    HStack(spacing: 8) {
-                        QuickPasteKeyRecorder(action: .toggleSelect, store: quickPasteKeys)
-                        Button {
-                            showQuickPasteShortcutIssue(quickPasteKeys.reset(.toggleSelect))
-                        } label: {
-                            Image(systemName: "arrow.counterclockwise")
-                        }
-                        .buttonStyle(PaperIconButtonStyle(size: 28))
-                        .help(L("settings.shortcut.resetTooltip"))
-                    }
-                }
-                SettingsRow(
-                    icon: "list.bullet.rectangle",
-                    iconTint: .appAccent,
-                    title: L("settings.shortcut.quickPasteMenu"),
-                    subtitle: L("settings.shortcut.quickPasteMenu.subtitle")
-                ) {
-                    HStack(spacing: 8) {
-                        QuickPasteKeyRecorder(action: .openMenu, store: quickPasteKeys)
-                        Button {
-                            showQuickPasteShortcutIssue(quickPasteKeys.reset(.openMenu))
-                        } label: {
-                            Image(systemName: "arrow.counterclockwise")
-                        }
-                        .buttonStyle(PaperIconButtonStyle(size: 28))
-                        .help(L("settings.shortcut.resetTooltip"))
                     }
                 }
                 }
@@ -1432,6 +1400,45 @@ private extension AppShortcut {
         case .openQuickPaste: return "bolt.fill"
         }
     }
+}
+
+private extension QuickPasteKeyAction {
+    var settingsIcon: String {
+        switch self {
+        case .commit: "return"
+        case .toggleSelect: "checklist"
+        case .openMenu: "list.bullet.rectangle"
+        case .toggleFavorite: "star"
+        case .editGroups: "folder"
+        case .togglePin: "pin"
+        case .editTags: "tag"
+        case .delete: "trash"
+        }
+    }
+
+    var settingsTitleKey: String {
+        switch self {
+        case .commit: "settings.shortcut.quickPasteCommit"
+        case .toggleSelect: "settings.shortcut.quickPasteToggleSelect"
+        case .openMenu: "settings.shortcut.quickPasteMenu"
+        case .toggleFavorite: "settings.shortcut.quickPasteFavorite"
+        case .editGroups: "settings.shortcut.quickPasteGroups"
+        case .togglePin: "settings.shortcut.quickPastePin"
+        case .editTags: "settings.shortcut.quickPasteTags"
+        case .delete: "settings.shortcut.quickPasteDelete"
+        }
+    }
+
+    var settingsSubtitleKey: String { "\(settingsTitleKey).subtitle" }
+}
+
+@MainActor
+private func showGlobalShortcutIssue(_ message: String) {
+    ToastCenter.shared.show(
+        message,
+        systemImage: "exclamationmark.triangle.fill",
+        tint: .orange
+    )
 }
 
 @MainActor
@@ -1694,8 +1701,13 @@ private struct GlobalShortcutRecorder: View {
     private func finishRecording(_ event: NSEvent?) {
         isRecording = false
         if let event, event.keyCode != 53, let recorded = KeyboardShortcuts.Shortcut(event: event) {
-            AppShortcutActivation.setShortcut(recorded, for: name)   // registers the new global hotkey
-            current = recorded
+            if let conflict = GlobalShortcutConflict.detect(recorded, event: event, assigningTo: name) {
+                AppShortcutActivation.restore(name)
+                showGlobalShortcutIssue(conflict.message)
+            } else {
+                AppShortcutActivation.setShortcut(recorded, for: name)
+                current = recorded
+            }
         } else {
             AppShortcutActivation.restore(name)   // Esc / click-away / invalid → restore the paused binding
         }

@@ -24,6 +24,12 @@ Clipth is an open-source macOS clipboard manager with offline semantic search an
 
 The name comes from "clip path": a trail of things you copied.
 
+## Edition Boundary
+
+This repository is the open-source base edition of Clipth. It contains the core clipboard, search, organization, privacy, sync, and MCP functionality released under the license in this repository.
+
+Clipth Pro is a separate commercial edition. Pro-only features, commercial services, payment and licensing logic, and other proprietary implementation are intentionally not part of this repository and are not included in the open-source release. Do not assume that code or behavior from the Pro edition is available here.
+
 ## Why Clipth?
 
 - **Local-first by default** - clipboard history, OCR text, tags, and embeddings stay on your Mac unless you explicitly enable encrypted sync.
