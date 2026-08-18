@@ -58,21 +58,45 @@ Everything is encrypted locally with AES-256-GCM before it reaches iCloud Drive,
 ## Preview
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/wavever/clipth-website/main/assets/screenshot-main.png" alt="Main window" width="720" />
+  <img src="assets/screenshots/board-mainpage-lits-cn-transparent.png" alt="Main window - list layout" width="720" />
   <br/>
-  <em>Main window - history, full-text and semantic search, tags</em>
+  <em>Main window - list layout</em>
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/wavever/clipth-website/main/assets/screenshot-stats.png" alt="Activity stats" width="720" />
+  <img src="assets/screenshots/board-mainpage-list-cn-transparent.png" alt="Main window - grid layout" width="720" />
   <br/>
-  <em>Activity stats - daily count and yearly heatmap</em>
+  <em>Main window - grid layout</em>
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/wavever/clipth-website/main/assets/screenshot-mcp.png" alt="MCP integration" width="720" />
+  <img src="assets/screenshots/board-filter-cn-transparent.png" alt="Filters" width="720" />
   <br/>
-  <em>MCP server - connect Claude Desktop, Claude Code, or Cursor</em>
+  <em>Filters and content organization</em>
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/board-quick-copy-cn-transparent.png" alt="Quick Paste" width="720" />
+  <br/>
+  <em>Quick Paste with keyboard navigation</em>
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/board-mcp-cn-transparent.png" alt="MCP integration" width="720" />
+  <br/>
+  <em>MCP server integration</em>
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/board-widget-cn-transparent.png" alt="Widgets" width="720" />
+  <br/>
+  <em>macOS widgets</em>
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/board-website-preview-cn-transparent.png" alt="Website preview" width="720" />
+  <br/>
+  <em>Link preview</em>
 </p>
 
 ## Features

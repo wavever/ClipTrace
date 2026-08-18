@@ -58,21 +58,45 @@ Clipth Pro 是独立的商业版本。Pro 专属功能、商业服务、支付�
 ## 预览
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/wavever/clipth-website/main/assets/screenshot-main.png" alt="主界面" width="720" />
+  <img src="assets/screenshots/board-mainpage-lits-cn-transparent.png" alt="主界面列表布局" width="720" />
   <br/>
-  <em>主界面：历史记录、全文与语义搜索、标签</em>
+  <em>主界面：列表布局</em>
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/wavever/clipth-website/main/assets/screenshot-stats.png" alt="活跃统计" width="720" />
+  <img src="assets/screenshots/board-mainpage-list-cn-transparent.png" alt="主界面网格布局" width="720" />
   <br/>
-  <em>活跃统计：每日复制次数与年度热力图</em>
+  <em>主界面：网格布局</em>
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/wavever/clipth-website/main/assets/screenshot-mcp.png" alt="MCP 集成" width="720" />
+  <img src="assets/screenshots/board-filter-cn-transparent.png" alt="筛选" width="720" />
   <br/>
-  <em>MCP 服务器：接入 Claude Desktop、Claude Code 或 Cursor</em>
+  <em>筛选与内容整理</em>
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/board-quick-copy-cn-transparent.png" alt="快速粘贴" width="720" />
+  <br/>
+  <em>支持键盘操作的快速粘贴</em>
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/board-mcp-cn-transparent.png" alt="MCP 集成" width="720" />
+  <br/>
+  <em>MCP 服务器集成</em>
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/board-widget-cn-transparent.png" alt="小组件" width="720" />
+  <br/>
+  <em>macOS 小组件</em>
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/board-website-preview-cn-transparent.png" alt="网站预览" width="720" />
+  <br/>
+  <em>链接预览</em>
 </p>
 
 ## 功能特性
